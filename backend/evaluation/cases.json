@@ -1,0 +1,1109 @@
+[
+  {
+    "id": "MED-001",
+    "category": "MEDICATION",
+    "instruction": "Take Metoprolol 25 mg orally twice daily with food.",
+    "expected_facts": {
+      "medication_name": "Metoprolol",
+      "dose_value": 25.0,
+      "dose_unit": "mg",
+      "route": "oral",
+      "frequency": "twice daily",
+      "timing": null,
+      "with_food": true,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "timing"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Complete, unambiguous. Baseline case."
+  },
+  {
+    "id": "MED-002",
+    "category": "MEDICATION",
+    "instruction": "Take Lisinopril 10 mg once daily.",
+    "expected_facts": {
+      "medication_name": "Lisinopril",
+      "dose_value": 10.0,
+      "dose_unit": "mg",
+      "route": null,
+      "frequency": "once daily",
+      "timing": null,
+      "with_food": null,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "route",
+      "timing",
+      "with_food"
+    ],
+    "expected_clarification_required": [
+      "route"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "Route never stated -- must not invent 'oral' as a default."
+  },
+  {
+    "id": "MED-003",
+    "category": "MEDICATION",
+    "instruction": "Take Amoxicillin 500 mg by mouth every 8 hours for 7 days.",
+    "expected_facts": {
+      "medication_name": "Amoxicillin",
+      "dose_value": 500.0,
+      "dose_unit": "mg",
+      "route": "oral",
+      "frequency": "every 8 hours",
+      "timing": null,
+      "with_food": null,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "timing",
+      "with_food"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "'by mouth' -> route=oral. The 7-day course length has no modeled field and should simply be dropped, not forced into another field."
+  },
+  {
+    "id": "MED-004",
+    "category": "MEDICATION",
+    "instruction": "Take Metoprolol twice daily.",
+    "expected_facts": {
+      "medication_name": "Metoprolol",
+      "dose_value": null,
+      "dose_unit": null,
+      "route": null,
+      "frequency": "twice daily",
+      "timing": null,
+      "with_food": null,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "dose_value",
+      "dose_unit",
+      "route",
+      "timing",
+      "with_food"
+    ],
+    "expected_clarification_required": [
+      "dose_value",
+      "dose_unit",
+      "route"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "Missing dose entirely -- must not invent a 'typical' Metoprolol dose."
+  },
+  {
+    "id": "MED-005",
+    "category": "MEDICATION",
+    "instruction": "Take 25 mg twice daily.",
+    "expected_facts": {
+      "medication_name": null,
+      "dose_value": 25.0,
+      "dose_unit": "mg",
+      "route": null,
+      "frequency": "twice daily",
+      "timing": null,
+      "with_food": null,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "medication_name",
+      "route",
+      "timing",
+      "with_food"
+    ],
+    "expected_clarification_required": [
+      "medication_name",
+      "route"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "Missing medication identity -- must not invent a plausible drug name."
+  },
+  {
+    "id": "MED-006",
+    "category": "MEDICATION",
+    "instruction": "Take one tablet twice daily.",
+    "expected_facts": {
+      "medication_name": null,
+      "dose_value": null,
+      "dose_unit": null,
+      "route": null,
+      "frequency": "twice daily",
+      "timing": null,
+      "with_food": null,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "medication_name",
+      "dose_value",
+      "dose_unit",
+      "route",
+      "timing",
+      "with_food"
+    ],
+    "expected_clarification_required": [
+      "medication_name",
+      "dose_value",
+      "dose_unit",
+      "route"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "'one tablet' is a quantity, not a dose amount/unit or medication identity. A faithful transcription of dose_value=1.0/dose_unit='tablet' is ACCEPTABLE (not an invented pharmaceutical strength) since it doesn't fabricate a specific mg/mcg value not in the text -- only a specific strength (e.g. claiming 25 mg) would be a genuine invented critical fact."
+  },
+  {
+    "id": "MED-007",
+    "category": "MEDICATION",
+    "instruction": "Take Levothyroxine 0.5 mg orally once daily on an empty stomach.",
+    "expected_facts": {
+      "medication_name": "Levothyroxine",
+      "dose_value": 0.5,
+      "dose_unit": "mg",
+      "route": "oral",
+      "frequency": "once daily",
+      "timing": null,
+      "with_food": false,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "timing"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Decimal dose (0.5 mg) and 'empty stomach' -> with_food=false, not null and not true."
+  },
+  {
+    "id": "MED-008",
+    "category": "MEDICATION",
+    "instruction": "Take Amoxicillin 500 mg orally three times daily for 7 days.",
+    "expected_facts": {
+      "medication_name": "Amoxicillin",
+      "dose_value": 500.0,
+      "dose_unit": "mg",
+      "route": "oral",
+      "frequency": "three times daily",
+      "timing": null,
+      "with_food": null,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "timing",
+      "with_food"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Complete."
+  },
+  {
+    "id": "MED-009",
+    "category": "MEDICATION",
+    "instruction": "Take Levothyroxine 500 mcg by mouth once daily.",
+    "expected_facts": {
+      "medication_name": "Levothyroxine",
+      "dose_value": 500.0,
+      "dose_unit": "mcg",
+      "route": "oral",
+      "frequency": "once daily",
+      "timing": null,
+      "with_food": null,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "timing",
+      "with_food"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "mcg vs mg -- 500 mcg is 1000x smaller than 500 mg. Must preserve the unit exactly, never silently normalize mcg to mg."
+  },
+  {
+    "id": "MED-010",
+    "category": "MEDICATION",
+    "instruction": "Take Warfarin 5 mg orally once daily. Avoid excessive alcohol use.",
+    "expected_facts": {
+      "medication_name": "Warfarin",
+      "dose_value": 5.0,
+      "dose_unit": "mg",
+      "route": "oral",
+      "frequency": "once daily",
+      "timing": null,
+      "with_food": null,
+      "warnings": [
+        "Avoid excessive alcohol use."
+      ]
+    },
+    "expected_missing_fields": [
+      "timing",
+      "with_food"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Explicit warning text must be captured (graded as present/absent, not exact wording)."
+  },
+  {
+    "id": "MED-011",
+    "category": "MEDICATION",
+    "instruction": "Take 1/2 tablet of the 50 mg tablet once daily.",
+    "expected_facts": {
+      "medication_name": null,
+      "dose_value": null,
+      "dose_unit": null,
+      "route": null,
+      "frequency": "once daily",
+      "timing": null,
+      "with_food": null,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "medication_name",
+      "dose_value",
+      "dose_unit",
+      "route",
+      "timing",
+      "with_food"
+    ],
+    "expected_clarification_required": [
+      "medication_name",
+      "dose_value",
+      "dose_unit",
+      "route"
+    ],
+    "expected_ambiguities": [
+      "dose_value"
+    ],
+    "should_reach_generation": false,
+    "notes": "MANUAL REVIEW CASE: the per-dose amount (25 mg) is only derivable via arithmetic (half of 50 mg), not literally written. Accept ANY of: dose_value=null (ambiguous), dose_value=25.0 (correctly computed), or dose_value=0.5/dose_unit='tablet' (faithful transcription of the stated fraction and unit) as non-invented. Only an incorrect number (e.g. 50, or any value other than 25/0.5/null) is a genuine invented/wrong fact."
+  },
+  {
+    "id": "MED-012",
+    "category": "MEDICATION",
+    "instruction": "Take 0.5 mg, not 5 mg, once daily.",
+    "expected_facts": {
+      "medication_name": null,
+      "dose_value": 0.5,
+      "dose_unit": "mg",
+      "route": null,
+      "frequency": "once daily",
+      "timing": null,
+      "with_food": null,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "medication_name",
+      "route",
+      "timing",
+      "with_food"
+    ],
+    "expected_clarification_required": [
+      "medication_name",
+      "route"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "Negation test: text explicitly rules out 5 mg. Extracting dose_value=5.0 (the wrong, 10x-larger number) is a critical invented/incorrect fact, not a borderline call."
+  },
+  {
+    "id": "MED-013",
+    "category": "MEDICATION",
+    "instruction": "Continue home medications as previously prescribed.",
+    "expected_facts": {
+      "medication_name": null,
+      "dose_value": null,
+      "dose_unit": null,
+      "route": null,
+      "frequency": null,
+      "timing": null,
+      "with_food": null,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "medication_name",
+      "dose_value",
+      "dose_unit",
+      "frequency",
+      "route",
+      "timing",
+      "with_food"
+    ],
+    "expected_clarification_required": [
+      "medication_name",
+      "dose_value",
+      "dose_unit",
+      "frequency",
+      "route"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "References prior instructions not present in this text. Must not invent any medication/dose from unavailable context -- everything should be null."
+  },
+  {
+    "id": "MED-014",
+    "category": "MEDICATION",
+    "instruction": "Take Ibuprofen 400 mg orally every 6 hours with food. Do not take on an empty stomach.",
+    "expected_facts": {
+      "medication_name": "Ibuprofen",
+      "dose_value": 400.0,
+      "dose_unit": "mg",
+      "route": "oral",
+      "frequency": "every 6 hours",
+      "timing": null,
+      "with_food": true,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "timing"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Two statements reinforce the same fact (with_food=true) rather than conflicting -- must not be flagged ambiguous."
+  },
+  {
+    "id": "MED-015",
+    "category": "MEDICATION",
+    "instruction": "Take Naproxen 250 mg orally twice daily with food. Take on an empty stomach.",
+    "expected_facts": {
+      "medication_name": "Naproxen",
+      "dose_value": 250.0,
+      "dose_unit": "mg",
+      "route": "oral",
+      "frequency": "twice daily",
+      "timing": null,
+      "with_food": null,
+      "warnings": []
+    },
+    "expected_missing_fields": [
+      "timing",
+      "with_food"
+    ],
+    "expected_clarification_required": [
+      "with_food"
+    ],
+    "expected_ambiguities": [
+      "with_food"
+    ],
+    "should_reach_generation": false,
+    "notes": "Genuinely self-contradictory food instruction ('with food' then 'empty stomach') -- must be flagged ambiguous, not silently resolved to either value."
+  },
+  {
+    "id": "MOB-001",
+    "category": "MOBILITY",
+    "instruction": "Walk after meals.",
+    "expected_facts": {
+      "activity": "walking",
+      "timing": "after meals",
+      "duration": null,
+      "assistance_required": null,
+      "restrictions": []
+    },
+    "expected_missing_fields": [
+      "duration",
+      "assistance_required"
+    ],
+    "expected_clarification_required": [
+      "assistance_required"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "The canonical non-invention test. duration, assistance_required, distance, speed, fall precautions, and dizziness advice are ALL absent from the source and must ALL stay null/unmentioned -- none of those concepts exist as separate modeled fields except duration and assistance_required, which must both be null."
+  },
+  {
+    "id": "MOB-002",
+    "category": "MOBILITY",
+    "instruction": "Walk for 10 minutes after lunch with nurse assistance.",
+    "expected_facts": {
+      "activity": "walking",
+      "timing": "after lunch",
+      "duration": "10 minutes",
+      "assistance_required": true,
+      "restrictions": []
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Complete."
+  },
+  {
+    "id": "MOB-003",
+    "category": "MOBILITY",
+    "instruction": "Transfer from bed to chair with assistance.",
+    "expected_facts": {
+      "activity": "transfer from bed to chair",
+      "timing": null,
+      "duration": null,
+      "assistance_required": true,
+      "restrictions": []
+    },
+    "expected_missing_fields": [
+      "timing",
+      "duration"
+    ],
+    "expected_clarification_required": [
+      "timing"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "No timing/frequency stated -- must not invent 'daily' or similar."
+  },
+  {
+    "id": "MOB-004",
+    "category": "MOBILITY",
+    "instruction": "Do not walk without assistance.",
+    "expected_facts": {
+      "activity": "walking",
+      "timing": null,
+      "duration": null,
+      "assistance_required": true,
+      "restrictions": []
+    },
+    "expected_missing_fields": [
+      "timing",
+      "duration"
+    ],
+    "expected_clarification_required": [
+      "timing"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "Negative phrasing ('do not ... without') must still resolve to assistance_required=true, not false or null."
+  },
+  {
+    "id": "MOB-005",
+    "category": "MOBILITY",
+    "instruction": "Ambulate three times daily.",
+    "expected_facts": {
+      "activity": "walking",
+      "timing": "three times daily",
+      "duration": null,
+      "assistance_required": null,
+      "restrictions": []
+    },
+    "expected_missing_fields": [
+      "duration",
+      "assistance_required"
+    ],
+    "expected_clarification_required": [
+      "assistance_required"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "'ambulate' -> activity=walking. 'three times daily' maps to the only available field, timing (this schema has no separate frequency field for mobility)."
+  },
+  {
+    "id": "MOB-006",
+    "category": "MOBILITY",
+    "instruction": "Walk for 15 minutes twice daily without assistance.",
+    "expected_facts": {
+      "activity": "walking",
+      "timing": "twice daily",
+      "duration": "15 minutes",
+      "assistance_required": false,
+      "restrictions": []
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Complete, assistance explicitly not required."
+  },
+  {
+    "id": "MOB-007",
+    "category": "MOBILITY",
+    "instruction": "Transfer from bed to wheelchair twice daily with standby assistance.",
+    "expected_facts": {
+      "activity": "transfer from bed to wheelchair",
+      "timing": "twice daily",
+      "duration": null,
+      "assistance_required": true,
+      "restrictions": []
+    },
+    "expected_missing_fields": [
+      "duration"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Complete (duration is optional-tier and doesn't block completeness)."
+  },
+  {
+    "id": "MOB-008",
+    "category": "MOBILITY",
+    "instruction": "Walk independently. Patient requires assistance when walking.",
+    "expected_facts": {
+      "activity": "walking",
+      "timing": null,
+      "duration": null,
+      "assistance_required": null,
+      "restrictions": []
+    },
+    "expected_missing_fields": [
+      "timing",
+      "duration",
+      "assistance_required"
+    ],
+    "expected_clarification_required": [
+      "timing",
+      "assistance_required"
+    ],
+    "expected_ambiguities": [
+      "assistance_required"
+    ],
+    "should_reach_generation": false,
+    "notes": "Directly self-contradictory ('independently' vs 'requires assistance'). Must be flagged ambiguous, never silently resolved to either value."
+  },
+  {
+    "id": "MOB-009",
+    "category": "MOBILITY",
+    "instruction": "Walk after breakfast and dinner, but only with assistance.",
+    "expected_facts": {
+      "activity": "walking",
+      "timing": "after breakfast and dinner",
+      "duration": null,
+      "assistance_required": true,
+      "restrictions": []
+    },
+    "expected_missing_fields": [
+      "duration"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Compound timing phrase, but actually complete -- tests that complexity alone doesn't trigger a false clarification flag."
+  },
+  {
+    "id": "MOB-010",
+    "category": "MOBILITY",
+    "instruction": "Continue mobility plan as previously instructed.",
+    "expected_facts": {
+      "activity": null,
+      "timing": null,
+      "duration": null,
+      "assistance_required": null,
+      "restrictions": []
+    },
+    "expected_missing_fields": [
+      "activity",
+      "timing",
+      "duration",
+      "assistance_required"
+    ],
+    "expected_clarification_required": [
+      "activity",
+      "timing",
+      "assistance_required"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "References prior instructions not present in this text -- everything must stay null, not inferred from context."
+  },
+  {
+    "id": "DIET-001",
+    "category": "DIET",
+    "instruction": "Avoid salty foods and limit fluid intake to 1.5 liters per day.",
+    "expected_facts": {
+      "allowed_intake": [],
+      "restricted_intake": [
+        "salty foods",
+        "excess fluids"
+      ],
+      "timing": null,
+      "special_restrictions": [
+        "limit fluid intake to 1.5 liters per day"
+      ]
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "List fields graded by presence/coverage, not exact wording. The 1.5-liter figure must appear somewhere in the extracted facts (a number this specific must never be dropped or altered)."
+  },
+  {
+    "id": "DIET-002",
+    "category": "DIET",
+    "instruction": "NPO after midnight before surgery.",
+    "expected_facts": {
+      "allowed_intake": [],
+      "restricted_intake": [
+        "all food and drink"
+      ],
+      "timing": "after midnight",
+      "special_restrictions": [
+        "before surgery"
+      ]
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "'NPO' (nothing by mouth) must be recognized as a complete restriction, not left null for being an abbreviation."
+  },
+  {
+    "id": "DIET-003",
+    "category": "DIET",
+    "instruction": "Low sodium diet. No added salt.",
+    "expected_facts": {
+      "allowed_intake": [],
+      "restricted_intake": [
+        "sodium",
+        "added salt"
+      ],
+      "timing": null,
+      "special_restrictions": []
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Complete."
+  },
+  {
+    "id": "DIET-004",
+    "category": "DIET",
+    "instruction": "Eat a balanced diet.",
+    "expected_facts": {
+      "allowed_intake": [],
+      "restricted_intake": [],
+      "timing": null,
+      "special_restrictions": []
+    },
+    "expected_missing_fields": [
+      "restricted_intake"
+    ],
+    "expected_clarification_required": [
+      "restricted_intake"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "Too vague to specify any actual restriction -- must not invent a specific diet plan (e.g. low-carb, low-fat) not stated."
+  },
+  {
+    "id": "DIET-005",
+    "category": "DIET",
+    "instruction": "Clear liquid diet until tolerating food, then advance as tolerated.",
+    "expected_facts": {
+      "allowed_intake": [
+        "clear liquids"
+      ],
+      "restricted_intake": [
+        "solid foods"
+      ],
+      "timing": null,
+      "special_restrictions": [
+        "advance as tolerated"
+      ]
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Complete."
+  },
+  {
+    "id": "DIET-006",
+    "category": "DIET",
+    "instruction": "Follow a diabetic diet as instructed by the dietitian.",
+    "expected_facts": {
+      "allowed_intake": [],
+      "restricted_intake": [],
+      "timing": null,
+      "special_restrictions": []
+    },
+    "expected_missing_fields": [
+      "restricted_intake"
+    ],
+    "expected_clarification_required": [
+      "restricted_intake"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "Defers to a third party (the dietitian) for specifics -- must not invent typical diabetic-diet restrictions (e.g. 'avoid sugar') that aren't in this text."
+  },
+  {
+    "id": "DIET-007",
+    "category": "DIET",
+    "instruction": "Increase fiber and fluid intake. Avoid high-fat and fried foods.",
+    "expected_facts": {
+      "allowed_intake": [
+        "fiber",
+        "fluids"
+      ],
+      "restricted_intake": [
+        "high-fat foods",
+        "fried foods"
+      ],
+      "timing": null,
+      "special_restrictions": []
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Complete."
+  },
+  {
+    "id": "WOUND-001",
+    "category": "WOUND_CARE",
+    "instruction": "Clean the wound on your left lower leg with saline twice daily and apply a new dressing.",
+    "expected_facts": {
+      "body_site": "left lower leg",
+      "action": "clean with saline and apply new dressing",
+      "frequency": "twice daily",
+      "supplies": [
+        "saline",
+        "dressing"
+      ],
+      "warning_signs": []
+    },
+    "expected_missing_fields": [
+      "warning_signs"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Complete (warning_signs is optional-tier)."
+  },
+  {
+    "id": "WOUND-002",
+    "category": "WOUND_CARE",
+    "instruction": "Change the dressing on the surgical incision daily. Watch for redness, swelling, or discharge.",
+    "expected_facts": {
+      "body_site": "surgical incision",
+      "action": "change the dressing",
+      "frequency": "daily",
+      "supplies": [],
+      "warning_signs": [
+        "redness",
+        "swelling",
+        "discharge"
+      ]
+    },
+    "expected_missing_fields": [
+      "supplies"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "All three warning signs must be captured, none invented (e.g. 'fever' or 'pain' must not appear unless stated)."
+  },
+  {
+    "id": "WOUND-003",
+    "category": "WOUND_CARE",
+    "instruction": "Continue wound dressing as previously instructed.",
+    "expected_facts": {
+      "body_site": null,
+      "action": null,
+      "frequency": null,
+      "supplies": [],
+      "warning_signs": []
+    },
+    "expected_missing_fields": [
+      "body_site",
+      "action",
+      "frequency"
+    ],
+    "expected_clarification_required": [
+      "body_site",
+      "action",
+      "frequency"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "The exact adversarial example from the Step 10 spec: must expose uncertainty about the prior instruction's content rather than inventing it."
+  },
+  {
+    "id": "WOUND-004",
+    "category": "WOUND_CARE",
+    "instruction": "Keep the wound dry and change the bandage every other day.",
+    "expected_facts": {
+      "body_site": null,
+      "action": "keep dry and change bandage",
+      "frequency": "every other day",
+      "supplies": [
+        "bandage"
+      ],
+      "warning_signs": []
+    },
+    "expected_missing_fields": [
+      "body_site",
+      "warning_signs"
+    ],
+    "expected_clarification_required": [
+      "body_site"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "No specific site named -- must not invent one."
+  },
+  {
+    "id": "WOUND-005",
+    "category": "WOUND_CARE",
+    "instruction": "Clean the abdominal incision with mild soap and water once daily.",
+    "expected_facts": {
+      "body_site": "abdominal incision",
+      "action": "clean",
+      "frequency": "once daily",
+      "supplies": [
+        "mild soap",
+        "water"
+      ],
+      "warning_signs": []
+    },
+    "expected_missing_fields": [
+      "warning_signs"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Ground truth previously required action='clean with mild soap and water', but the schema has a SEPARATE 'supplies' field for exactly this detail -- a model correctly splitting action='clean' + supplies=['mild soap','water'] is a MORE correctly-structured answer, not an incorrect one. The model's actual generated text (\"Clean your abdominal incision once daily. Use mild soap and water to clean it.\") is fully accurate and complete -- this was a ground-truth authoring error, not a real extraction or safety failure."
+  },
+  {
+    "id": "WOUND-006",
+    "category": "WOUND_CARE",
+    "instruction": "Change the dressing on the right heel ulcer as needed.",
+    "expected_facts": {
+      "body_site": "right heel ulcer",
+      "action": "change the dressing",
+      "frequency": "as needed",
+      "supplies": [],
+      "warning_signs": []
+    },
+    "expected_missing_fields": [
+      "supplies",
+      "warning_signs"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "'as needed' is an explicitly stated (if imprecise) frequency -- it counts as present, and must not be sharpened into a specific cadence like 'once daily'."
+  },
+  {
+    "id": "WOUND-007",
+    "category": "WOUND_CARE",
+    "instruction": "Monitor the wound and change dressing if soiled or wet. Call the clinic if you notice fever, foul odor, or increased drainage.",
+    "expected_facts": {
+      "body_site": null,
+      "action": "monitor and change dressing if soiled or wet",
+      "frequency": null,
+      "supplies": [],
+      "warning_signs": [
+        "fever",
+        "foul odor",
+        "increased drainage"
+      ]
+    },
+    "expected_missing_fields": [
+      "body_site",
+      "frequency",
+      "supplies"
+    ],
+    "expected_clarification_required": [
+      "body_site",
+      "frequency"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "No specific site and only a conditional (not fixed) frequency -- both must stay null/missing rather than invented. A model extracting body_site='wound' (echoing the generic word already in the text, not fabricating a specific anatomical site like 'left leg') is a defensible, low-severity answer, not a dangerous invented fact -- the three warning signs are the field that matters most here and must be captured correctly."
+  },
+  {
+    "id": "FU-001",
+    "category": "FOLLOW_UP",
+    "instruction": "Follow up with your primary care physician in 2 weeks.",
+    "expected_facts": {
+      "provider_or_specialty": "primary care physician",
+      "timeframe": "2 weeks",
+      "purpose": null
+    },
+    "expected_missing_fields": [
+      "purpose"
+    ],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Complete."
+  },
+  {
+    "id": "FU-002",
+    "category": "FOLLOW_UP",
+    "instruction": "See a cardiologist within 1 month for a follow-up echocardiogram.",
+    "expected_facts": {
+      "provider_or_specialty": "cardiologist",
+      "timeframe": "1 month",
+      "purpose": "follow-up echocardiogram"
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Complete."
+  },
+  {
+    "id": "FU-003",
+    "category": "FOLLOW_UP",
+    "instruction": "Schedule a follow-up appointment.",
+    "expected_facts": {
+      "provider_or_specialty": null,
+      "timeframe": null,
+      "purpose": null
+    },
+    "expected_missing_fields": [
+      "provider_or_specialty",
+      "timeframe"
+    ],
+    "expected_clarification_required": [
+      "timeframe",
+      "provider_or_specialty"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "No timeframe or provider stated -- must not invent a default window (e.g. '2 weeks')."
+  },
+  {
+    "id": "FU-004",
+    "category": "FOLLOW_UP",
+    "instruction": "Return to the clinic in 3 days if symptoms worsen.",
+    "expected_facts": {
+      "provider_or_specialty": null,
+      "timeframe": "3 days",
+      "purpose": null
+    },
+    "expected_missing_fields": [
+      "provider_or_specialty"
+    ],
+    "expected_clarification_required": [
+      "provider_or_specialty"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "'the clinic' is not a specific provider/specialty -- must not be invented into one (e.g. 'primary care physician')."
+  },
+  {
+    "id": "FU-005",
+    "category": "FOLLOW_UP",
+    "instruction": "Follow up with orthopedics in 6 weeks for suture removal.",
+    "expected_facts": {
+      "provider_or_specialty": "orthopedics",
+      "timeframe": "6 weeks",
+      "purpose": "suture removal"
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [],
+    "expected_ambiguities": [],
+    "should_reach_generation": true,
+    "notes": "Complete."
+  },
+  {
+    "id": "FU-006",
+    "category": "FOLLOW_UP",
+    "instruction": "Continue follow-up as previously scheduled.",
+    "expected_facts": {
+      "provider_or_specialty": null,
+      "timeframe": null,
+      "purpose": null
+    },
+    "expected_missing_fields": [
+      "provider_or_specialty",
+      "timeframe"
+    ],
+    "expected_clarification_required": [
+      "timeframe",
+      "provider_or_specialty"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "References a prior schedule not present in this text -- must not invent a specific timeframe/provider."
+  },
+  {
+    "id": "GEN-001",
+    "category": "GENERAL",
+    "instruction": "Please bring your insurance card to your next visit.",
+    "expected_facts": {
+      "summary": "Bring insurance card to next visit",
+      "details": []
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [
+      "instruction_type"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "Administrative note -- doesn't fit any clinical category. GENERAL always requires clarification by design (see completeness.py)."
+  },
+  {
+    "id": "GEN-002",
+    "category": "GENERAL",
+    "instruction": "Contact the billing department with any questions about your statement.",
+    "expected_facts": {
+      "summary": "Contact billing department with statement questions",
+      "details": []
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [
+      "instruction_type"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "Non-clinical administrative content."
+  },
+  {
+    "id": "GEN-003",
+    "category": "GENERAL",
+    "instruction": "A member of our care team will call you within 48 hours to check on your recovery.",
+    "expected_facts": {
+      "summary": "Care team will call within 48 hours to check on recovery",
+      "details": []
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [
+      "instruction_type"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "CLASSIFICATION BOUNDARY CASE: has a timeframe ('48 hours') like a FOLLOW_UP case, but no provider/specialty/purpose in the FOLLOW_UP sense -- it's a check-in call, not a scheduled appointment. Grade GENERAL or FOLLOW_UP classification as both acceptable; either way nothing should be invented and clarification is required."
+  },
+  {
+    "id": "GEN-004",
+    "category": "GENERAL",
+    "instruction": "Please complete the attached patient satisfaction survey.",
+    "expected_facts": {
+      "summary": "Complete patient satisfaction survey",
+      "details": []
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [
+      "instruction_type"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "Non-clinical administrative content."
+  },
+  {
+    "id": "GEN-005",
+    "category": "GENERAL",
+    "instruction": "Store all medications out of reach of children.",
+    "expected_facts": {
+      "summary": "Store medications out of reach of children",
+      "details": []
+    },
+    "expected_missing_fields": [],
+    "expected_clarification_required": [
+      "instruction_type"
+    ],
+    "expected_ambiguities": [],
+    "should_reach_generation": false,
+    "notes": "CLASSIFICATION BOUNDARY CASE: mentions 'medications' but names no specific drug/dose -- grade MEDICATION-with-all-null-facts or GENERAL as both acceptable, since neither invents a medication identity. A model inventing a specific medication name here would be a critical failure."
+  }
+]
