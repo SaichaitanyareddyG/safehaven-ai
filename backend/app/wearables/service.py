@@ -120,7 +120,10 @@ def _new_enrollment_code() -> str:
     return "".join(secrets.choice(_ENROLLMENT_ALPHABET) for _ in range(_ENROLLMENT_LENGTH))
 
 
-def to_read(device: WearableDevice) -> WearableDeviceRead:
+def to_read(device: WearableDevice, assignment: DeviceAssignment | None = None) -> WearableDeviceRead:
+    """`online` is only meaningful for an assigned device: an unassigned one
+    sitting in a drawer is idle, not offline, and flagging it would fill the
+    fleet view with false problems."""
     return WearableDeviceRead(
         id=device.id,
         device_code=device.device_code,
@@ -131,6 +134,7 @@ def to_read(device: WearableDevice) -> WearableDeviceRead:
         last_seen_at=device.last_seen_at,
         created_at=device.created_at,
         enrolled=device.credential_hash is not None,
+        online=assignment is not None and not device_is_offline(device, assignment),
     )
 
 
@@ -216,8 +220,15 @@ def get_device(db: Session, device_id: uuid.UUID) -> WearableDevice:
     return device
 
 
-def list_devices(db: Session) -> list[WearableDevice]:
-    return db.query(WearableDevice).order_by(WearableDevice.device_code).all()
+def list_devices(db: Session) -> list[tuple[WearableDevice, DeviceAssignment | None]]:
+    """Fleet view. Returns each device with its active assignment (or None) so
+    the caller can derive online state without an N+1 query."""
+    devices = db.query(WearableDevice).order_by(WearableDevice.device_code).all()
+    active = {
+        a.device_id: a
+        for a in db.query(DeviceAssignment).filter(DeviceAssignment.unassigned_at.is_(None)).all()
+    }
+    return [(d, active.get(d.id)) for d in devices]
 
 
 def revoke_device(db: Session, device_id: uuid.UUID, actor_id: uuid.UUID) -> WearableDevice:
@@ -354,6 +365,7 @@ def assignment_to_read(db: Session, assignment: DeviceAssignment) -> DeviceAssig
         battery_percent=device.battery_percent,
         last_seen_at=device.last_seen_at,
         device_status=device.status,
+        device_online=not device_is_offline(device, assignment),
     )
 
 
@@ -854,25 +866,226 @@ def list_patient_sensor_events(
     )
 
 
+# ── device health (§17) ─────────────────────────────────────────────────────
+
+
+def device_is_offline(device: WearableDevice, assignment: DeviceAssignment | None) -> bool:
+    """Derived, never stored.
+
+    A device counts as offline once it has been silent longer than the
+    configured threshold. `assigned_at` is the fallback reference rather than
+    treating "never seen" as offline: a device assigned ten seconds ago has not
+    had time to check in, and alerting on that would fire on correct behaviour.
+    """
+    if assignment is None:
+        return False
+    reference = device.last_seen_at or assignment.assigned_at
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=get_settings().device_offline_after_seconds
+    )
+    return reference < cutoff
+
+
+def sweep_offline_devices(db: Session) -> list[SafetyAlert]:
+    """Raise DEVICE_OFFLINE for assigned devices that have gone silent.
+
+    ⚠️ A write on a read path, which is unusual enough to justify.
+
+    There is no scheduler anywhere in this codebase — no Celery, no APScheduler,
+    no Redis — and main.py has no lifespan hook. Rather than make Module 3 the
+    first feature to introduce a background worker, offline status is derived
+    on read and THE DASHBOARD POLL IS THE SWEEP: the nurse queue refreshes every
+    few seconds, and each refresh looks for newly-silent devices.
+
+    The trade-off, stated plainly: if nobody has the dashboard open, the
+    DEVICE_OFFLINE row is created late. `last_seen_at` still records the true
+    last contact, so no information is lost — only the alert's created_at is
+    late. For a prototype that is a fair exchange for adding zero
+    infrastructure; a lifespan asyncio sweep is the upgrade if it matters.
+
+    One indexed query plus at most one insert per newly-offline device, so it
+    stays cheap enough to run on every poll.
+    """
+    rows = (
+        db.query(WearableDevice, DeviceAssignment)
+        .join(DeviceAssignment, DeviceAssignment.device_id == WearableDevice.id)
+        .filter(
+            DeviceAssignment.unassigned_at.is_(None),
+            WearableDevice.status == DeviceStatus.ACTIVE,
+        )
+        .all()
+    )
+
+    created: list[SafetyAlert] = []
+    for device, assignment in rows:
+        if not device_is_offline(device, assignment):
+            continue
+        # Operational dedupe (no time window), so a device offline for hours
+        # produces one alert rather than one every few minutes.
+        if _open_alert_to_fold_into(db, assignment.patient_id, AlertType.DEVICE_OFFLINE):
+            continue
+
+        alert = SafetyAlert(
+            patient_id=assignment.patient_id,
+            device_id=device.id,
+            # No sensor event: derived from the ABSENCE of data.
+            sensor_event_id=None,
+            alert_type=AlertType.DEVICE_OFFLINE,
+            # HIGH, deliberately: a patient-safety monitor that has silently
+            # stopped reporting is itself a safety condition. The dangerous
+            # failure mode is not a noisy device, it is a quiet one.
+            priority=AlertPriority.HIGH,
+            status=AlertStatus.OPEN,
+            event_count=1,
+            last_event_at=device.last_seen_at,
+        )
+        db.add(alert)
+        db.flush()
+        created.append(alert)
+
+        record_event(
+            db,
+            event_type=AuditEventType.WEARABLE_DEVICE_OFFLINE_DETECTED,
+            actor_type=ActorType.SYSTEM,
+            patient_id=assignment.patient_id,
+            entity_type="SafetyAlert",
+            entity_id=alert.id,
+            event_metadata={
+                "device_code": device.device_code,
+                "last_seen_at": device.last_seen_at.isoformat() if device.last_seen_at else None,
+            },
+        )
+
+    if created:
+        db.commit()
+    return created
+
+
+def _auto_resolve(
+    db: Session, device: WearableDevice, patient_id: uuid.UUID, alert_type: AlertType, reason: str
+) -> None:
+    """Close out a device-health alert whose condition has cleared.
+
+    Left for a nurse to close manually, the queue would fill with alerts about
+    devices that are already fine — and a queue full of stale entries is one
+    nobody reads. Attributed to SYSTEM, because no clinician did anything.
+
+    Only ever used for operational alerts. A clinical alert is never
+    auto-resolved: "the patient stopped moving" is not evidence that anyone
+    checked on them.
+    """
+    alerts = (
+        db.query(SafetyAlert)
+        .filter(
+            SafetyAlert.device_id == device.id,
+            SafetyAlert.alert_type == alert_type,
+            SafetyAlert.status.in_((AlertStatus.OPEN, AlertStatus.ACKNOWLEDGED)),
+        )
+        .all()
+    )
+    for alert in alerts:
+        alert.status = AlertStatus.RESOLVED
+        alert.resolved_at = datetime.now(timezone.utc)
+        # resolved_by stays NULL — no clinician to attribute this to.
+        record_event(
+            db,
+            event_type=AuditEventType.SAFETY_ALERT_RESOLVED,
+            actor_type=ActorType.SYSTEM,
+            patient_id=patient_id,
+            entity_type="SafetyAlert",
+            entity_id=alert.id,
+            event_metadata={
+                "alert_type": alert_type.value,
+                "device_code": device.device_code,
+                "reason": reason,
+            },
+        )
+
+
 def record_heartbeat(
     db: Session, device: WearableDevice, payload: DeviceHeartbeatRequest
 ) -> WearableDevice:
-    """Update last-known health in place.
+    """Update last-known health in place, and reconcile health alerts.
 
     Deliberately not stored as one row per beat: a row per device every 30s
     would be the historical sensor-data lake this module is explicitly not
-    building. last_seen_at is all that offline detection needs (Stage 6), and
-    it is derived on read rather than swept by a background job.
+    building. `last_seen_at` is all offline detection needs.
 
-    No audit event — a heartbeat is not a clinically relevant action, and
-    writing one every 30s per device would bury the events that matter.
+    No audit event for the heartbeat itself — it is not a clinically relevant
+    action, and writing one every 30s per device would bury the events that
+    matter. The reconciliations below DO audit, because they change alert state.
     """
     device.last_seen_at = datetime.now(timezone.utc)
     device.battery_percent = payload.battery_percent
     device.firmware_version = payload.firmware_version
+
+    assignment = active_assignment_for_device(db, device.id)
+    if assignment is not None:
+        # The device is back. Close any offline alert rather than leaving a
+        # nurse to dismiss an alert about a device that is demonstrably fine.
+        _auto_resolve(
+            db, device, assignment.patient_id, AlertType.DEVICE_OFFLINE, "device_reconnected"
+        )
+
+        low_battery = payload.battery_percent <= get_settings().device_low_battery_percent
+        if low_battery:
+            # Derived here as well as accepted as a device-sent event, so low
+            # battery still surfaces if firmware never emits the event. The
+            # operational dedupe means the two paths cannot double-alert, and
+            # it is what makes this edge-triggered rather than firing on every
+            # heartbeat while the battery sits at 19%.
+            _raise_operational_alert(
+                db, device, assignment, AlertType.DEVICE_LOW_BATTERY, AlertPriority.LOW
+            )
+        else:
+            _auto_resolve(
+                db, device, assignment.patient_id, AlertType.DEVICE_LOW_BATTERY, "battery_recovered"
+            )
+
     db.commit()
     db.refresh(device)
     return device
+
+
+def _raise_operational_alert(
+    db: Session,
+    device: WearableDevice,
+    assignment: DeviceAssignment,
+    alert_type: AlertType,
+    priority: AlertPriority,
+) -> SafetyAlert | None:
+    """Raise a device-health alert unless one is already live for this patient."""
+    if _open_alert_to_fold_into(db, assignment.patient_id, alert_type) is not None:
+        return None
+
+    alert = SafetyAlert(
+        patient_id=assignment.patient_id,
+        device_id=device.id,
+        sensor_event_id=None,
+        alert_type=alert_type,
+        priority=priority,
+        status=AlertStatus.OPEN,
+        event_count=1,
+        last_event_at=datetime.now(timezone.utc),
+    )
+    db.add(alert)
+    db.flush()
+
+    record_event(
+        db,
+        event_type=AuditEventType.SAFETY_ALERT_RAISED,
+        actor_type=ActorType.SYSTEM,
+        patient_id=assignment.patient_id,
+        entity_type="SafetyAlert",
+        entity_id=alert.id,
+        event_metadata={
+            "device_code": device.device_code,
+            "alert_type": alert_type.value,
+            "priority": priority.value,
+            "source": "heartbeat",
+        },
+    )
+    return alert
 
 
 # WORDING IS A PRODUCT RULE, NOT A STYLE CHOICE

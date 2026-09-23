@@ -53,3 +53,43 @@ export interface SafetyAlertListResponse {
   total: number
   results: SafetyAlert[]
 }
+
+export interface WearableDevice {
+  id: string
+  device_code: string
+  status: 'ACTIVE' | 'DISABLED' | 'RETIRED'
+  hardware_id: string | null
+  firmware_version: string | null
+  battery_percent: number | null
+  last_seen_at: string | null
+  created_at: string
+  /** Derived: holds a credential. */
+  enrolled: boolean
+  /** Derived: assigned AND reporting recently. An unassigned device in a
+   *  drawer is idle, not offline. */
+  online: boolean
+}
+
+export interface WearableDeviceListResponse {
+  total: number
+  results: WearableDevice[]
+}
+
+export interface DeviceAssignment {
+  id: string
+  device_id: string
+  device_code: string
+  patient_id: string
+  encounter_id: string | null
+  monitoring_profile: MonitoringProfile
+  assigned_at: string
+  unassigned_at: string | null
+  battery_percent: number | null
+  last_seen_at: string | null
+  device_status: 'ACTIVE' | 'DISABLED' | 'RETIRED'
+  device_online: boolean
+}
+
+export interface PatientAssignmentResponse {
+  assignment: DeviceAssignment | null
+}

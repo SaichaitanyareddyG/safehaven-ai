@@ -34,10 +34,12 @@ class WearableDeviceRead(BaseModel):
     last_seen_at: datetime | None
     created_at: datetime
 
-    # Derived, never stored: a device is enrolled iff it holds a credential.
-    # Storing a flag as well would be a second source of truth that can
-    # disagree with the hash column.
+    # Both derived, never stored — a stored flag would be a second source of
+    # truth able to disagree with the column it summarises. `enrolled` means
+    # the device holds a credential; `online` means it has checked in recently
+    # AND is currently assigned (an unassigned device is idle, not offline).
     enrolled: bool
+    online: bool
 
 
 class WearableDeviceListResponse(BaseModel):
@@ -82,6 +84,8 @@ class DeviceAssignmentRead(BaseModel):
     battery_percent: int | None
     last_seen_at: datetime | None
     device_status: DeviceStatus
+    # Derived: has this device reported recently enough to be trusted?
+    device_online: bool
 
     @property
     def active(self) -> bool:

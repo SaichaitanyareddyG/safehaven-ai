@@ -102,6 +102,14 @@ class Settings(BaseSettings):
     # config, modified firmware or a bug could send a weak candidate — so the
     # decision is re-made here, where the value is controlled.
     alert_min_fall_score: int = 3
+    # A device silent for longer than this counts as offline. Derived on
+    # read — the nurse dashboard's poll IS the sweep — because there is no
+    # scheduler in this codebase and Module 3 should not be the first thing
+    # to introduce one.
+    device_offline_after_seconds: int = 120
+    # Edge-triggered via the operational dedupe, so a battery sitting at 19%
+    # raises one alert rather than one per heartbeat.
+    device_low_battery_percent: int = 20
 
     @field_validator("cors_origins", mode="before")
     @classmethod

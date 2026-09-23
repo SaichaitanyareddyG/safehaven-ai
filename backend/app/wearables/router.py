@@ -73,9 +73,13 @@ def list_devices(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> WearableDeviceListResponse:
+    # Refresh derived offline state before reporting the fleet, so this view
+    # and the alert queue never disagree about which devices are silent.
+    service.sweep_offline_devices(db)
     devices = service.list_devices(db)
     return WearableDeviceListResponse(
-        total=len(devices), results=[service.to_read(d) for d in devices]
+        total=len(devices),
+        results=[service.to_read(device, assignment) for device, assignment in devices],
     )
 
 
@@ -241,6 +245,12 @@ def list_safety_alerts(
     Ordered by priority then recency, so a possible fall never sits below a low
     battery whatever their timestamps.
     """
+    # THE POLL IS THE SWEEP. There is no scheduler in this codebase, so
+    # newly-silent devices are detected here, on the read that the nurse
+    # dashboard performs every few seconds (see service.sweep_offline_devices
+    # for the trade-off this accepts).
+    service.sweep_offline_devices(db)
+
     statuses = status_filter or [AlertStatus.OPEN, AlertStatus.ACKNOWLEDGED]
     alerts = service.list_alerts(db, statuses=statuses)
     return SafetyAlertListResponse(

@@ -33,6 +33,9 @@ const CATEGORY_BY_EVENT_TYPE: Record<string, AuditEventCategory> = {
   // module; it must never render as a grey 'info' dot next to a login.
   SAFETY_EVENT_RECEIVED: 'safety-warning',
   SAFETY_ALERT_RAISED: 'safety-warning',
+  // A monitor that has silently stopped reporting is a safety condition,
+  // not an operational footnote.
+  WEARABLE_DEVICE_OFFLINE_DETECTED: 'safety-warning',
   // Acknowledging and resolving are a clinician taking responsibility, which
   // is what the 'approval' category already means elsewhere.
   SAFETY_ALERT_ACKNOWLEDGED: 'approval',
@@ -60,10 +63,6 @@ function deviceSuffix(event: AuditEvent): string {
   return typeof code === 'string' && code ? `: ${code}` : ''
 }
 
-// Which detectors were enabled. Worth showing on the timeline because
-// RESTRICTED_MOBILITY is a deliberate clinical decision, not a default — so
-// "who turned it on, and when" is exactly the kind of thing an audit trail
-// exists to answer.
 // WORDING IS A PRODUCT RULE (MODULE_3_IMPLEMENTATION_PLAN.md §14/§15), not a
 // style choice. The wearable observes movement; it never diagnoses a cause.
 // "Abnormal repetitive movement" must never become "seizure", and "unexpected
@@ -113,6 +112,9 @@ function eventCountSuffix(event: AuditEvent): string {
   return typeof count === 'number' && count > 1 ? ` (${count} events)` : ''
 }
 
+// Which detectors were enabled. Worth showing on the timeline because
+// RESTRICTED_MOBILITY is a deliberate clinical decision, not a default — so
+// "who turned it on, and when" is exactly what an audit trail exists to answer.
 function profileSuffix(event: AuditEvent): string {
   const profile = event.event_metadata['monitoring_profile']
   if (typeof profile !== 'string' || !profile) return ''
@@ -251,8 +253,14 @@ export function auditEventDescription(event: AuditEvent): string {
       return `${alertLabel(event)} alert raised${prioritySuffix(event)}${delayedSuffix(event)}`
     case 'SAFETY_ALERT_ACKNOWLEDGED':
       return `${alertLabel(event)} alert acknowledged by clinician`
+    case 'WEARABLE_DEVICE_OFFLINE_DETECTED':
+      return `Safety monitor stopped reporting${deviceSuffix(event)}`
     case 'SAFETY_ALERT_RESOLVED':
-      return `${alertLabel(event)} alert resolved${eventCountSuffix(event)}`
+      return event.event_metadata['reason'] === 'device_reconnected'
+        ? `${alertLabel(event)} alert auto-resolved (device reconnected)`
+        : event.event_metadata['reason'] === 'battery_recovered'
+          ? `${alertLabel(event)} alert auto-resolved (battery recovered)`
+          : `${alertLabel(event)} alert resolved${eventCountSuffix(event)}`
     default:
       return event.event_type
   }

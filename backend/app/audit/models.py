@@ -84,6 +84,8 @@ class AuditEventType(str, enum.Enum):
     SAFETY_ALERT_RAISED = "SAFETY_ALERT_RAISED"
     SAFETY_ALERT_ACKNOWLEDGED = "SAFETY_ALERT_ACKNOWLEDGED"
     SAFETY_ALERT_RESOLVED = "SAFETY_ALERT_RESOLVED"
+    # Derived from the ABSENCE of heartbeats, not reported by any device.
+    WEARABLE_DEVICE_OFFLINE_DETECTED = "WEARABLE_DEVICE_OFFLINE_DETECTED"
 
 
 class AuditEvent(Base):
