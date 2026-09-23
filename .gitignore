@@ -13,3 +13,6 @@ frontend/dist/
 
 # OS
 .DS_Store
+
+# Regenerable demo recording (produced by demo-assets/playwright-videos/record_full_demo.mjs)
+demo-assets/playwright-videos/*.mp4
