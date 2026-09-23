@@ -22,7 +22,7 @@ from app.patient_access.service import InvalidCareAccessTokenError, TokenNotFoun
 from app.patient_chat import service as chat_service
 from app.patient_chat.schemas import ChatMessageListResponse, ChatMessageRead, ChatSendRequest, ChatSendResponse
 from app.patient_feedback import service as feedback_service
-from app.patient_feedback.schemas import ComprehensionFeedbackCreate, ComprehensionFeedbackRead
+from app.patient_feedback.schemas import ComprehensionFeedbackCreate, ComprehensionFeedbackRead, TeachBackResult, TeachBackSubmit
 from app.patient_feedback.service import InstructionNotFoundForPatientError
 from app.patients.service import PatientNotFoundError
 from app.tts.service import TextTooLongError, synthesize_speech
@@ -181,3 +181,20 @@ def post_care_plan_feedback(
     except InstructionNotFoundForPatientError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instruction not found") from exc
     return ComprehensionFeedbackRead.model_validate(feedback)
+
+
+@router.post("/care-plan/teach-back", response_model=TeachBackResult)
+def post_care_plan_teach_back(payload: TeachBackSubmit, db: Annotated[Session, Depends(get_db)]) -> TeachBackResult:
+    """Public, same token gate as /care-plan. AHRQ's teach-back method — the
+    patient explains the instruction back in their own words instead of just
+    clicking "yes, I understand"; see app/patient_feedback/service.py's
+    _check_teach_back for what "passed" actually checks (and doesn't)."""
+    try:
+        record = feedback_service.record_teach_back_by_token(db, payload.token, payload.instruction_id, payload.response_text)
+    except InvalidCareAccessTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired access link"
+        ) from exc
+    except InstructionNotFoundForPatientError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instruction not found") from exc
+    return TeachBackResult.model_validate(record)

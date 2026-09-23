@@ -24,6 +24,7 @@ from app.ai.provider import (
     RawExtractionResponse,
     RawGenerationResponse,
     RawImageIdentificationResponse,
+    RawTranscriptionResponse,
     RawTranslationResponse,
 )
 from app.instructions.models import InstructionType
@@ -222,3 +223,11 @@ class AnthropicProvider:
         Anthropic). Claude models are multimodal and could support this
         later without an architectural change — just not built now."""
         raise ExtractionProviderError("Medication image identification is not implemented for the Anthropic provider")
+
+    def transcribe_audio(self, audio_bytes: bytes, mime_type: str) -> RawTranscriptionResponse:
+        """Not implemented on this provider — clinician dictation is
+        OpenAI-only in this build, same scoping as the image method above.
+        Anthropic's API has no speech-to-text endpoint at all, so unlike the
+        image method above this isn't merely "not built yet" — it would need a
+        separate transcription vendor entirely."""
+        raise ExtractionProviderError("Audio transcription is not implemented for the Anthropic provider")

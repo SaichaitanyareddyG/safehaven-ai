@@ -21,8 +21,16 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # mistyping their password a few times never gets blocked, tight enough to
 # make a credential-stuffing script slow and noisy rather than free. Not a
 # claim of enterprise-grade brute-force protection (see the security plan).
-_LOGIN_RATE_LIMIT = "10/minute"
-_REGISTER_RATE_LIMIT = "5/minute"
+#
+# Deliberately per-IP, not per-account: a real hospital may have many staff
+# behind one NAT gateway sharing a single apparent IP, so this is set high
+# enough that ordinary shared-network usage doesn't collide with it — this
+# is a blunt instrument against a single actor hammering the endpoint, not a
+# precise per-account brute-force lockout (that would need a different key,
+# e.g. the attempted email, which is a real but separate design decision —
+# deferred for now per explicit choice, not an oversight).
+_LOGIN_RATE_LIMIT = "30/minute"
+_REGISTER_RATE_LIMIT = "15/minute"
 
 
 @router.post("/login", response_model=TokenResponse)

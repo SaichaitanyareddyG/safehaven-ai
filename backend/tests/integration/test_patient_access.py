@@ -229,9 +229,16 @@ def test_response_is_minimal_no_internal_fields(client):
     resp = client.get("/care-plan", params={"token": raw_token})
     body = resp.json()
 
-    assert set(body.keys()) == {"patient_first_name", "preferred_language", "instructions", "past_medications"}
+    assert set(body.keys()) == {
+        "patient_first_name",
+        "preferred_language",
+        "instructions",
+        "past_medications",
+        "conditions",
+        "allergies",
+    }
     instruction_view = body["instructions"][0]
-    assert set(instruction_view.keys()) == {"id", "instruction_type", "text_by_language", "approved_at", "why"}
+    assert set(instruction_view.keys()) == {"id", "instruction_type", "text_by_language", "approved_at", "why", "past_reason"}
     # `id` is deliberately present (an opaque reference, needed by the
     # comprehension-feedback endpoint) — everything else stays absent: no
     # patient_id, no provider/model metadata, no validation internals.
@@ -272,3 +279,154 @@ def test_preferred_telugu_falls_back_to_english_when_unavailable(client):
     text_by_language = body["instructions"][0]["text_by_language"]
     assert "TELUGU" not in text_by_language
     assert "ENGLISH" in text_by_language  # the frontend falls back to this
+
+
+# ---------------------------------------------------------------------------
+# Documented conditions + curated visual explainer (see
+# app/reference/condition_explainers.py — a safe, non-AI-generated
+# alternative to generating disease/anatomy images live).
+# ---------------------------------------------------------------------------
+
+
+def test_documented_condition_with_curated_explainer_is_surfaced(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_TEXT)
+    client.post(f"/patients/{patient['id']}/conditions", json={"condition_name": "Hypertension"}, headers=headers)
+    raw_token = _create_care_link(client, headers, patient["id"])
+
+    resp = client.get("/care-plan", params={"token": raw_token})
+
+    body = resp.json()
+    assert len(body["conditions"]) == 1
+    condition = body["conditions"][0]
+    assert condition["condition_name"] == "Hypertension"
+    assert condition["explainer"] is not None
+    assert "blood pressure" in condition["explainer"]["what_it_is"].lower()
+    assert condition["explainer"]["how_it_develops"]
+    assert condition["explainer"]["where_it_affects"]
+
+
+def test_documented_condition_without_curated_explainer_still_appears_by_name(client):
+    """Never hidden just because no explainer exists — and never a guessed
+    explainer either (see lookup_condition_explainer's exact-match-only
+    rule)."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_TEXT)
+    client.post(
+        f"/patients/{patient['id']}/conditions",
+        json={"condition_name": "A rare condition not in the curated table"},
+        headers=headers,
+    )
+    raw_token = _create_care_link(client, headers, patient["id"])
+
+    resp = client.get("/care-plan", params={"token": raw_token})
+
+    body = resp.json()
+    assert len(body["conditions"]) == 1
+    assert body["conditions"][0]["condition_name"] == "A rare condition not in the curated table"
+    assert body["conditions"][0]["explainer"] is None
+
+
+def test_no_documented_conditions_returns_empty_list(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_TEXT)
+    raw_token = _create_care_link(client, headers, patient["id"])
+
+    resp = client.get("/care-plan", params={"token": raw_token})
+
+    assert resp.json()["conditions"] == []
+
+
+# ---------------------------------------------------------------------------
+# Patient-facing allergy display — the patient is the one person positioned to
+# notice the list is wrong or incomplete (gap analysis item 10).
+# ---------------------------------------------------------------------------
+
+
+def test_documented_allergies_are_shown_to_the_patient(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_TEXT)
+    client.post(
+        f"/patients/{patient['id']}/allergies",
+        json={"allergen": "Penicillin", "reaction": "rash", "severity": "moderate"},
+        headers=headers,
+    )
+    raw_token = _create_care_link(client, headers, patient["id"])
+
+    body = client.get("/care-plan", params={"token": raw_token}).json()
+
+    assert len(body["allergies"]) == 1
+    assert body["allergies"][0] == {"allergen": "Penicillin", "reaction": "rash", "severity": "moderate"}
+
+
+def test_allergy_without_reaction_or_severity_is_still_shown(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_TEXT)
+    client.post(f"/patients/{patient['id']}/allergies", json={"allergen": "Latex"}, headers=headers)
+    raw_token = _create_care_link(client, headers, patient["id"])
+
+    body = client.get("/care-plan", params={"token": raw_token}).json()
+
+    assert body["allergies"][0]["allergen"] == "Latex"
+    assert body["allergies"][0]["reaction"] is None
+
+
+def test_patient_with_no_allergies_gets_an_empty_list(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_TEXT)
+    raw_token = _create_care_link(client, headers, patient["id"])
+
+    assert client.get("/care-plan", params={"token": raw_token}).json()["allergies"] == []
+
+
+def test_allergies_are_scoped_to_the_token_s_own_patient(client):
+    """A care link must never leak another patient's allergy list."""
+    headers = _register_and_login(client)
+    patient_a = _create_active_patient(client, headers, first_name="Ayla")
+    _create_analyze_generate_approve(client, headers, patient_a["id"], MEDICATION_TEXT)
+    client.post(f"/patients/{patient_a['id']}/allergies", json={"allergen": "Penicillin"}, headers=headers)
+
+    patient_b = _create_active_patient(client, headers, first_name="Bruno")
+    _create_analyze_generate_approve(client, headers, patient_b["id"], MEDICATION_TEXT)
+    token_b = _create_care_link(client, headers, patient_b["id"])
+
+    assert client.get("/care-plan", params={"token": token_b}).json()["allergies"] == []
+
+
+# ---------------------------------------------------------------------------
+# A stopped medication and a finished course both appear under past
+# medications, but they ask opposite things of the patient. The API must let
+# the page tell them apart.
+# ---------------------------------------------------------------------------
+
+
+def test_stopped_and_completed_medications_are_distinguishable(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    stopped = _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_TEXT)
+    completed = _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_TEXT)
+    client.patch(f"/instructions/{stopped['id']}/clinical-status", json={"status": "STOPPED"}, headers=headers)
+    client.patch(f"/instructions/{completed['id']}/clinical-status", json={"status": "COMPLETED"}, headers=headers)
+    raw_token = _create_care_link(client, headers, patient["id"])
+
+    body = client.get("/care-plan", params={"token": raw_token}).json()
+
+    reasons = sorted(item["past_reason"] for item in body["past_medications"])
+    assert reasons == ["COMPLETED", "STOPPED"]
+
+
+def test_active_medication_has_no_past_reason(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_TEXT)
+    raw_token = _create_care_link(client, headers, patient["id"])
+
+    body = client.get("/care-plan", params={"token": raw_token}).json()
+
+    assert body["instructions"][0]["past_reason"] is None

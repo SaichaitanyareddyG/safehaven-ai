@@ -50,6 +50,12 @@ def _verify(client, headers, patient_code, barcode):
     )
 
 
+def _add_allergy(client, headers, patient_id, allergen):
+    resp = client.post(f"/patients/{patient_id}/allergies", json={"allergen": allergen}, headers=headers)
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
 # ---------------------------------------------------------------------------
 # Core demo scenarios (MODULE_2_DESIGN_REPORT.md section 15)
 # ---------------------------------------------------------------------------
@@ -650,3 +656,724 @@ def test_administer_allows_next_dose_outside_duplicate_window(client, db_session
     )
 
     assert second_administer.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Allergy safety check (US_HOSPITAL_MARKET_STANDARDS_GAP_ANALYSIS.md item 2)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_blocks_when_patient_has_documented_allergy(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    _add_allergy(client, headers, patient["id"], "Metoprolol")
+
+    resp = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["result"] == "BLOCKED"
+    assert "ALLERGY_ALERT" in body["mismatch_reasons"]
+    assert body["checks"]["allergy"]["passed"] is False
+    assert "Metoprolol" in body["checks"]["allergy"]["detail"]
+
+
+def test_verify_is_unaffected_by_an_unrelated_allergy(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    _add_allergy(client, headers, patient["id"], "Penicillin")
+
+    resp = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["result"] == "VERIFIED"
+    assert body["checks"]["allergy"]["passed"] is True
+
+
+def test_allergy_escalates_ambiguous_multiple_orders_to_blocked(client):
+    """Without an allergy, two active same-drug/same-dose orders are only
+    REVIEW_REQUIRED (genuinely ambiguous, needs a clinician). An allergy match
+    must never be softened by that ambiguity — it stays BLOCKED."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    _add_allergy(client, headers, patient["id"], "Metoprolol")
+
+    resp = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["result"] == "BLOCKED"
+    assert "ALLERGY_ALERT" in body["mismatch_reasons"]
+
+
+def test_administer_rejects_when_allergy_documented_after_verification(client):
+    """Mirrors the order-changed-after-verification safety net: a new
+    allergy documented between scan and confirm must still stop the dose."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+    assert verification["result"] == "VERIFIED"
+
+    _add_allergy(client, headers, patient["id"], "Metoprolol")
+
+    resp = client.post(
+        "/medication-verification/administer", json={"verification_id": verification["id"]}, headers=headers
+    )
+
+    assert resp.status_code == 422
+    assert "allergy" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# High-alert medication independent co-sign (ISMP's recommended mitigation —
+# see app/reference/medication_products.py's high_alert flag and
+# US_HOSPITAL_MARKET_STANDARDS_GAP_ANALYSIS.md item 3).
+# ---------------------------------------------------------------------------
+
+BARCODE_WARFARIN_5 = "MED-WARFARIN-5"
+
+
+def test_verify_response_surfaces_high_alert_flag_from_catalog(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+
+    warfarin_resp = _verify(client, headers, patient["patient_code"], BARCODE_WARFARIN_5)
+    assert warfarin_resp.json()["product"]["high_alert"] is True
+
+    metoprolol_resp = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25)
+    assert metoprolol_resp.json()["product"]["high_alert"] is False
+
+
+MEDICATION_WARFARIN = "Take Warfarin 5 mg orally once daily."
+
+
+def _make_high_alert_verified_event(client, headers, patient, db_session=None):
+    """A real end-to-end high-alert scan: Warfarin is flagged high_alert in
+    the catalog AND is stocked in only one formulation, so a plain order for
+    it reaches VERIFIED through the ordinary engine with no test-only
+    manipulation. (Before the formulation-ambiguity fix this was impossible —
+    Warfarin was permanently REVIEW_REQUIRED — and this helper had to borrow
+    Metoprolol's result and flip the flag by hand.)"""
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_WARFARIN)
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_WARFARIN_5).json()
+    assert verification["result"] == "VERIFIED", verification
+    return verification["id"]
+
+
+def test_administer_high_alert_medication_without_cosign_is_rejected(client, db_session):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    verification_id = _make_high_alert_verified_event(client, headers, patient, db_session)
+
+    resp = client.post(
+        "/medication-verification/administer", json={"verification_id": verification_id}, headers=headers
+    )
+
+    assert resp.status_code == 422
+    assert "co-sign" in resp.json()["detail"].lower()
+
+
+def test_administer_high_alert_medication_wrong_cosign_password_is_rejected(client, db_session):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    verification_id = _make_high_alert_verified_event(client, headers, patient, db_session)
+
+    resp = client.post(
+        "/medication-verification/administer",
+        json={
+            "verification_id": verification_id,
+            "co_signer_email": "nurse@example.com",
+            "co_signer_password": "wrong-password",
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 422
+
+
+def test_administer_high_alert_medication_cosign_by_same_person_is_rejected(client, db_session):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    verification_id = _make_high_alert_verified_event(client, headers, patient, db_session)
+
+    resp = client.post(
+        "/medication-verification/administer",
+        json={
+            "verification_id": verification_id,
+            "co_signer_email": "nurse@example.com",
+            "co_signer_password": "supersecret123",
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 422
+    assert "different clinician" in resp.json()["detail"].lower()
+
+
+def test_administer_high_alert_medication_with_valid_second_clinician_succeeds(client, db_session):
+    import uuid as uuid_module
+
+    from app.medication_verification.models import AdministrationEvent
+
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    verification_id = _make_high_alert_verified_event(client, headers, patient, db_session)
+
+    second_clinician_headers = _register_and_login(
+        client, email="second.nurse@example.com", password="anothersecret123"
+    )
+    second_clinician_id = client.get("/auth/me", headers=second_clinician_headers).json()["id"]
+
+    resp = client.post(
+        "/medication-verification/administer",
+        json={
+            "verification_id": verification_id,
+            "co_signer_email": "second.nurse@example.com",
+            "co_signer_password": "anothersecret123",
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["administered_at"] is not None
+
+    event = db_session.get(AdministrationEvent, uuid_module.UUID(verification_id))
+    assert str(event.co_signed_by) == second_clinician_id
+
+
+def test_administer_non_high_alert_medication_does_not_require_cosign(client):
+    """Sanity check: the co-sign gate must never apply outside high_alert —
+    every other administer() test in this file already proves this
+    implicitly (none of them pass co-signer fields), but this makes the
+    contrast with the high-alert tests above explicit."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+
+    resp = client.post(
+        "/medication-verification/administer", json={"verification_id": verification["id"]}, headers=headers
+    )
+
+    assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Drug-drug interaction check (see app/reference/drug_interactions.py and
+# US_HOSPITAL_MARKET_STANDARDS_GAP_ANALYSIS.md item 5).
+# ---------------------------------------------------------------------------
+
+
+def test_severe_interaction_with_another_active_medication_is_blocked(client):
+    """Metoprolol + Diltiazem is a curated SEVERE interaction — even though
+    the scanned product otherwise matches the order perfectly, this must
+    still block, the same as an allergy match."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    _create_analyze_generate_approve(client, headers, patient["id"], "Take Diltiazem 120 mg orally once daily.")
+
+    resp = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["result"] == "BLOCKED"
+    assert "SEVERE_DRUG_INTERACTION" in body["mismatch_reasons"]
+    assert body["checks"]["interactions"]["passed"] is False
+    assert "Diltiazem" in body["checks"]["interactions"]["detail"]
+
+
+def test_moderate_interaction_with_another_active_medication_is_a_warning(client):
+    """Metoprolol + Clonidine is curated MODERATE — must not be silently
+    ignored, but also must not be an absolute block like SEVERE/allergy."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    _create_analyze_generate_approve(client, headers, patient["id"], "Take Clonidine 0.1 mg orally twice daily.")
+
+    resp = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["result"] == "WARNING"
+    assert "MODERATE_DRUG_INTERACTION" in body["mismatch_reasons"]
+    assert body["checks"]["interactions"]["passed"] is False
+
+
+def test_no_interaction_with_unrelated_active_medication_passes(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    _create_analyze_generate_approve(client, headers, patient["id"], "Take Metformin 500 mg orally twice daily.")
+
+    resp = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["result"] == "VERIFIED"
+    assert body["checks"]["interactions"]["passed"] is True
+    assert body["mismatch_reasons"] == []
+
+
+def test_administer_blocks_when_severe_interacting_medication_started_after_verification(client, db_session):
+    """Mirrors the order-changed/allergy-after-verification safety nets: a
+    new interacting medication started between scan and confirm must still
+    stop the dose."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+    assert verification["result"] == "VERIFIED"
+
+    _create_analyze_generate_approve(client, headers, patient["id"], "Take Diltiazem 120 mg orally once daily.")
+
+    resp = client.post(
+        "/medication-verification/administer", json={"verification_id": verification["id"]}, headers=headers
+    )
+
+    assert resp.status_code == 422
+    assert "interaction" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Formulation ambiguity is scoped to drugs that actually HAVE more than one
+# formulation — see _check_formulation's docstring. Before this, three of the
+# five catalog drugs could never reach VERIFIED at all.
+# ---------------------------------------------------------------------------
+
+
+def test_single_formulation_drug_can_be_verified_without_stating_a_formulation(client):
+    """Lisinopril is stocked in exactly one form, so an order that doesn't
+    name a release type isn't ambiguous — there is nothing to confuse it
+    with. Previously this was permanently REVIEW_REQUIRED, which meant the
+    drug could never be administered through Module 2 at all."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_LISINOPRIL)
+
+    resp = _verify(client, headers, patient["patient_code"], BARCODE_LISINOPRIL_10)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["result"] == "VERIFIED"
+    assert body["checks"]["formulation"]["passed"] is True
+    assert "only one form" in body["checks"]["formulation"]["detail"]
+    assert body["mismatch_reasons"] == []
+
+
+def test_single_formulation_drug_can_then_be_administered(client):
+    """The consequence that actually mattered: REVIEW_REQUIRED never renders a
+    confirm button, so before this fix a correct Lisinopril dose could not be
+    given through the app."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_LISINOPRIL)
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_LISINOPRIL_10).json()
+
+    resp = client.post(
+        "/medication-verification/administer", json={"verification_id": verification["id"]}, headers=headers
+    )
+
+    assert resp.status_code == 200
+
+
+def test_multi_formulation_drug_still_requires_an_explicit_formulation(client):
+    """The safety property this check exists for is unchanged: Metoprolol IS
+    stocked in two clinically different forms, so a plain 'Metoprolol' order
+    remains genuinely ambiguous and must still go to review."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_PLAIN)
+
+    resp = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["result"] == "REVIEW_REQUIRED"
+    assert "FORMULATION_UNSPECIFIED" in body["mismatch_reasons"]
+
+
+def test_wrong_formulation_of_a_multi_formulation_drug_is_still_blocked(client):
+    """The actual dangerous mix-up — Succinate ER order, Tartrate in hand —
+    must remain a hard block, not merely a review."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+
+    resp = _verify(client, headers, patient["patient_code"], BARCODE_TARTRATE_25)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["result"] == "BLOCKED"
+    assert "FORMULATION_MISMATCH" in body["mismatch_reasons"]
+
+
+# ---------------------------------------------------------------------------
+# PRN (as-needed) administration — a scheduled dose is justified by its
+# schedule; an as-needed dose has no justification unless someone records it.
+# ---------------------------------------------------------------------------
+
+MEDICATION_PRN = "Take Paracetamol 500 mg orally every 6 hours as needed for pain."
+BARCODE_PARACETAMOL_500 = "MED-PARACETAMOL-500"
+
+
+def test_verify_marks_an_as_needed_order_as_prn(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_PRN)
+
+    body = _verify(client, headers, patient["patient_code"], BARCODE_PARACETAMOL_500).json()
+
+    assert body["order_is_prn"] is True
+
+
+def test_verify_does_not_mark_a_scheduled_order_as_prn(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+
+    body = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+
+    assert body["order_is_prn"] is False
+
+
+def test_administering_a_prn_dose_without_a_reason_is_rejected(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_PRN)
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_PARACETAMOL_500).json()
+
+    resp = client.post(
+        "/medication-verification/administer", json={"verification_id": verification["id"]}, headers=headers
+    )
+
+    assert resp.status_code == 422
+    assert "as-needed" in resp.json()["detail"].lower()
+
+
+def test_blank_reason_does_not_satisfy_the_prn_requirement(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_PRN)
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_PARACETAMOL_500).json()
+
+    resp = client.post(
+        "/medication-verification/administer",
+        json={"verification_id": verification["id"], "administration_reason": "   "},
+        headers=headers,
+    )
+
+    assert resp.status_code == 422
+
+
+def test_administering_a_prn_dose_with_a_reason_records_it(client, db_session):
+    import uuid as uuid_module
+
+    from app.medication_verification.models import AdministrationEvent
+
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_PRN)
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_PARACETAMOL_500).json()
+
+    resp = client.post(
+        "/medication-verification/administer",
+        json={"verification_id": verification["id"], "administration_reason": "pain 7/10"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200
+    event = db_session.get(AdministrationEvent, uuid_module.UUID(verification["id"]))
+    assert event.administration_reason == "pain 7/10"
+
+
+def test_scheduled_dose_still_needs_no_reason(client):
+    """The PRN requirement must not leak onto ordinary scheduled doses."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+
+    resp = client.post(
+        "/medication-verification/administer", json={"verification_id": verification["id"]}, headers=headers
+    )
+
+    assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# A discharged patient must not be administrable. Discharge deliberately
+# leaves orders ACTIVE (so the record of what was prescribed survives), which
+# meant every order of a discharged patient still verified normally.
+# ---------------------------------------------------------------------------
+
+
+def test_discharged_patient_scan_is_blocked(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    client.patch(f"/patients/{patient['id']}", json={"admission_status": "DISCHARGED"}, headers=headers)
+
+    resp = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["result"] == "BLOCKED"
+    assert "PATIENT_NOT_ADMITTED" in body["mismatch_reasons"]
+    assert body["checks"]["admission"]["passed"] is False
+    assert "DISCHARGED" in body["checks"]["admission"]["detail"]
+
+
+def test_discharged_patient_cannot_be_administered_to(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    client.patch(f"/patients/{patient['id']}", json={"admission_status": "DISCHARGED"}, headers=headers)
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+
+    resp = client.post(
+        "/medication-verification/administer", json={"verification_id": verification["id"]}, headers=headers
+    )
+
+    assert resp.status_code == 422
+
+
+def test_admitted_patient_is_unaffected_by_the_admission_check(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+
+    body = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+
+    assert body["result"] == "VERIFIED"
+
+
+# ---------------------------------------------------------------------------
+# The administration record, and documenting a dose that was NOT given.
+# Before this, AdministrationEvent rows were written and never read, and a
+# refused dose was indistinguishable from a nurse who walked away.
+# ---------------------------------------------------------------------------
+
+
+def _history(client, headers, patient_id):
+    return client.get(f"/patients/{patient_id}/administrations", headers=headers)
+
+
+def test_administration_history_shows_a_given_dose(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+    client.post("/medication-verification/administer", json={"verification_id": verification["id"]}, headers=headers)
+
+    body = _history(client, headers, patient["id"]).json()
+
+    assert body["total"] == 1
+    row = body["results"][0]
+    assert row["verification_result"] == "VERIFIED"
+    assert row["administered_at"] is not None
+    assert row["not_given_reason"] is None
+    assert row["identified_medication_name"] == "Metoprolol Succinate ER"
+
+
+def test_administration_history_includes_blocked_attempts(client):
+    """A wrong drug caught at the bedside is exactly what the next shift needs
+    to see — it must not be hidden from the record."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_LISINOPRIL)
+    _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25)
+
+    body = _history(client, headers, patient["id"]).json()
+
+    assert body["total"] == 1
+    assert body["results"][0]["verification_result"] == "BLOCKED"
+
+
+def test_recording_a_refused_dose(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+
+    resp = client.post(
+        "/medication-verification/not-given",
+        json={"verification_id": verification["id"], "reason": "REFUSED", "note": "patient declined"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200
+    row = _history(client, headers, patient["id"]).json()["results"][0]
+    assert row["not_given_reason"] == "REFUSED"
+    assert row["not_given_note"] == "patient declined"
+    assert row["not_given_at"] is not None
+    assert row["administered_at"] is None
+
+
+def test_a_dose_cannot_be_both_given_and_not_given(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+    client.post("/medication-verification/administer", json={"verification_id": verification["id"]}, headers=headers)
+
+    resp = client.post(
+        "/medication-verification/not-given",
+        json={"verification_id": verification["id"], "reason": "REFUSED"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 409
+
+
+def test_a_not_given_dose_cannot_then_be_administered(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    verification = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+    client.post(
+        "/medication-verification/not-given",
+        json={"verification_id": verification["id"], "reason": "HELD"},
+        headers=headers,
+    )
+
+    resp = client.post(
+        "/medication-verification/administer", json={"verification_id": verification["id"]}, headers=headers
+    )
+
+    assert resp.status_code in (409, 422)
+
+
+def test_a_blocked_scan_can_still_be_documented_as_held(client):
+    """"The scan was blocked so I held the dose and told the doctor" belongs on
+    the record — refusing to let a nurse document it pushes the decision off
+    the system entirely."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_LISINOPRIL)
+    blocked = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+    assert blocked["result"] == "BLOCKED"
+
+    resp = client.post(
+        "/medication-verification/not-given",
+        json={"verification_id": blocked["id"], "reason": "HELD", "note": "pharmacy contacted"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200
+
+
+def test_administration_history_requires_authentication(client):
+    resp = client.get("/patients/00000000-0000-0000-0000-000000000000/administrations")
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Nil by mouth before a procedure. The order stays ACTIVE and every other
+# check passes, so without this the engine reported VERIFIED for a dose that
+# must be held — the same shape of gap as the discharged patient.
+# ---------------------------------------------------------------------------
+
+
+def _set_nil_by_mouth(client, headers, patient_id, hours_ago=1, procedure="a hip replacement"):
+    from datetime import datetime, timedelta, timezone
+
+    encounter = client.post(
+        f"/patients/{patient_id}/encounters",
+        json={"reason_for_visit": "pre-operative admission", "admission_date": "2026-09-23"},
+        headers=headers,
+    ).json()
+    npo_from = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
+    resp = client.patch(
+        f"/encounters/{encounter['id']}",
+        json={"planned_procedure": procedure, "nil_by_mouth_from": npo_from},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return encounter
+
+
+def test_oral_dose_is_blocked_for_a_nil_by_mouth_patient(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    _set_nil_by_mouth(client, headers, patient["id"])
+
+    body = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+
+    assert body["result"] == "BLOCKED"
+    assert "PATIENT_NIL_BY_MOUTH" in body["mismatch_reasons"]
+    assert body["checks"]["nil_by_mouth"]["passed"] is False
+    assert "hip replacement" in body["checks"]["nil_by_mouth"]["detail"]
+
+
+def test_nil_by_mouth_in_the_future_does_not_block_yet(client):
+    """"NPO from midnight" is ordered in advance and must not take effect
+    early — an alert that fires before it applies is an alert staff learn to
+    ignore."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    _set_nil_by_mouth(client, headers, patient["id"], hours_ago=-6)
+
+    body = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+
+    assert body["result"] == "VERIFIED"
+    assert body["checks"]["nil_by_mouth"]["passed"] is True
+
+
+def test_patient_not_nil_by_mouth_is_unaffected(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+
+    body = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+
+    assert body["result"] == "VERIFIED"
+    assert body["checks"]["nil_by_mouth"]["passed"] is True
+
+
+def test_a_held_pre_op_dose_can_be_documented_as_held(client):
+    """The designed path out of an NPO block: the nurse documents the hold, so
+    the decision is on the record rather than the dose silently not happening."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(client, headers, patient["id"], MEDICATION_SUCCINATE_25)
+    _set_nil_by_mouth(client, headers, patient["id"])
+    blocked = _verify(client, headers, patient["patient_code"], BARCODE_SUCCINATE_25).json()
+
+    resp = client.post(
+        "/medication-verification/not-given",
+        json={"verification_id": blocked["id"], "reason": "HELD", "note": "nil by mouth for theatre"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200
+    row = client.get(f"/patients/{patient['id']}/administrations", headers=headers).json()["results"][0]
+    assert row["not_given_reason"] == "HELD"
+
+
+def test_injected_medication_is_not_blocked_by_nil_by_mouth(client):
+    """Nil by mouth restricts what goes through the gut, not what goes into
+    the patient by injection. Blocking a subcutaneous dose here would be
+    clinically wrong and would teach staff to click past the warning."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    _create_analyze_generate_approve(
+        client, headers, patient["id"], "Give Enoxaparin 40 mg subcutaneously once daily."
+    )
+    _set_nil_by_mouth(client, headers, patient["id"])
+
+    body = _verify(client, headers, patient["patient_code"], "MED-ENOXAPARIN-40").json()
+
+    assert body["checks"]["nil_by_mouth"]["passed"] is True
+    assert "not restricted" in body["checks"]["nil_by_mouth"]["detail"]
+    assert "PATIENT_NIL_BY_MOUTH" not in body["mismatch_reasons"]

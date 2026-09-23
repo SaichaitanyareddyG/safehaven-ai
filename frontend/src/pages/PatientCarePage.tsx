@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { HeartPulse } from 'lucide-react'
+import { AlertTriangle, HeartPulse, MapPin, Stethoscope, TrendingUp } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
@@ -9,10 +9,15 @@ import { Button } from '@/components/ui/button'
 import { PatientChatPanel } from '@/features/patient-chat/PatientChatPanel'
 import { ComprehensionFeedback } from '@/features/patient-feedback/ComprehensionFeedback'
 import { instructionIcon, instructionTypeLabel } from '@/lib/instruction-icons'
-import { ALL_LANGUAGES, LANGUAGE_NATIVE_LABEL } from '@/lib/language-labels'
+import { ALL_LANGUAGES, LANGUAGE_NATIVE_LABEL, textDirection } from '@/lib/language-labels'
 import { cn } from '@/lib/utils'
 import type { Language } from '@/types/patients'
-import type { PatientCareInstructionView, WhyExplanation } from '@/types/patient-access'
+import type {
+  PatientAllergyView,
+  PatientCareInstructionView,
+  PatientConditionView,
+  WhyExplanation,
+} from '@/types/patient-access'
 
 export function PatientCarePage() {
   const [searchParams] = useSearchParams()
@@ -49,7 +54,10 @@ export function PatientCarePage() {
       <p className="text-xl text-muted-foreground">Hello, {data.patient_first_name}</p>
       <h1 className="mt-1 text-3xl font-bold tracking-tight sm:text-4xl">Today's Care Plan</h1>
 
-      <div className="mt-6 flex justify-center gap-2">
+      {/* flex-wrap matters now that this is 11 languages, not 3 — without it
+          the row overflows a phone screen, and this page is mostly read on
+          phones. */}
+      <div className="mt-6 flex flex-wrap justify-center gap-2">
         {ALL_LANGUAGES.map((language) => (
           <button
             key={language}
@@ -67,6 +75,8 @@ export function PatientCarePage() {
         ))}
       </div>
 
+      {data.allergies.length > 0 && <AllergiesCard allergies={data.allergies} />}
+
       <div className="mt-8 space-y-5 text-left">
         {data.instructions.length === 0 && (
           <p className="text-center text-lg text-muted-foreground">
@@ -82,10 +92,23 @@ export function PatientCarePage() {
         )}
       </div>
 
+      {data.conditions.length > 0 && (
+        <div className="mt-8 text-left">
+          <p className="mb-3 text-center text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Understanding Your Health
+          </p>
+          <div className="space-y-4">
+            {data.conditions.map((condition, index) => (
+              <ConditionExplainerCard key={index} condition={condition} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {data.past_medications.length > 0 && (
         <div className="mt-8 text-left">
           <p className="mb-3 text-center text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Past Medications
+            Medications you are no longer taking
           </p>
           <div className="space-y-2">
             {data.past_medications.map((instruction, index) => (
@@ -133,12 +156,99 @@ function CurrentMedicationCard({
 
 function PastMedicationRow({ instruction, language }: { instruction: PatientCareInstructionView; language: Language }) {
   const text = instruction.text_by_language[language] ?? instruction.text_by_language.ENGLISH
+  const wasStopped = instruction.past_reason === 'STOPPED'
+
+  // A stopped medication and a finished course both live here, but they ask
+  // opposite things of the patient. A course they completed needs nothing
+  // from them; a drug their care team stopped — possibly because it was
+  // harming them — needs them to stop taking any they still have at home.
+  // Rendering both as the same muted grey row hid that entirely.
   return (
     <div
-      className="rounded-xl border bg-muted/20 px-5 py-3 text-left text-muted-foreground"
+      className={cn(
+        'rounded-xl border px-5 py-3 text-left',
+        wasStopped
+          ? 'border-destructive bg-destructive/5 text-foreground'
+          : 'bg-muted/20 text-muted-foreground',
+      )}
       data-testid="past-medication-row"
+      data-past-reason={instruction.past_reason ?? 'UNKNOWN'}
     >
+      {wasStopped ? (
+        <p className="mb-1 flex items-center gap-2 text-base font-semibold text-destructive">
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+          Stopped by your care team — do not take this any more
+        </p>
+      ) : (
+        <p className="mb-1 text-sm font-medium text-muted-foreground">Course finished</p>
+      )}
       <p className="text-base">{text}</p>
+    </div>
+  )
+}
+
+function AllergiesCard({ allergies }: { allergies: PatientAllergyView[] }) {
+  return (
+    <div
+      className="mt-6 rounded-2xl border-2 border-amber-400 bg-amber-50 p-6 text-left dark:border-amber-900 dark:bg-amber-950 sm:p-8"
+      data-testid="patient-allergies-card"
+    >
+      <p className="flex items-center gap-2 text-2xl font-semibold text-amber-900 dark:text-amber-300">
+        <AlertTriangle className="h-6 w-6 shrink-0" aria-hidden="true" />
+        Your allergies
+      </p>
+      <ul className="mt-4 space-y-2">
+        {allergies.map((allergy, index) => (
+          <li key={index} className="text-xl" data-testid="patient-allergy-row">
+            <span className="font-semibold">{allergy.allergen}</span>
+            {(allergy.reaction || allergy.severity) && (
+              <span className="text-muted-foreground">
+                {' — '}
+                {[allergy.severity, allergy.reaction].filter(Boolean).join(', ')}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {/* The reason this is shown at all: the patient is the one person who
+          can notice the list is wrong. A passive display would be decoration. */}
+      <p className="mt-4 text-base text-muted-foreground">
+        Please tell your nurse or doctor if anything here looks wrong, or if you have an allergy that isn't listed.
+      </p>
+    </div>
+  )
+}
+
+function ConditionExplainerCard({ condition }: { condition: PatientConditionView }) {
+  if (!condition.explainer) {
+    return (
+      <div className="rounded-2xl border-2 bg-background p-6 shadow-sm sm:p-8" data-testid="condition-explainer-card">
+        <p className="text-2xl font-semibold">{condition.condition_name}</p>
+        <p className="mt-2 text-lg text-muted-foreground">
+          Ask your care team for more information about this condition.
+        </p>
+      </div>
+    )
+  }
+
+  const panels = [
+    { label: 'What it is', text: condition.explainer.what_it_is, icon: Stethoscope },
+    { label: 'How it develops', text: condition.explainer.how_it_develops, icon: TrendingUp },
+    { label: 'Where it affects you', text: condition.explainer.where_it_affects, icon: MapPin },
+  ]
+
+  return (
+    <div className="rounded-2xl border-2 bg-background p-6 shadow-sm sm:p-8" data-testid="condition-explainer-card">
+      <p className="text-2xl font-semibold">{condition.condition_name}</p>
+      <div className="mt-4 grid gap-4 sm:grid-cols-3">
+        {panels.map(({ label, text, icon: Icon }) => (
+          <div key={label} className="rounded-xl border bg-muted/30 p-4" data-testid="condition-explainer-panel">
+            <Icon className="h-6 w-6 text-primary" aria-hidden="true" />
+            <p className="mt-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+            <p className="mt-1 text-base leading-relaxed">{text}</p>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -161,7 +271,13 @@ function CareInstructionCard({
         <span aria-hidden="true">{instructionIcon(instruction.instruction_type)}</span>{' '}
         {instructionTypeLabel(instruction.instruction_type)}
       </p>
-      <p className="mt-4 text-2xl leading-relaxed sm:text-3xl" data-testid="care-instruction-text">
+      <p
+        className="mt-4 text-2xl leading-relaxed sm:text-3xl"
+        // Arabic and other RTL scripts otherwise render with numbers and
+        // punctuation in the wrong places — not cosmetic on a dose.
+        dir={textDirection(isFallback ? 'ENGLISH' : language)}
+        data-testid="care-instruction-text"
+      >
         {text}
       </p>
       {isFallback && (

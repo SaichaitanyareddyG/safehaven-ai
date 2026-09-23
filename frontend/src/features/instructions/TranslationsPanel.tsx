@@ -6,12 +6,13 @@ import { requestTranslations } from '@/api/instructions'
 import { ValidationStatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { ApiError } from '@/lib/api-client'
-import { LANGUAGE_NATIVE_LABEL } from '@/lib/language-labels'
+import { ALL_LANGUAGES, LANGUAGE_NATIVE_LABEL } from '@/lib/language-labels'
 import { formatFactValue } from '@/lib/instruction-field-labels'
 import type { PatientOutputTranslationRead } from '@/types/instructions'
 import type { Language } from '@/types/patients'
 
-const TRANSLATABLE_LANGUAGES: Language[] = ['TELUGU', 'HINDI']
+// Every supported language except the source language itself.
+const TRANSLATABLE_LANGUAGES: Language[] = ALL_LANGUAGES.filter((language) => language !== 'ENGLISH')
 
 export function TranslationsPanel({
   instructionId,

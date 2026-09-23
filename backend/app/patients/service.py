@@ -1,10 +1,12 @@
 import uuid
+from datetime import date
 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.audit.models import ActorType, AuditEventType
 from app.audit.service import record_event
+from app.encounters.models import Encounter
 from app.patients.models import AdmissionStatus, Patient
 from app.patients.schemas import PatientCreate, PatientUpdate
 
@@ -24,6 +26,27 @@ def create_patient(db: Session, data: PatientCreate, created_by: uuid.UUID) -> P
     )
     db.add(patient)
     db.flush()  # assigns patient.id, needed as the audit event's patient_id below
+
+    # Registration IS the start of a visit, so open the encounter here rather
+    # than leaving it to a separate step that in practice never happened.
+    if data.reason_for_visit and data.reason_for_visit.strip():
+        encounter = Encounter(
+            patient_id=patient.id,
+            reason_for_visit=data.reason_for_visit.strip(),
+            admission_date=date.today(),
+            created_by=created_by,
+        )
+        db.add(encounter)
+        db.flush()
+        record_event(
+            db,
+            event_type=AuditEventType.ENCOUNTER_CREATED,
+            actor_type=ActorType.CLINICIAN,
+            actor_id=created_by,
+            patient_id=patient.id,
+            entity_type="Encounter",
+            entity_id=encounter.id,
+        )
 
     record_event(
         db,

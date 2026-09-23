@@ -1,24 +1,28 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.ai.provider import ExtractionProviderError, get_llm_provider
 from app.auth.dependencies import get_current_user
 from app.auth.provider import AuthenticatedUser
 from app.core.db import get_db
 from app.instructions import service
-from app.instructions.models import ClinicalStatus, InstructionStatus
+from app.instructions.models import CaptureMethod, ClinicalStatus, InstructionStatus
 from app.instructions.schemas import (
     CareInstructionDetail,
     CareInstructionListResponse,
     CareInstructionRead,
     ClinicalStatusUpdate,
+    DictationWarningRead,
     InstructionTextPayload,
     RejectionRequest,
+    TranscriptionResponse,
     TranslationRequest,
     TranslationResultItem,
 )
+from app.validation.dictation_safety import check_dictation
 from app.instructions.service import (
     ClinicalStatusNotAllowedError,
     GenerationNotAllowedError,
@@ -53,12 +57,63 @@ def create_instruction(
 ) -> CareInstructionRead:
     try:
         return service.create_instruction(
-            db, patient_id, payload.text, created_by=uuid.UUID(current_user.id)
+            db,
+            patient_id,
+            payload.text,
+            created_by=uuid.UUID(current_user.id),
+            capture_method=CaptureMethod.DICTATED if payload.dictated else CaptureMethod.TYPED,
         )
     except PatientNotFoundError as exc:
         raise _not_found("Patient not found") from exc
     except PatientNotActiveError as exc:
         raise _conflict("Cannot create an instruction for a patient who is not ACTIVE") from exc
+
+
+_MAX_DICTATION_BYTES = 10 * 1024 * 1024  # ~2 minutes of browser-recorded audio; an instruction is a sentence or two
+
+
+@router.post("/instructions/transcribe", response_model=TranscriptionResponse)
+async def transcribe_dictation(
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    file: UploadFile = File(...),
+) -> TranscriptionResponse:
+    """Transcribes dictated audio into an editable DRAFT. Creates nothing —
+    no instruction, no version, no database row of any kind, and takes no
+    patient_id precisely so that it cannot.
+
+    That is the structural guarantee behind this whole feature: a transcript
+    physically cannot become a clinical order without the clinician
+    submitting it through the ordinary creation endpoint, because this
+    endpoint has nothing to submit it to. See
+    MODULE_1_VOICE_DICTATION_DESIGN.md §3 for why that matters — a mis-heard
+    dose is invisible to every downstream validator, since the transcript
+    becomes the very source of truth they all check against.
+
+    The audio itself is never persisted: transcribed in-request, then
+    dropped. Same posture as identify_from_image() and STORE_RAW_LLM_DATA.
+    """
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No audio was received")
+    if len(audio_bytes) > _MAX_DICTATION_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Recording is too long — dictate one instruction at a time",
+        )
+
+    try:
+        result = get_llm_provider().transcribe_audio(audio_bytes, file.content_type or "audio/webm")
+    except ExtractionProviderError as exc:
+        # Never fabricate a transcript on failure — the clinician types
+        # instead, exactly as they do today.
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not transcribe the recording — please type it"
+        ) from exc
+
+    return TranscriptionResponse(
+        text=result.text,
+        warnings=[DictationWarningRead(code=w.code, message=w.message, excerpt=w.excerpt) for w in check_dictation(result.text)],
+    )
 
 
 @router.get("/patients/{patient_id}/instructions", response_model=CareInstructionListResponse)

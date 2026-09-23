@@ -1,8 +1,13 @@
 import { useMutation } from '@tanstack/react-query'
-import { CheckCircle2, RotateCcw } from 'lucide-react'
+import { CheckCircle2, MinusCircle, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 
-import { administerMedication, verifyConfirmedMedication, verifyMedication } from '@/api/medication-verification'
+import {
+  administerMedication,
+  recordNotGiven,
+  verifyConfirmedMedication,
+  verifyMedication,
+} from '@/api/medication-verification'
 import { getPatientByCode } from '@/api/patients'
 import { AppLayout } from '@/components/AppLayout'
 import { Button } from '@/components/ui/button'
@@ -12,9 +17,9 @@ import { ScanOrManualEntry } from '@/features/medication-verification/ScanOrManu
 import { VerificationResultView } from '@/features/medication-verification/VerificationResultView'
 import { ApiError } from '@/lib/api-client'
 import type { Patient } from '@/types/patients'
-import type { ConfirmedProductCandidate, VerifyResponse } from '@/types/medication-verification'
+import type { ConfirmedProductCandidate, NotGivenReason, VerifyResponse } from '@/types/medication-verification'
 
-type Step = 'scan-patient' | 'scan-medication' | 'result' | 'administered'
+type Step = 'scan-patient' | 'confirm-patient' | 'scan-medication' | 'result' | 'administered' | 'not-given'
 
 export function MedicationVerificationPage() {
   const [step, setStep] = useState<Step>('scan-patient')
@@ -28,7 +33,11 @@ export function MedicationVerificationPage() {
     onSuccess: (resolved) => {
       setPatient(resolved)
       setError(null)
-      setStep('scan-medication')
+      // Resolving the wristband/code is only the FIRST identifier — Joint
+      // Commission requires a second (name + DOB) actively confirmed by the
+      // nurse before any medication step unlocks, not just displayed
+      // passively. See US_HOSPITAL_MARKET_STANDARDS_GAP_ANALYSIS.md item 1.
+      setStep('confirm-patient')
     },
     onError: (err) => {
       setError(err instanceof ApiError && err.status === 404 ? 'Unknown patient wristband — please rescan.' : 'Could not read wristband — please rescan.')
@@ -56,7 +65,8 @@ export function MedicationVerificationPage() {
   })
 
   const administerMutation = useMutation({
-    mutationFn: () => administerMedication(verification!.id),
+    mutationFn: (args: { coSigner?: { email: string; password: string }; reason?: string }) =>
+      administerMedication(verification!.id, args.coSigner, args.reason),
     onSuccess: () => {
       setAdministerError(null)
       setStep('administered')
@@ -69,6 +79,20 @@ export function MedicationVerificationPage() {
       // not paraphrased away.
       setAdministerError(
         err instanceof ApiError ? err.message : 'Could not confirm administration — please rescan and try again.',
+      )
+    },
+  })
+
+  const notGivenMutation = useMutation({
+    mutationFn: (args: { reason: NotGivenReason; note?: string }) =>
+      recordNotGiven(verification!.id, args.reason, args.note),
+    onSuccess: () => {
+      setAdministerError(null)
+      setStep('not-given')
+    },
+    onError: (err) => {
+      setAdministerError(
+        err instanceof ApiError ? err.message : 'Could not record this — please try again.',
       )
     },
   })
@@ -109,10 +133,18 @@ export function MedicationVerificationPage() {
                   {patient.first_name} {patient.last_name}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  {patient.patient_code}
+                  DOB {patient.date_of_birth} · {patient.patient_code}
                   {patient.room_number ? ` · Room ${patient.room_number}` : ''}
                 </p>
               </div>
+              {patient.admission_status !== 'ACTIVE' && (
+                <span
+                  className="rounded-full border border-destructive px-3 py-1 text-sm font-semibold text-destructive"
+                  data-testid="patient-not-admitted-badge"
+                >
+                  {patient.admission_status}
+                </span>
+              )}
             </CardContent>
           </Card>
         )}
@@ -136,10 +168,41 @@ export function MedicationVerificationPage() {
           </Card>
         )}
 
+        {step === 'confirm-patient' && patient && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Step 2 — Confirm Patient Identity</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Confirm this is the right patient before continuing — the second identifier check
+                required before any medication step (never rely on the code alone).
+              </p>
+              <div className="rounded-lg border p-4">
+                <p className="text-lg font-semibold">
+                  {patient.first_name} {patient.last_name}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  DOB {patient.date_of_birth} · {patient.patient_code}
+                  {patient.room_number ? ` · Room ${patient.room_number}` : ''}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={() => setStep('scan-medication')} data-testid="patient-confirm-identity-button">
+                  Yes, this is {patient.first_name} {patient.last_name}
+                </Button>
+                <Button variant="outline" onClick={reset} data-testid="patient-reject-identity-button">
+                  No — wrong patient
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {step === 'scan-medication' && patient && (
           <Card>
             <CardHeader>
-              <CardTitle>Step 2 — Scan Medication</CardTitle>
+              <CardTitle>Step 3 — Scan Medication</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <ScanOrManualEntry
@@ -169,8 +232,9 @@ export function MedicationVerificationPage() {
             <CardContent className="space-y-3">
               <VerificationResultView
                 verification={verification}
-                onConfirm={() => administerMutation.mutate()}
+                onConfirm={(coSigner, reason) => administerMutation.mutate({ coSigner, reason })}
                 onRescan={rescanMedication}
+                onNotGiven={(reason, note) => notGivenMutation.mutate({ reason, note })}
                 isAdministering={administerMutation.isPending}
               />
               {administerError && (
@@ -178,6 +242,21 @@ export function MedicationVerificationPage() {
                   {administerError}
                 </p>
               )}
+            </CardContent>
+          </Card>
+        )}
+
+        {step === 'not-given' && (
+          <Card>
+            <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
+              <MinusCircle className="h-10 w-10 text-amber-600" />
+              <p className="text-lg font-semibold">Recorded as not given</p>
+              <p className="text-sm text-muted-foreground">
+                This is on the patient's medication record for the next clinician.
+              </p>
+              <Button onClick={reset} data-testid="verify-another-button">
+                Verify another medication
+              </Button>
             </CardContent>
           </Card>
         )}

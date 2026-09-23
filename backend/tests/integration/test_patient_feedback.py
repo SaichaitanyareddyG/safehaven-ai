@@ -125,3 +125,106 @@ def test_instruction_belonging_to_a_different_patient_is_rejected(client):
     )
 
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Teach-back (US_HOSPITAL_MARKET_STANDARDS_GAP_ANALYSIS.md item 9) — the
+# patient explains the instruction back in their own words instead of only
+# clicking a "yes, I understand" button.
+# ---------------------------------------------------------------------------
+
+
+def test_teach_back_with_correct_explanation_passes(client):
+    """MEDICATION_TEXT is extracted (mock provider) as medication=Lisinopril,
+    frequency='once daily', reason='your high blood pressure' — an
+    explanation that touches all three should confirm all three and pass."""
+    _patient, token, _headers, instruction_id = _setup_patient_with_care_link(client)
+
+    resp = client.post(
+        "/care-plan/teach-back",
+        json={
+            "token": token,
+            "instruction_id": instruction_id,
+            "response_text": "I take my Lisinopril once daily for my blood pressure.",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["passed"] is True
+    assert body["missing_facts"] == []
+    assert "medication_name" in body["confirmed_facts"]
+    assert "timing" in body["confirmed_facts"]
+    assert "reason" in body["confirmed_facts"]
+
+
+def test_teach_back_missing_medication_name_flags_attention(client):
+    patient, token, headers, instruction_id = _setup_patient_with_care_link(client)
+
+    resp = client.post(
+        "/care-plan/teach-back",
+        json={
+            "token": token,
+            "instruction_id": instruction_id,
+            "response_text": "I take a pill every morning for my blood pressure.",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["passed"] is False
+    assert "medication_name" in body["missing_facts"]
+
+    timeline = client.get(f"/patients/{patient['id']}/audit", headers=headers).json()
+    event_types = [e["event_type"] for e in timeline["results"]]
+    assert "PATIENT_TEACH_BACK_NEEDS_ATTENTION" in event_types
+
+
+def test_teach_back_passing_response_does_not_appear_on_timeline(client):
+    patient, token, headers, instruction_id = _setup_patient_with_care_link(client)
+
+    client.post(
+        "/care-plan/teach-back",
+        json={
+            "token": token,
+            "instruction_id": instruction_id,
+            "response_text": "Lisinopril once daily for my blood pressure.",
+        },
+    )
+
+    timeline = client.get(f"/patients/{patient['id']}/audit", headers=headers).json()
+    event_types = [e["event_type"] for e in timeline["results"]]
+    assert "PATIENT_TEACH_BACK_NEEDS_ATTENTION" not in event_types
+
+
+def test_teach_back_invalid_token_is_rejected(client):
+    resp = client.post(
+        "/care-plan/teach-back",
+        json={
+            "token": "not-a-real-token",
+            "instruction_id": "00000000-0000-0000-0000-000000000000",
+            "response_text": "anything",
+        },
+    )
+
+    assert resp.status_code == 401
+
+
+def test_teach_back_instruction_belonging_to_a_different_patient_is_rejected(client):
+    headers = _register_and_login(client)
+    patient_a = _create_active_patient(client, headers, first_name="PatientA")
+    _create_analyze_generate_approve(client, headers, patient_a["id"], MEDICATION_TEXT)
+    token_a = _create_care_link(client, headers, patient_a["id"])
+
+    patient_b = _create_active_patient(client, headers, first_name="PatientB")
+    _create_analyze_generate_approve(client, headers, patient_b["id"], MEDICATION_TEXT)
+    token_b = _create_care_link(client, headers, patient_b["id"])
+    care_plan_b = client.get("/care-plan", params={"token": token_b}).json()
+    instruction_id_b = care_plan_b["instructions"][0]["id"]
+
+    resp = client.post(
+        "/care-plan/teach-back",
+        json={"token": token_a, "instruction_id": instruction_id_b, "response_text": "anything"},
+    )
+
+    assert resp.status_code == 404

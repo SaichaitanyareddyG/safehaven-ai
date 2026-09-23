@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -23,6 +23,30 @@ class InstructionStatus(str, enum.Enum):
 class VersionSource(str, enum.Enum):
     ORIGINAL = "ORIGINAL"
     CLARIFICATION = "CLARIFICATION"
+
+
+class CaptureMethod(str, enum.Enum):
+    """HOW the clinician entered this version's text — deliberately separate
+    from VersionSource, which records WHICH WORKFLOW STEP produced it
+    (original vs clarification). The two are orthogonal: a clarification can
+    be dictated too, and collapsing them into one enum would lose that the
+    moment it happens.
+
+    Exists so an audit can distinguish dictated orders from typed ones. That
+    distinction matters because a dictated order carries a failure mode a
+    typed one does not: the transcript becomes raw_text, the source of truth
+    every downstream validator checks *against*, so a mis-heard dose passes
+    every check in the system (see
+    app/validation/dictation_safety.py's module docstring). If a
+    dictation-related error is ever investigated, this column is the first
+    thing anyone will want.
+
+    Nullable on InstructionVersion: rows written before this existed have no
+    honest value to backfill, and "unknown" is more truthful than assuming
+    TYPED."""
+
+    TYPED = "TYPED"
+    DICTATED = "DICTATED"
 
 
 class InstructionType(str, enum.Enum):
@@ -167,6 +191,11 @@ class InstructionVersion(Base):
     source: Mapped[VersionSource] = mapped_column(
         SAEnum(VersionSource, name="instruction_version_source", native_enum=True), nullable=False
     )
+    # See CaptureMethod's docstring — orthogonal to `source`, and nullable
+    # because rows predating dictation have no honest value to backfill.
+    capture_method: Mapped[CaptureMethod | None] = mapped_column(
+        SAEnum(CaptureMethod, name="instruction_capture_method", native_enum=True), nullable=True
+    )
 
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -260,6 +289,16 @@ class PatientOutput(Base):
     )
     validation_diff: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     validation_messages: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    # Flesch-Kincaid grade level of patient_text_en (see
+    # app/validation/readability.py) — AMA/CDC guidance targets ~5th-6th
+    # grade for patient materials. Deliberately informational, not a
+    # pass/fail gate: shown to the approving clinician alongside the text,
+    # never used to silently block or rewrite it (a legitimately complex
+    # topic, or a single long medication name, can raise this score without
+    # the text actually being unclear). Nullable: only computed when
+    # patient_text_en exists (a failed generation has neither).
+    reading_grade_level: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Provider/operational metadata only — never the raw prompt or raw response
     # text, and never the LLM's own reasoning/chain-of-thought about its output.

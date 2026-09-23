@@ -1,4 +1,22 @@
+import os
 from pathlib import Path
+
+# MUST run before anything imports app.core.config — get_settings() is
+# lru_cached, so the first read wins for the whole session.
+#
+# The test suite forces its own AI provider and hospital clock rather than
+# inheriting whatever .env happens to hold locally. Both were real problems,
+# not hypothetical ones:
+#   * LLM_PROVIDER — running the suite while .env was set to "openai" made
+#     every test issue real, billed API calls and turned a 95-second run into
+#     a 20-minute hang. Relying on remembering to flip .env back had already
+#     failed twice; this makes it structurally impossible instead.
+#   * HOSPITAL_TIMEZONE — the timing tests previously agreed with the timing
+#     code only because both silently assumed UTC. Pinning it here means a
+#     test that cares about the hospital clock has to say so explicitly (see
+#     the utc_hospital fixture in tests/unit/test_medication_verification_engine.py).
+os.environ["LLM_PROVIDER"] = "mock"
+os.environ["HOSPITAL_TIMEZONE"] = "UTC"
 
 import pytest
 from alembic import command
@@ -9,6 +27,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
 from app.core.db import Base, get_db
+from app.core.rate_limit import limiter
 
 # Registers every model on Base.metadata (needed for the teardown drop_all below —
 # schema creation itself goes through real migrations). See app/models.py. Must be
@@ -90,6 +109,12 @@ def outside_session():
 
 @pytest.fixture()
 def client(db_session):
+    # The rate limiter's in-memory store is process-wide, not per-request —
+    # every TestClient call shares the same source "IP", so without a reset
+    # here, /auth/login|register calls across many tests would all count
+    # against the SAME bucket and eventually start 429ing unrelated tests.
+    limiter.reset()
+
     def _override_get_db():
         yield db_session
 

@@ -1,20 +1,39 @@
-import { AlertTriangle, Camera, CheckCircle2, HelpCircle, XCircle } from 'lucide-react'
+import { AlertTriangle, Camera, CheckCircle2, HelpCircle, ShieldAlert, XCircle } from 'lucide-react'
+import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
-import type { VerifyResponse } from '@/types/medication-verification'
+import type { NotGivenReason, VerifyResponse } from '@/types/medication-verification'
 
 const CHECK_LABELS: Record<string, string> = {
   patient: 'Patient',
+  admission: 'Admission',
   medication: 'Medication',
+  allergy: 'Allergy',
+  nil_by_mouth: 'Nil by Mouth',
   order_status: 'Order Status',
   dose: 'Dose',
   formulation: 'Formulation',
   route: 'Route',
   time: 'Time',
+  interactions: 'Drug Interactions',
 }
 
-const CHECK_ORDER = ['patient', 'medication', 'order_status', 'dose', 'formulation', 'route', 'time']
+const CHECK_ORDER = [
+  'patient',
+  'admission',
+  'medication',
+  'allergy',
+  'nil_by_mouth',
+  'order_status',
+  'dose',
+  'formulation',
+  'route',
+  'time',
+  'interactions',
+]
 
 const RESULT_STYLES: Record<VerifyResponse['result'], { banner: string; label: string }> = {
   VERIFIED: { banner: 'border-green-500 bg-green-50 text-green-900', label: 'VERIFIED' },
@@ -23,19 +42,42 @@ const RESULT_STYLES: Record<VerifyResponse['result'], { banner: string; label: s
   BLOCKED: { banner: 'border-destructive bg-destructive/10 text-destructive', label: 'BLOCKED — DO NOT ADMINISTER' },
 }
 
+// A dose can fail to happen for ordinary clinical reasons. Before this the
+// nurse's only options were to give it or walk away — and walking away left a
+// row indistinguishable from an interrupted scan.
+const NOT_GIVEN_OPTIONS: { value: NotGivenReason; label: string }[] = [
+  { value: 'REFUSED', label: 'Patient refused' },
+  { value: 'HELD', label: 'Held (clinical decision)' },
+  { value: 'PATIENT_UNAVAILABLE', label: 'Patient unavailable' },
+  { value: 'VOMITED', label: 'Vomited' },
+  { value: 'OTHER', label: 'Other' },
+]
+
 export function VerificationResultView({
   verification,
   onConfirm,
   onRescan,
+  onNotGiven,
   isAdministering,
 }: {
   verification: VerifyResponse
-  onConfirm: () => void
+  onConfirm: (coSigner?: { email: string; password: string }, administrationReason?: string) => void
   onRescan: () => void
+  onNotGiven: (reason: NotGivenReason, note?: string) => void
   isAdministering: boolean
 }) {
+  const [notGivenOpen, setNotGivenOpen] = useState(false)
+  const [notGivenReason, setNotGivenReason] = useState<NotGivenReason>('REFUSED')
+  const [notGivenNote, setNotGivenNote] = useState('')
   const style = RESULT_STYLES[verification.result]
   const rows = CHECK_ORDER.filter((key) => verification.checks[key])
+  const isHighAlert = verification.product?.high_alert ?? false
+  const isPrn = verification.order_is_prn
+  const [coSignerEmail, setCoSignerEmail] = useState('')
+  const [coSignerPassword, setCoSignerPassword] = useState('')
+  const [administrationReason, setAdministrationReason] = useState('')
+  const coSignReady = !isHighAlert || (coSignerEmail.trim() !== '' && coSignerPassword !== '')
+  const reasonReady = !isPrn || administrationReason.trim() !== ''
 
   return (
     <div className="space-y-4" data-testid="verification-result">
@@ -83,16 +125,119 @@ export function VerificationResultView({
         {style.label}
       </div>
 
+      {isPrn && (verification.result === 'VERIFIED' || verification.result === 'WARNING') && (
+        <div className="space-y-2 rounded-lg border bg-muted/30 p-4" data-testid="prn-reason-panel">
+          <Label htmlFor="administration-reason">
+            As-needed (PRN) medication — why is it being given?
+          </Label>
+          <Input
+            id="administration-reason"
+            placeholder="e.g. pain 7/10"
+            value={administrationReason}
+            onChange={(e) => setAdministrationReason(e.target.value)}
+            data-testid="administration-reason-input"
+          />
+          <p className="text-xs text-muted-foreground">
+            Recorded with the dose so the next clinician can tell whether it helped.
+          </p>
+        </div>
+      )}
+
+      {isHighAlert && (verification.result === 'VERIFIED' || verification.result === 'WARNING') && (
+        <div
+          className="space-y-3 rounded-lg border-2 border-amber-400 bg-amber-50 p-4 text-amber-900"
+          data-testid="high-alert-cosign-panel"
+        >
+          <p className="flex items-center gap-2 text-sm font-semibold">
+            <ShieldAlert className="h-4 w-4 shrink-0" />
+            High-alert medication — a second clinician must independently co-sign before administration.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor="co-signer-email">Co-signer email</Label>
+              <Input
+                id="co-signer-email"
+                type="email"
+                value={coSignerEmail}
+                onChange={(e) => setCoSignerEmail(e.target.value)}
+                data-testid="co-signer-email-input"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="co-signer-password">Co-signer password</Label>
+              <Input
+                id="co-signer-password"
+                type="password"
+                value={coSignerPassword}
+                onChange={(e) => setCoSignerPassword(e.target.value)}
+                data-testid="co-signer-password-input"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex gap-2">
         {(verification.result === 'VERIFIED' || verification.result === 'WARNING') && (
-          <Button onClick={onConfirm} disabled={isAdministering} data-testid="confirm-administration-button">
+          <Button
+            onClick={() =>
+              onConfirm(
+                isHighAlert ? { email: coSignerEmail, password: coSignerPassword } : undefined,
+                isPrn ? administrationReason : undefined,
+              )
+            }
+            disabled={isAdministering || !coSignReady || !reasonReady}
+            data-testid="confirm-administration-button"
+          >
             {verification.result === 'WARNING' ? 'Acknowledge & Confirm' : 'Confirm Administration'}
           </Button>
         )}
         <Button variant="outline" onClick={onRescan} data-testid="rescan-button">
           Rescan
         </Button>
+        {!notGivenOpen && (
+          <Button variant="outline" onClick={() => setNotGivenOpen(true)} data-testid="not-given-button">
+            Not given
+          </Button>
+        )}
       </div>
+
+      {notGivenOpen && (
+        <div className="space-y-3 rounded-lg border p-4" data-testid="not-given-panel">
+          <Label htmlFor="not-given-reason">Why was this dose not given?</Label>
+          <select
+            id="not-given-reason"
+            className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+            value={notGivenReason}
+            onChange={(e) => setNotGivenReason(e.target.value as NotGivenReason)}
+            data-testid="not-given-reason-select"
+          >
+            {NOT_GIVEN_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <Input
+            placeholder="Anything worth noting (optional)"
+            value={notGivenNote}
+            onChange={(e) => setNotGivenNote(e.target.value)}
+            data-testid="not-given-note-input"
+          />
+          <div className="flex gap-2">
+            <Button
+              onClick={() => onNotGiven(notGivenReason, notGivenNote.trim() || undefined)}
+              disabled={isAdministering}
+              data-testid="not-given-submit"
+            >
+              Record
+            </Button>
+            <Button variant="ghost" onClick={() => setNotGivenOpen(false)} data-testid="not-given-cancel">
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

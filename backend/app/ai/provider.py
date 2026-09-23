@@ -111,6 +111,33 @@ class RawImageIdentificationResponse:
     metadata: ProviderMetadata
 
 
+@dataclass(frozen=True)
+class RawTranscriptionResponse:
+    """What a provider hands back from transcribing a clinician's dictated
+    audio (see MODULE_1_VOICE_DICTATION_DESIGN.md).
+
+    Unlike every other response type in this module, this one has NO
+    deterministic validator behind it — and structurally cannot have one. The
+    transcript becomes InstructionVersion.raw_text, which is the source of
+    truth every downstream check (fact_preservation, translation_preservation,
+    Module 2's order comparison) validates *against*. A mis-heard dose is
+    therefore invisible to all of them: they would each faithfully confirm
+    fidelity to the corrupted source.
+
+    That is why this response is only ever returned to the clinician as an
+    EDITABLE DRAFT, never written anywhere by the transcription path itself —
+    /instructions/transcribe creates nothing, and instruction creation remains
+    the same endpoint it always was, taking whatever text the clinician
+    actually submits. The clinician's own review is the safety boundary here,
+    and that is a deliberate structural property, not a UI convention.
+
+    text is "" (never a fabricated guess) when nothing intelligible was
+    heard."""
+
+    text: str
+    metadata: ProviderMetadata
+
+
 class LLMProvider(Protocol):
     def extract_instruction(self, text: str, context: dict | None = None) -> RawExtractionResponse: ...
 
@@ -126,6 +153,8 @@ class LLMProvider(Protocol):
 
     def identify_medication_from_image(self, image_bytes: bytes, mime_type: str) -> RawImageIdentificationResponse: ...
 
+    def transcribe_audio(self, audio_bytes: bytes, mime_type: str) -> RawTranscriptionResponse: ...
+
 
 def get_llm_provider() -> LLMProvider:
     settings = get_settings()
@@ -139,7 +168,10 @@ def get_llm_provider() -> LLMProvider:
         from app.ai.openai_provider import OpenAIProvider
 
         return OpenAIProvider(
-            api_key=settings.openai_api_key, model=settings.openai_model, vision_model=settings.openai_vision_model
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+            vision_model=settings.openai_vision_model,
+            transcription_model=settings.openai_transcription_model,
         )
 
     if settings.llm_provider == "anthropic":

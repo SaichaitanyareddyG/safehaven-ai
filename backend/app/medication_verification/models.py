@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -29,6 +29,22 @@ class IdentificationMethod(str, enum.Enum):
 
     BARCODE = "BARCODE"
     IMAGE = "IMAGE"
+
+
+class NotGivenReason(str, enum.Enum):
+    """Why a verified dose was deliberately not given.
+
+    A scheduled dose that simply never happens is invisible: before this, an
+    abandoned verification and a dose the patient refused were the same row —
+    VERIFIED, administered_at NULL — and nobody could tell them apart or tell
+    that a decision had been made at all. Recording the decision is the point;
+    the nurse choosing one of these is documenting care, not failing to."""
+
+    REFUSED = "REFUSED"  # patient declined
+    HELD = "HELD"  # clinically withheld (e.g. nil by mouth before surgery)
+    PATIENT_UNAVAILABLE = "PATIENT_UNAVAILABLE"  # off the ward, in theatre, at imaging
+    VOMITED = "VOMITED"  # taken but not retained
+    OTHER = "OTHER"  # free-text note carries the detail
 
 
 class AdministrationEvent(Base):
@@ -84,6 +100,23 @@ class AdministrationEvent(Base):
     identified_strength_unit: Mapped[str | None] = mapped_column(String(50), nullable=True)
     identified_formulation: Mapped[str | None] = mapped_column(String(255), nullable=True)
     identified_route: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Persisted at verify() time from the resolved MedicationProduct's
+    # high_alert flag (see app/reference/medication_products.py) — never
+    # re-derived from the barcode at administer() time, same rationale as
+    # the identified_* fields above. Gates the independent second-clinician
+    # co-sign requirement in administer(); always False for an
+    # image-identified result (see verify_confirmed()'s docstring — there is
+    # no catalog entry to check high_alert against for a photo-identified
+    # candidate).
+    identified_high_alert: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Whether the matched order is as-needed (PRN) rather than scheduled,
+    # captured at verify() time from the order's own frequency. A PRN dose is
+    # not just "a dose that happened" — CMS/nursing documentation standards
+    # expect the indication to be recorded ("pain 7/10"), because without it
+    # nobody can later assess whether the dose worked or whether the patient
+    # is being dosed too often. Persisted rather than re-derived so
+    # administer() reads the same fact verify() did.
+    order_is_prn: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     verification_result: Mapped[VerificationResult] = mapped_column(
         SAEnum(VerificationResult, name="administration_verification_result", native_enum=True), nullable=False
@@ -99,6 +132,24 @@ class AdministrationEvent(Base):
 
     administered_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     administered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ISMP's recommended mitigation for high-alert medications: an
+    # independent second clinician, authenticated separately (not just
+    # clicked through), before administration is recorded. Only ever set
+    # when identified_high_alert is True — see administer()'s co-sign gate.
+    co_signed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    # Why this PRN dose was given ("pain 7/10"). Required by administer() only
+    # when order_is_prn — a scheduled dose's reason is the schedule itself.
+    administration_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # The deliberate not-given outcome. Mutually exclusive with
+    # administered_at: a row carries one or the other, never both, and a row
+    # with neither is simply a verification nobody acted on yet.
+    not_given_reason: Mapped[NotGivenReason | None] = mapped_column(
+        SAEnum(NotGivenReason, name="administration_not_given_reason", native_enum=True), nullable=True
+    )
+    not_given_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    not_given_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    not_given_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Reserved for a future controlled-override flow (see MODULE_2_DESIGN_REPORT.md
     # section 17) — deliberately not written to by anything in this build.

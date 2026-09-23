@@ -30,6 +30,7 @@ from app.ai.provider import (
     RawExtractionResponse,
     RawGenerationResponse,
     RawImageIdentificationResponse,
+    RawTranscriptionResponse,
     RawTranslationResponse,
 )
 from app.instructions.models import InstructionType
@@ -175,3 +176,10 @@ class OllamaProvider:
         identical method docstring for why (Module 2's image fallback is
         OpenAI-only in this build)."""
         raise ExtractionProviderError("Medication image identification is not implemented for the Ollama provider")
+
+    def transcribe_audio(self, audio_bytes: bytes, mime_type: str) -> RawTranscriptionResponse:
+        """Not implemented on this provider — clinician dictation is
+        OpenAI-only in this build, same scoping as the image method above.
+        Local Whisper via Ollama is possible in principle but is a separate
+        model pull and endpoint, not the chat API this provider wraps."""
+        raise ExtractionProviderError("Audio transcription is not implemented for the Ollama provider")

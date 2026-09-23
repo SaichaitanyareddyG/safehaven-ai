@@ -223,7 +223,21 @@ validation step does."""
 
 TRANSLATION_PROMPT_VERSION = "health-literacy-translation-v1"
 
-TRANSLATION_LANGUAGE_NAMES = {"TELUGU": "Telugu", "HINDI": "Hindi", "ENGLISH": "English"}
+# Must cover every member of patients.models.Language — a missing entry here
+# would mean a language the UI offers but the translation prompt cannot name.
+TRANSLATION_LANGUAGE_NAMES = {
+    "ENGLISH": "English",
+    "TELUGU": "Telugu",
+    "HINDI": "Hindi",
+    "SPANISH": "Spanish",
+    "MANDARIN": "Mandarin Chinese (Simplified characters)",
+    "VIETNAMESE": "Vietnamese",
+    "TAGALOG": "Tagalog",
+    "ARABIC": "Arabic",
+    "KOREAN": "Korean",
+    "RUSSIAN": "Russian",
+    "FRENCH": "French",
+}
 
 
 def build_translation_system_prompt(language_name: str) -> str:

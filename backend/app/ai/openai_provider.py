@@ -28,6 +28,7 @@ from app.ai.provider import (
     RawExtractionResponse,
     RawGenerationResponse,
     RawImageIdentificationResponse,
+    RawTranscriptionResponse,
     RawTranslationResponse,
 )
 from app.instructions.models import InstructionType
@@ -37,6 +38,19 @@ from app.patients.models import Language
 # open web. allowed_domains implicitly covers subdomains (e.g. nih.gov also
 # covers ncbi.nlm.nih.gov / pubmed).
 _TRUSTED_MEDICAL_DOMAINS = ["medlineplus.gov", "mayoclinic.org", "cdc.gov", "nih.gov"]
+
+# The transcription API infers format from the filename it's given, so the
+# browser's recording MIME type has to be mapped to a matching extension —
+# MediaRecorder emits audio/webm on Chrome/Firefox and audio/mp4 on Safari.
+_AUDIO_EXTENSION_BY_MIME = {
+    "audio/webm": "webm",
+    "audio/ogg": "ogg",
+    "audio/mp4": "mp4",
+    "audio/mpeg": "mp3",
+    "audio/mpga": "mp3",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+}
 
 
 def _is_reasoning_model(model: str) -> bool:
@@ -51,11 +65,18 @@ def _is_reasoning_model(model: str) -> bool:
 
 
 class OpenAIProvider:
-    def __init__(self, api_key: str | None, model: str, vision_model: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None,
+        model: str,
+        vision_model: str | None = None,
+        transcription_model: str = "gpt-4o-transcribe",
+    ):
         if not api_key:
             raise ExtractionProviderError("OPENAI_API_KEY is not configured")
         self._client = openai.OpenAI(api_key=api_key)
         self._model = model
+        self._transcription_model = transcription_model
         self._is_reasoning_model = _is_reasoning_model(model)
         self._extra_body = {"reasoning_effort": "minimal"} if self._is_reasoning_model else None
 
@@ -378,5 +399,48 @@ class OpenAIProvider:
                 request_id=response.id,
                 latency_ms=latency_ms,
                 token_usage=token_usage,
+            ),
+        )
+
+    def transcribe_audio(self, audio_bytes: bytes, mime_type: str) -> RawTranscriptionResponse:
+        """Speech-to-text for clinician dictation. Unlike every other method
+        here, nothing deterministic validates this output — see
+        RawTranscriptionResponse's docstring for why that is structural, and
+        MODULE_1_VOICE_DICTATION_DESIGN.md section 3 for what follows from it
+        (the transcript is only ever an editable draft the clinician must
+        review and submit themselves).
+
+        Uses the audio.transcriptions API, not chat.completions — a different
+        surface with its own model names, hence the separate
+        openai_transcription_model setting rather than reusing openai_model.
+
+        Deliberately no `prompt` biasing toward expected drug names: nudging
+        the model toward a vocabulary it should have heard risks it "hearing"
+        a plausible drug name that was never said, which is exactly the class
+        of error nothing downstream can catch."""
+        extension = _AUDIO_EXTENSION_BY_MIME.get(mime_type.split(";")[0].strip().lower(), "webm")
+        started = time.monotonic()
+        try:
+            response = self._client.audio.transcriptions.create(
+                model=self._transcription_model,
+                file=(f"dictation.{extension}", audio_bytes, mime_type),
+                response_format="text",
+            )
+        except Exception as exc:  # noqa: BLE001 — uniform provider-failure contract, see ExtractionProviderError
+            raise ExtractionProviderError(f"OpenAI transcription call failed: {exc}") from exc
+        latency_ms = int((time.monotonic() - started) * 1000)
+
+        # response_format="text" yields a plain string on this SDK version;
+        # tolerate the object form too rather than assuming one shape.
+        text = response if isinstance(response, str) else getattr(response, "text", "")
+
+        return RawTranscriptionResponse(
+            text=(text or "").strip(),
+            metadata=ProviderMetadata(
+                provider="openai",
+                model=self._transcription_model,
+                request_id=None,
+                latency_ms=latency_ms,
+                token_usage=None,
             ),
         )

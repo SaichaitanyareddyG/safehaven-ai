@@ -28,6 +28,7 @@ import { TranslationsPanel } from '@/features/instructions/TranslationsPanel'
 import { VersionHistory } from '@/features/instructions/VersionHistory'
 import { ANALYZE_STEPS, GENERATE_STEPS, TRANSLATE_STEPS } from '@/lib/ai-processing-steps'
 import { ApiError } from '@/lib/api-client'
+import type { Language } from '@/types/patients'
 
 export function InstructionWorkflowPage() {
   const { instructionId } = useParams<{ instructionId: string }>()
@@ -91,7 +92,7 @@ export function InstructionWorkflowPage() {
   })
 
   const autoTranslateMutation = useMutation({
-    mutationFn: (languages: Array<'TELUGU' | 'HINDI'>) => requestTranslations(instructionId!, languages),
+    mutationFn: (languages: Language[]) => requestTranslations(instructionId!, languages),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['instruction', instructionId] })
       toast.success('Preferred-language translation complete')
@@ -128,7 +129,7 @@ export function InstructionWorkflowPage() {
     const alreadyTranslated = latestOutput.translations.some((t) => t.language === patient.preferred_language)
     if (alreadyTranslated) return
     translatedRef.current = true
-    autoTranslateMutation.mutate([patient.preferred_language as 'TELUGU' | 'HINDI'])
+    autoTranslateMutation.mutate([patient.preferred_language])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instruction?.status, patient?.preferred_language, latestOutput])
 

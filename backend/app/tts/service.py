@@ -16,10 +16,20 @@ from app.patients.models import Language
 
 MAX_TEXT_LENGTH = 2000  # generous for a single instruction's patient-facing text; guards against misuse of a free upstream service
 
+# Must cover every member of Language — a missing entry would raise a KeyError
+# at synthesis time for a language the UI already offers. Guarded by a test.
 VOICE_BY_LANGUAGE: dict[Language, str] = {
     Language.ENGLISH: "en-US-AriaNeural",
     Language.TELUGU: "te-IN-ShrutiNeural",
     Language.HINDI: "hi-IN-SwaraNeural",
+    Language.SPANISH: "es-US-PalomaNeural",
+    Language.MANDARIN: "zh-CN-XiaoxiaoNeural",
+    Language.VIETNAMESE: "vi-VN-HoaiMyNeural",
+    Language.TAGALOG: "fil-PH-BlessicaNeural",
+    Language.ARABIC: "ar-SA-ZariyahNeural",
+    Language.KOREAN: "ko-KR-SunHiNeural",
+    Language.RUSSIAN: "ru-RU-SvetlanaNeural",
+    Language.FRENCH: "fr-FR-DeniseNeural",
 }
 
 

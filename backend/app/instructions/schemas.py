@@ -15,12 +15,38 @@ from app.instructions.models import (
 from app.patients.models import Language
 
 
+class DictationWarningRead(BaseModel):
+    """One advisory flag on a dictated transcript (see
+    app/validation/dictation_safety.py). Advisory only — never blocks
+    submission, and an empty list never means "verified correct"."""
+
+    code: str
+    message: str
+    excerpt: str
+
+
+class TranscriptionResponse(BaseModel):
+    """The result of transcribing dictated audio. Deliberately returns a DRAFT
+    string and nothing else — this endpoint creates no instruction and no
+    version, so there is no code path by which a transcript reaches the
+    database without the clinician submitting it themselves through the
+    ordinary creation endpoint. See MODULE_1_VOICE_DICTATION_DESIGN.md §3."""
+
+    text: str
+    warnings: list[DictationWarningRead]
+
+
 class InstructionTextPayload(BaseModel):
     """Shared shape for both instruction creation and clarification — both are
     just "here is clinical text", server decides everything else (version number,
-    source, status)."""
+    source, status).
+
+    dictated is the clinician's own client-side assertion that this text
+    started as a transcript — recorded as provenance (CaptureMethod), never
+    trusted as a safety signal, and it changes no validation behaviour."""
 
     text: str
+    dictated: bool = False
 
     @field_validator("text")
     @classmethod
@@ -83,6 +109,10 @@ class PatientOutputRead(BaseModel):
     validation_status: ValidationStatus
     validation_diff: list[dict]
     validation_messages: list[str]
+    # Flesch-Kincaid grade level — informational only, see
+    # PatientOutput.reading_grade_level's docstring. None when not
+    # computable (e.g. a failed generation with no text).
+    reading_grade_level: float | None
     provider: str
     model: str
     prompt_version: str

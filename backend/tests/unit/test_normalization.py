@@ -217,3 +217,24 @@ def test_unrecognized_instruction_type_passes_through_unchanged():
 
     assert normalized == facts
     assert changes == []
+
+
+def test_injected_route_adverbs_normalize_to_the_product_form():
+    """"Give X subcutaneously" must match a product whose route is recorded as
+    "subcutaneous". Without this the adverb failed an exact comparison and
+    blocked a correct dose — the same adverb/adjective split "orally"/"oral"
+    already handled, which simply had no injected equivalent while every
+    catalogue product was oral."""
+    from app.instructions.models import InstructionType
+    from app.validation.normalization import normalize_facts
+
+    for spoken, expected in [
+        ("subcutaneously", "subcutaneous"),
+        ("subcutaneous", "subcutaneous"),
+        ("SC", "subcutaneous"),
+        ("intramuscularly", "intramuscular"),
+        ("intravenously", "intravenous"),
+        ("IV", "intravenous"),
+    ]:
+        facts, _ = normalize_facts(InstructionType.MEDICATION, {"route": spoken})
+        assert facts["route"] == expected, f"{spoken} should normalize to {expected}"

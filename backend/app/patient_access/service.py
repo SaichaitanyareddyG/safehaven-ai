@@ -19,10 +19,21 @@ from app.instructions.models import (
     StructuredExtraction,
     ValidationStatus,
 )
+from app.allergies.models import PatientAllergy
+from app.conditions.models import PatientCondition
 from app.patient_access.models import PatientCareAccessToken
-from app.patient_access.schemas import PatientCareInstructionView, PatientCarePlanResponse, WhyExplanation, WhyTier
+from app.patient_access.schemas import (
+    ConditionExplainerView,
+    PatientAllergyView,
+    PatientCareInstructionView,
+    PatientCarePlanResponse,
+    PatientConditionView,
+    WhyExplanation,
+    WhyTier,
+)
 from app.patients.models import Patient
 from app.patients.service import get_patient
+from app.reference.condition_explainers import lookup_condition_explainer
 from app.reference.medication_purpose import lookup_medication_purpose
 
 _GENERAL_PURPOSE_DISCLAIMER = (
@@ -104,6 +115,20 @@ def resolve_why(extraction: StructuredExtraction | None) -> WhyExplanation | Non
             return WhyExplanation(tier=WhyTier.GENERAL, text=general_purpose, disclaimer=_GENERAL_PURPOSE_DISCLAIMER)
 
     return None
+
+
+def _build_condition_view(condition: PatientCondition) -> PatientConditionView:
+    explainer = lookup_condition_explainer(condition.condition_name)
+    return PatientConditionView(
+        condition_name=condition.condition_name,
+        explainer=ConditionExplainerView(
+            what_it_is=explainer.what_it_is,
+            how_it_develops=explainer.how_it_develops,
+            where_it_affects=explainer.where_it_affects,
+        )
+        if explainer
+        else None,
+    )
 
 
 TOKEN_BYTES = 32  # 256 bits of entropy — cryptographically strong, per requirement
@@ -324,9 +349,28 @@ def get_care_plan(db: Session, raw_token: str) -> PatientCarePlanResponse:
         # instead of the current one; it is never simply hidden, and its
         # historical CareInstruction row is never touched or deleted.
         if instruction.clinical_status in (ClinicalStatus.COMPLETED, ClinicalStatus.STOPPED):
+            view.past_reason = instruction.clinical_status.value
             past_medication_views.append(view)
         else:
             views.append(view)
+
+    condition_rows = (
+        db.query(PatientCondition)
+        .filter(PatientCondition.patient_id == patient.id)
+        .order_by(PatientCondition.documented_at.desc())
+        .all()
+    )
+    condition_views = [_build_condition_view(row) for row in condition_rows]
+
+    allergy_views = [
+        PatientAllergyView(allergen=row.allergen, reaction=row.reaction, severity=row.severity)
+        for row in (
+            db.query(PatientAllergy)
+            .filter(PatientAllergy.patient_id == patient.id)
+            .order_by(PatientAllergy.documented_at.desc())
+            .all()
+        )
+    ]
 
     _maybe_record_view_event(db, record)
     db.commit()
@@ -336,4 +380,6 @@ def get_care_plan(db: Session, raw_token: str) -> PatientCarePlanResponse:
         preferred_language=patient.preferred_language,
         past_medications=past_medication_views,
         instructions=views,
+        conditions=condition_views,
+        allergies=allergy_views,
     )

@@ -39,6 +39,21 @@ class Encounter(Base):
     patient_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False, index=True)
 
     encounter_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # free text, e.g. "outpatient"
+
+    # Planned procedure and the point from which the patient is nil by mouth.
+    #
+    # These exist because the verification engine knew a patient's orders but
+    # nothing about their situation. Before surgery a patient is typically NPO
+    # and oral medication is deliberately held — yet the order stays ACTIVE and
+    # every dose/route/timing check still passes, so Module 2 would report
+    # VERIFIED and tell the nurse it was safe to give. Same class as the
+    # discharged-patient gap: situational state the engine could not see.
+    #
+    # nil_by_mouth_from is a timestamp rather than a boolean so it can be set
+    # in advance ("NPO from midnight") and become true on its own, which is how
+    # it is actually ordered. Null means the patient may eat and drink.
+    planned_procedure: Mapped[str | None] = mapped_column(Text, nullable=True)
+    nil_by_mouth_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reason_for_visit: Mapped[str | None] = mapped_column(Text, nullable=True)
     admission_date: Mapped[date] = mapped_column(Date, nullable=False)
     discharge_date: Mapped[date | None] = mapped_column(Date, nullable=True)

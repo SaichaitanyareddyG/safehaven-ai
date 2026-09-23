@@ -42,3 +42,66 @@ def test_me_requires_a_valid_token(client):
 
     response = client.get("/auth/me", headers={"Authorization": "Bearer not-a-real-token"})
     assert response.status_code == 401
+
+
+def test_register_rejects_short_password(client):
+    resp = client.post(
+        "/auth/register",
+        json={"email": "shortpw@example.com", "password": "short1", "full_name": "Test Clinician"},
+    )
+    assert resp.status_code == 422
+
+
+def test_failed_login_is_recorded_in_audit_trail(client, db_session):
+    from app.audit.models import AuditEvent, AuditEventType
+
+    client.post(
+        "/auth/register",
+        json={"email": "auditme@example.com", "password": "supersecret123", "full_name": "Test Clinician"},
+    )
+    client.post("/auth/login", json={"email": "auditme@example.com", "password": "wrong-password"})
+
+    events = db_session.query(AuditEvent).filter(AuditEvent.event_type == AuditEventType.LOGIN_FAILED.value).all()
+    assert len(events) == 1
+    assert events[0].event_metadata["email"] == "auditme@example.com"
+    assert events[0].actor_id is None
+
+
+def test_successful_login_does_not_record_login_failed(client, db_session):
+    from app.audit.models import AuditEvent, AuditEventType
+
+    client.post(
+        "/auth/register",
+        json={"email": "goodlogin@example.com", "password": "supersecret123", "full_name": "Test Clinician"},
+    )
+    resp = client.post("/auth/login", json={"email": "goodlogin@example.com", "password": "supersecret123"})
+    assert resp.status_code == 200
+
+    events = db_session.query(AuditEvent).filter(AuditEvent.event_type == AuditEventType.LOGIN_FAILED.value).all()
+    assert events == []
+
+
+def test_login_is_rate_limited_after_repeated_attempts(client):
+    client.post(
+        "/auth/register",
+        json={"email": "ratelimited@example.com", "password": "supersecret123", "full_name": "Test Clinician"},
+    )
+
+    responses = [
+        client.post("/auth/login", json={"email": "ratelimited@example.com", "password": "wrong-password"})
+        for _ in range(31)
+    ]
+
+    assert responses[-1].status_code == 429
+
+
+def test_register_is_rate_limited_after_repeated_attempts(client):
+    responses = [
+        client.post(
+            "/auth/register",
+            json={"email": f"spam{i}@example.com", "password": "supersecret123", "full_name": "Spam"},
+        )
+        for i in range(16)
+    ]
+
+    assert responses[-1].status_code == 429

@@ -1,6 +1,12 @@
 import { ApiError, apiRequest } from '@/lib/api-client'
 import { clearToken, getToken } from '@/lib/auth-storage'
-import type { ConfirmedProductCandidate, ImageIdentificationResponse, VerifyResponse } from '@/types/medication-verification'
+import type {
+  AdministrationHistoryResponse,
+  ConfirmedProductCandidate,
+  ImageIdentificationResponse,
+  NotGivenReason,
+  VerifyResponse,
+} from '@/types/medication-verification'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
@@ -11,10 +17,19 @@ export function verifyMedication(patientCode: string, barcode: string): Promise<
   })
 }
 
-export function administerMedication(verificationId: string): Promise<{ id: string; administered_at: string }> {
+export function administerMedication(
+  verificationId: string,
+  coSigner?: { email: string; password: string },
+  administrationReason?: string,
+): Promise<{ id: string; administered_at: string }> {
   return apiRequest('/medication-verification/administer', {
     method: 'POST',
-    body: { verification_id: verificationId },
+    body: {
+      verification_id: verificationId,
+      co_signer_email: coSigner?.email,
+      co_signer_password: coSigner?.password,
+      administration_reason: administrationReason,
+    },
   })
 }
 
@@ -54,4 +69,19 @@ export function verifyConfirmedMedication(
     method: 'POST',
     body: { patient_code: patientCode, candidate },
   })
+}
+
+export function recordNotGiven(
+  verificationId: string,
+  reason: NotGivenReason,
+  note?: string,
+): Promise<{ id: string; not_given_at: string }> {
+  return apiRequest('/medication-verification/not-given', {
+    method: 'POST',
+    body: { verification_id: verificationId, reason, note },
+  })
+}
+
+export function listAdministrationHistory(patientId: string): Promise<AdministrationHistoryResponse> {
+  return apiRequest<AdministrationHistoryResponse>(`/patients/${patientId}/administrations`)
 }

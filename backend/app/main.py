@@ -7,6 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.allergies.router import router as allergies_router
 from app.audit.router import router as audit_router
 from app.auth.router import router as auth_router
 from app.conditions.router import router as conditions_router
@@ -45,6 +46,7 @@ app.include_router(instructions_router)
 app.include_router(patient_access_router)
 app.include_router(audit_router)
 app.include_router(conditions_router)
+app.include_router(allergies_router)
 app.include_router(patient_chat_router)
 app.include_router(encounters_router)
 app.include_router(medication_verification_router)

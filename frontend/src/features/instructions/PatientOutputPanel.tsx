@@ -1,8 +1,14 @@
-import { AlertTriangle, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, BookOpen, ShieldCheck } from 'lucide-react'
 
 import { ValidationStatusBadge } from '@/components/StatusBadge'
+import { cn } from '@/lib/utils'
 import { formatFactValue } from '@/lib/instruction-field-labels'
 import type { PatientOutputRead } from '@/types/instructions'
+
+// AMA/CDC guidance targets roughly a 5th-6th grade reading level for patient
+// materials — informational only, never blocks approval (see
+// PatientOutput.reading_grade_level's backend docstring for why).
+const READABILITY_TARGET_GRADE = 6
 
 export function PatientOutputPanel({ output }: { output: PatientOutputRead }) {
   const passed = output.validation_status === 'PASSED'
@@ -13,6 +19,21 @@ export function PatientOutputPanel({ output }: { output: PatientOutputRead }) {
         <p className="text-sm font-medium">Patient-friendly version (attempt {output.attempt_number})</p>
         <ValidationStatusBadge status={output.validation_status} />
       </div>
+
+      {output.reading_grade_level !== null && (
+        <p
+          className={cn(
+            'flex items-center gap-2 text-sm',
+            output.reading_grade_level <= READABILITY_TARGET_GRADE
+              ? 'text-emerald-700 dark:text-emerald-400'
+              : 'text-amber-700 dark:text-amber-400',
+          )}
+          data-testid="reading-grade-level"
+        >
+          <BookOpen className="h-4 w-4" />
+          Reading level: grade {output.reading_grade_level} (target: grade {READABILITY_TARGET_GRADE} or below)
+        </p>
+      )}
 
       {output.patient_text_en ? (
         <div

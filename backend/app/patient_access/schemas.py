@@ -1,5 +1,6 @@
 import enum
 import uuid
+from typing import Literal
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -94,6 +95,45 @@ class PatientCareInstructionView(BaseModel):
     # resolve_why() docstring for why this isn't run through the translation
     # pipeline (yet).
     why: WhyExplanation | None = None
+    # Only set for a past medication, and only to distinguish the two very
+    # different reasons one lands there. Without this the patient page could
+    # not tell them apart: a drug STOPPED because it was harming the patient
+    # rendered identically to a course they had simply finished, under the
+    # same muted "Past Medications" heading. Those need opposite responses
+    # from the patient — one is "do not take any more of this", the other is
+    # "nothing to do".
+    past_reason: Literal["STOPPED", "COMPLETED"] | None = None
+
+
+class ConditionExplainerView(BaseModel):
+    what_it_is: str
+    how_it_develops: str
+    where_it_affects: str
+
+
+class PatientConditionView(BaseModel):
+    """explainer is only set when the condition name matches the curated
+    table (app/reference/condition_explainers.py) exactly — never a guess,
+    same rule as WhyExplanation's GENERAL tier. A condition with no matching
+    explainer still appears (by name only) rather than being hidden."""
+
+    condition_name: str
+    explainer: ConditionExplainerView | None = None
+
+
+class PatientAllergyView(BaseModel):
+    """The patient's own documented allergies, shown back to them.
+
+    Patients are a real safety check in this loop, not just an audience: "I'm
+    allergic to penicillin" is one of the most valuable things a patient can
+    say at the bedside, and showing them the list is also the only practical
+    way they can notice it is wrong or incomplete. reaction/severity are
+    included when documented because "rash" and "anaphylaxis" are not the
+    same thing to a patient deciding how urgently to speak up."""
+
+    allergen: str
+    reaction: str | None = None
+    severity: str | None = None
 
 
 class PatientCarePlanResponse(BaseModel):
@@ -105,3 +145,5 @@ class PatientCarePlanResponse(BaseModel):
     # patients with no completed/stopped medications; non-medication
     # instructions never appear here (see ClinicalStatus's docstring).
     past_medications: list[PatientCareInstructionView] = []
+    conditions: list[PatientConditionView] = []
+    allergies: list[PatientAllergyView] = []

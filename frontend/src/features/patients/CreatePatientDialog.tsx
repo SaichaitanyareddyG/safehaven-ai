@@ -22,6 +22,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ApiError } from '@/lib/api-client'
+import { ALL_LANGUAGES, LANGUAGE_NATIVE_LABEL } from '@/lib/language-labels'
+import type { Language } from '@/types/patients'
 
 const patientSchema = z.object({
   first_name: z.string().min(1, 'First name is required'),
@@ -31,7 +33,10 @@ const patientSchema = z.object({
     .min(1, 'Date of birth is required')
     .refine((value) => new Date(value) <= new Date(), 'Date of birth cannot be in the future'),
   room_number: z.string().optional(),
-  preferred_language: z.enum(['ENGLISH', 'TELUGU', 'HINDI']),
+  // Required in the form even though the API accepts it as optional — the
+  // whole point is that registration should ask, not that the server insists.
+  reason_for_visit: z.string().trim().min(1, 'Why has the patient come in?'),
+  preferred_language: z.enum(ALL_LANGUAGES as [Language, ...Language[]]),
 })
 
 type PatientFormValues = z.infer<typeof patientSchema>
@@ -108,6 +113,17 @@ export function CreatePatientDialog() {
             </div>
           </div>
           <div className="space-y-2">
+            <Label htmlFor="reason_for_visit">Reason for visit</Label>
+            <Input
+              id="reason_for_visit"
+              placeholder="e.g. fever and cough for three days"
+              {...register('reason_for_visit')}
+            />
+            {errors.reason_for_visit && (
+              <p className="text-sm text-destructive">{errors.reason_for_visit.message}</p>
+            )}
+          </div>
+          <div className="space-y-2">
             <Label htmlFor="preferred_language">Preferred language</Label>
             <Select
               value={watch('preferred_language')}
@@ -116,16 +132,19 @@ export function CreatePatientDialog() {
               <SelectTrigger id="preferred_language" className="w-full" data-testid="preferred-language-select">
                 <SelectValue />
               </SelectTrigger>
+              {/* Driven off ALL_LANGUAGES so a language added to the enum can
+                  never be missing from the one place a patient's language is
+                  actually set. */}
               <SelectContent>
-                <SelectItem value="ENGLISH" data-testid="preferred-language-option-english">
-                  English
-                </SelectItem>
-                <SelectItem value="TELUGU" data-testid="preferred-language-option-telugu">
-                  Telugu (తెలుగు)
-                </SelectItem>
-                <SelectItem value="HINDI" data-testid="preferred-language-option-hindi">
-                  Hindi (हिंदी)
-                </SelectItem>
+                {ALL_LANGUAGES.map((language) => (
+                  <SelectItem
+                    key={language}
+                    value={language}
+                    data-testid={`preferred-language-option-${language.toLowerCase()}`}
+                  >
+                    {LANGUAGE_NATIVE_LABEL[language]}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

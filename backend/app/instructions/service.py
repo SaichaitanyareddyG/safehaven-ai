@@ -12,6 +12,7 @@ from app.ai.translation_service import TRANSLATION_PROMPT_VERSION, TranslationAt
 from app.audit.models import ActorType, AuditEventType
 from app.audit.service import record_event
 from app.instructions.models import (
+    CaptureMethod,
     CareInstruction,
     ClinicalStatus,
     CompletenessStatus,
@@ -30,6 +31,7 @@ from app.patients.service import get_patient
 from app.validation.completeness import evaluate_completeness
 from app.validation.fact_preservation import validate_fact_preservation
 from app.validation.normalization import normalize_facts
+from app.validation.readability import flesch_kincaid_grade_level
 from app.validation.translation_preservation import validate_translation_preservation
 
 
@@ -87,7 +89,13 @@ def list_patient_instructions(
 # ---------------------------------------------------------------------------
 
 
-def create_instruction(db: Session, patient_id: uuid.UUID, text: str, created_by: uuid.UUID) -> CareInstruction:
+def create_instruction(
+    db: Session,
+    patient_id: uuid.UUID,
+    text: str,
+    created_by: uuid.UUID,
+    capture_method: CaptureMethod = CaptureMethod.TYPED,
+) -> CareInstruction:
     patient = get_patient(db, patient_id)  # raises PatientNotFoundError if missing
     if patient.admission_status != AdmissionStatus.ACTIVE:
         raise PatientNotActiveError(str(patient_id))
@@ -101,6 +109,7 @@ def create_instruction(db: Session, patient_id: uuid.UUID, text: str, created_by
         version_number=1,
         raw_text=text,
         source=VersionSource.ORIGINAL,
+        capture_method=capture_method,
         created_by=created_by,
     )
     db.add(version)
@@ -117,6 +126,22 @@ def create_instruction(db: Session, patient_id: uuid.UUID, text: str, created_by
         entity_type="CareInstruction",
         entity_id=instruction.id,
     )
+
+    if capture_method == CaptureMethod.DICTATED:
+        # Deliberately no transcript in metadata — dictated text is clinical
+        # content and may carry incidental PHI, same no-PHI-in-audit rule as
+        # every other event (see audit/service.py's record_event docstring).
+        # This records only THAT dictation was used, which is what an
+        # investigation would need to narrow down where to look.
+        record_event(
+            db,
+            event_type=AuditEventType.INSTRUCTION_DICTATED,
+            actor_type=ActorType.CLINICIAN,
+            actor_id=created_by,
+            patient_id=patient_id,
+            entity_type="CareInstruction",
+            entity_id=instruction.id,
+        )
 
     db.commit()
     db.refresh(instruction)
@@ -547,6 +572,7 @@ def _apply_generation_result(
         validation_status=ValidationStatus.PASSED if result.passed else ValidationStatus.FAILED,
         validation_diff=[asdict(d) for d in result.differences],
         validation_messages=result.messages,
+        reading_grade_level=flesch_kincaid_grade_level(attempt.patient_text),
         provider=attempt.metadata.provider,
         model=attempt.metadata.model,
         prompt_version=attempt.prompt_version,

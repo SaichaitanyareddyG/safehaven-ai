@@ -11,9 +11,32 @@ from app.core.db import Base
 
 
 class Language(str, enum.Enum):
+    """Patient-facing languages.
+
+    Title VI / CLAS standards require meaningful access for any Limited
+    English Proficiency patient a facility actually serves, not a fixed
+    shortlist — so this set is the most commonly needed languages in US
+    hospitals plus the two this prototype started with, not a claim of
+    completeness. Adding one is deliberately a four-place change (this enum,
+    a TTS voice in tts/service.py, a name in prompts.py, a label in the
+    frontend) so a language can never be half-added: offered in the UI but
+    silently untranslatable or unspeakable.
+
+    Every language here still goes through the same deterministic
+    translation-preservation check as the originals — nothing is trusted
+    because it came from a bigger model."""
+
     ENGLISH = "ENGLISH"
     TELUGU = "TELUGU"
     HINDI = "HINDI"
+    SPANISH = "SPANISH"
+    MANDARIN = "MANDARIN"
+    VIETNAMESE = "VIETNAMESE"
+    TAGALOG = "TAGALOG"
+    ARABIC = "ARABIC"
+    KOREAN = "KOREAN"
+    RUSSIAN = "RUSSIAN"
+    FRENCH = "FRENCH"
 
 
 class AdmissionStatus(str, enum.Enum):

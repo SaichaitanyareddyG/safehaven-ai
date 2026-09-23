@@ -12,6 +12,16 @@ class EncounterCreate(BaseModel):
     admission_date: date
     discharge_date: date | None = None
     status: EncounterStatus = EncounterStatus.OPEN
+    planned_procedure: str | None = None
+    nil_by_mouth_from: datetime | None = None
+
+
+class EncounterUpdate(BaseModel):
+    """Used to add procedure / nil-by-mouth context to an existing visit —
+    the decision is usually made after the patient is already admitted."""
+
+    planned_procedure: str | None = None
+    nil_by_mouth_from: datetime | None = None
 
 
 class EncounterRead(BaseModel):
@@ -21,6 +31,8 @@ class EncounterRead(BaseModel):
     admission_date: date
     discharge_date: date | None
     status: EncounterStatus
+    planned_procedure: str | None
+    nil_by_mouth_from: datetime | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

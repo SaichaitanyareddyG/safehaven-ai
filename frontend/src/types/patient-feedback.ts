@@ -5,3 +5,11 @@ export interface ComprehensionFeedbackRead {
   response: ComprehensionResponse
   created_at: string
 }
+
+export interface TeachBackResult {
+  care_instruction_id: string
+  passed: boolean
+  confirmed_facts: string[]
+  missing_facts: string[]
+  created_at: string
+}

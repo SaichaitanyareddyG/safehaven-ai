@@ -13,6 +13,18 @@ const CATEGORY_BY_EVENT_TYPE: Record<string, AuditEventCategory> = {
   PATIENT_CHAT_TREATMENT_CHANGE_REDIRECTED: 'safety-warning',
   PATIENT_CHAT_WEB_SEARCH_USED: 'patient-activity',
   PATIENT_COMPREHENSION_NEEDS_ATTENTION: 'safety-warning',
+  PATIENT_TEACH_BACK_NEEDS_ATTENTION: 'safety-warning',
+  LOGIN_FAILED: 'safety-warning',
+  PATIENT_ALLERGY_ADDED: 'safety-warning',
+  // Module 2. MEDICATION_MISMATCH is the important one: it is what a BLOCKED
+  // wrong-drug, allergy or interaction scan records. Without it here the
+  // category fell through to 'info' and a caught medication error rendered as
+  // a grey dot indistinguishable from "Clinician logged in".
+  MEDICATION_MISMATCH: 'safety-warning',
+  MEDICATION_SCAN_FAILED: 'safety-warning',
+  MEDICATION_VERIFIED: 'approval',
+  ADMINISTRATION_CONFIRMED: 'approval',
+  ADMINISTRATION_NOT_GIVEN: 'safety-warning',
 }
 
 export function auditEventCategory(eventType: string): AuditEventCategory {
@@ -24,8 +36,67 @@ function languageSuffix(event: AuditEvent): string {
   return typeof language === 'string' ? ` (${language.charAt(0)}${language.slice(1).toLowerCase()})` : ''
 }
 
+function medicationSuffix(event: AuditEvent): string {
+  const name = event.event_metadata['medication_name']
+  return typeof name === 'string' && name ? `: ${name}` : ''
+}
+
+function resultSuffix(event: AuditEvent): string {
+  const result = event.event_metadata['result']
+  const reasons = event.event_metadata['reasons']
+  if (typeof result !== 'string') return ''
+  const detail = Array.isArray(reasons) && reasons.length > 0 ? ` — ${reasons.join(', ').toLowerCase().replace(/_/g, ' ')}` : ''
+  return ` (${result}${detail})`
+}
+
 export function auditEventDescription(event: AuditEvent): string {
   switch (event.event_type) {
+    case 'LOGIN_FAILED':
+      return 'Failed sign-in attempt'
+    case 'INSTRUCTION_DICTATED':
+      return 'Instruction dictated by voice'
+    case 'MEDICATION_CLINICAL_STATUS_CHANGED':
+      return `Medication status changed${
+        typeof event.event_metadata['status'] === 'string' ? ` to ${event.event_metadata['status']}` : ''
+      }`
+    case 'PATIENT_ALLERGY_ADDED':
+      return 'Allergy documented'
+    case 'PATIENT_ALLERGY_REMOVED':
+      return 'Allergy removed'
+    case 'PATIENT_CONDITION_ADDED':
+      return 'Condition documented'
+    case 'PATIENT_CONDITION_REMOVED':
+      return 'Condition removed'
+    case 'ENCOUNTER_CREATED':
+      return 'Encounter created'
+
+    // --- Module 2: medication administration verification ---
+    case 'PATIENT_SCANNED':
+      return event.event_metadata['resolved'] === false
+        ? 'Unrecognised patient wristband scanned'
+        : 'Patient wristband scanned'
+    case 'MEDICATION_SCANNED':
+      return event.event_metadata['resolved'] === false
+        ? 'Unrecognised medication barcode scanned'
+        : 'Medication barcode scanned'
+    case 'MEDICATION_VERIFIED':
+      return `Medication verified at the bedside${resultSuffix(event)}`
+    case 'MEDICATION_MISMATCH':
+      return `Medication administration blocked${resultSuffix(event)}`
+    case 'MEDICATION_SCAN_FAILED':
+      return 'Barcode could not be read — label photo used instead'
+    case 'MEDICATION_IMAGE_IDENTIFIED':
+      return `Medication read from a label photo${medicationSuffix(event)}`
+    case 'MEDICATION_MANUALLY_CONFIRMED':
+      return `Medication identity confirmed by the nurse${medicationSuffix(event)}`
+    case 'ADMINISTRATION_CONFIRMED':
+      return 'Dose administered'
+    case 'ADMINISTRATION_NOT_GIVEN':
+      return `Dose not given${
+        typeof event.event_metadata['reason'] === 'string'
+          ? ` (${String(event.event_metadata['reason']).toLowerCase().replace(/_/g, ' ')})`
+          : ''
+      }`
     case 'USER_LOGIN':
       return 'Clinician logged in'
     case 'PATIENT_CREATED':
@@ -80,6 +151,8 @@ export function auditEventDescription(event: AuditEvent): string {
       return event.event_metadata['response'] === 'ASK_CARE_TEAM'
         ? 'Patient asked to be contacted by their care team'
         : 'Patient said they still have a question'
+    case 'PATIENT_TEACH_BACK_NEEDS_ATTENTION':
+      return "Patient's own explanation missed part of this instruction — teach-back flagged for review"
     default:
       return event.event_type
   }

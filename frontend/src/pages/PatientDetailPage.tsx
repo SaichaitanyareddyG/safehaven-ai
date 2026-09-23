@@ -16,6 +16,8 @@ import { InstructionList } from '@/features/instructions/InstructionList'
 import { PatientChatTranscript } from '@/features/patient-chat/PatientChatTranscript'
 import { CreateCareLinkDialog } from '@/features/patients/CreateCareLinkDialog'
 import { EncountersPanel } from '@/features/patients/EncountersPanel'
+import { PatientAllergiesPanel } from '@/features/patients/PatientAllergiesPanel'
+import { AdministrationHistoryPanel } from '@/features/medication-verification/AdministrationHistoryPanel'
 import { PatientConditionsPanel } from '@/features/patients/PatientConditionsPanel'
 import { ApiError } from '@/lib/api-client'
 
@@ -117,6 +119,9 @@ export function PatientDetailPage() {
             </div>
           </dl>
           <div className="mt-6 border-t pt-4">
+            <PatientAllergiesPanel patientId={patient.id} />
+          </div>
+          <div className="mt-6 border-t pt-4">
             <PatientConditionsPanel patientId={patient.id} />
           </div>
           <div className="mt-6 border-t pt-4">
@@ -129,6 +134,9 @@ export function PatientDetailPage() {
         <TabsList>
           <TabsTrigger value="instructions" data-testid="patient-tab-instructions">
             Instructions
+          </TabsTrigger>
+          <TabsTrigger value="medications-given" data-testid="patient-tab-medications-given">
+            Medications Given
           </TabsTrigger>
           <TabsTrigger value="activity" data-testid="patient-tab-activity">
             Activity &amp; Safety Timeline
@@ -148,6 +156,10 @@ export function PatientDetailPage() {
           </div>
           <InstructionList patientId={patient.id} />
         </TabsContent>
+        <TabsContent value="medications-given" data-testid="patient-tab-panel-medications-given">
+          <AdministrationHistoryPanel patientId={patient.id} />
+        </TabsContent>
+
         <TabsContent value="activity" data-testid="patient-tab-panel-activity">
           <h2 className="mb-4 text-lg font-semibold tracking-tight">Activity &amp; Safety Timeline</h2>
           <ActivityTimeline patientId={patient.id} />

@@ -7,6 +7,8 @@ export interface EncounterRead {
   admission_date: string
   discharge_date: string | null
   status: EncounterStatus
+  planned_procedure: string | null
+  nil_by_mouth_from: string | null
   created_at: string
 }
 

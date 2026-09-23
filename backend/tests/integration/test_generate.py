@@ -80,6 +80,9 @@ def test_complete_medication_instruction_generates_patient_text(client):
     assert output["validation_status"] == "PASSED"
     assert "Metoprolol" in output["patient_text_en"]
     assert "25" in output["patient_text_en"]
+    # Informational reading-level score — see app/validation/readability.py.
+    assert output["reading_grade_level"] is not None
+    assert output["reading_grade_level"] >= 0
 
 
 def test_exact_dose_preserved_passes(client):
@@ -320,6 +323,7 @@ def test_generation_provider_failure_moves_to_needs_review(client):
     output = body["current_version"]["patient_outputs"][0]
     assert output["validation_status"] == "FAILED"
     assert output["patient_text_en"] is None  # no fabricated fallback text
+    assert output["reading_grade_level"] is None  # nothing to score
     # The original clinical instruction stays visible regardless.
     assert body["current_version"]["raw_text"].startswith(MEDICATION_TEXT)
 
@@ -573,6 +577,7 @@ def test_no_raw_provider_data_in_patient_output_response(client):
         "validation_status",
         "validation_diff",
         "validation_messages",
+        "reading_grade_level",
         "provider",
         "model",
         "prompt_version",

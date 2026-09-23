@@ -3,7 +3,7 @@ import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
-import { createEncounter, listEncounters } from '@/api/encounters'
+import { createEncounter, listEncounters, updateEncounter } from '@/api/encounters'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,6 +18,21 @@ export function EncountersPanel({ patientId }: { patientId: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ['patient-encounters', patientId],
     queryFn: () => listEncounters(patientId),
+  })
+
+  const openEncounter = data?.results.find((e) => e.status === 'OPEN')
+  const [procedure, setProcedure] = useState('')
+  const [npoFrom, setNpoFrom] = useState('')
+
+  const npoMutation = useMutation({
+    mutationFn: (payload: { planned_procedure: string | null; nil_by_mouth_from: string }) =>
+      updateEncounter(openEncounter!.id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['patient-encounters', patientId] })
+    },
+    onError: (error) => {
+      toast.error(error instanceof ApiError ? error.message : 'Failed to update the visit')
+    },
   })
 
   const createMutation = useMutation({

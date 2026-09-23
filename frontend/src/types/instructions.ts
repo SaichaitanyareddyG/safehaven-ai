@@ -64,6 +64,17 @@ export interface PatientOutputTranslationRead {
   created_at: string
 }
 
+export interface DictationWarning {
+  code: string
+  message: string
+  excerpt: string
+}
+
+export interface TranscriptionResponse {
+  text: string
+  warnings: DictationWarning[]
+}
+
 export interface PatientOutputRead {
   id: string
   attempt_number: number
@@ -71,6 +82,8 @@ export interface PatientOutputRead {
   validation_status: ValidationStatus
   validation_diff: FactDifference[]
   validation_messages: string[]
+  // Flesch-Kincaid grade level — informational only, never a pass/fail gate.
+  reading_grade_level: number | null
   provider: string
   model: string
   prompt_version: string

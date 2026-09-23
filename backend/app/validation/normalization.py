@@ -31,6 +31,22 @@ _ROUTE_MAP = {
     "topical": "topical",
     "iv": "intravenous",
     "intravenous": "intravenous",
+    # Injected routes. Missing entirely until an injected product was added to
+    # the catalogue, at which point "Give Enoxaparin 40 mg subcutaneously"
+    # extracted as the adverb "subcutaneously" and failed an exact comparison
+    # against the product's "subcutaneous" — a false route mismatch that
+    # BLOCKED a correct dose. The adverb/adjective/abbreviation split is the
+    # same one "orally"/"oral"/"po" above already handles; it simply had no
+    # injected equivalents because every product was oral.
+    "intravenously": "intravenous",
+    "subcutaneous": "subcutaneous",
+    "subcutaneously": "subcutaneous",
+    "subcut": "subcutaneous",
+    "sc": "subcutaneous",
+    "sq": "subcutaneous",
+    "intramuscular": "intramuscular",
+    "intramuscularly": "intramuscular",
+    "im": "intramuscular",
 }
 
 _FREQUENCY_MAP = {

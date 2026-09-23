@@ -8,3 +8,10 @@ export function listEncounters(patientId: string): Promise<EncounterListResponse
 export function createEncounter(patientId: string, data: EncounterCreate): Promise<EncounterRead> {
   return apiRequest<EncounterRead>(`/patients/${patientId}/encounters`, { method: 'POST', body: data })
 }
+
+export function updateEncounter(
+  encounterId: string,
+  payload: { planned_procedure?: string | null; nil_by_mouth_from?: string | null },
+): Promise<EncounterRead> {
+  return apiRequest<EncounterRead>(`/encounters/${encounterId}`, { method: 'PATCH', body: payload })
+}

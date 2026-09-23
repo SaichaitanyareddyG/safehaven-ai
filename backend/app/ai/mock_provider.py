@@ -43,6 +43,7 @@ from app.ai.provider import (
     RawExtractionResponse,
     RawGenerationResponse,
     RawImageIdentificationResponse,
+    RawTranscriptionResponse,
     RawTranslationResponse,
 )
 from app.instructions.models import InstructionType
@@ -72,9 +73,15 @@ _MEDICATION_DURATION_RE = re.compile(r"\bfor\s+(\d+\s*(?:day|days|week|weeks))\b
 # than truncated to just the base drug name. This matters for Module 2's
 # formulation check (app/medication_verification/service.py), which can only
 # compare what's actually in medication_name.
-_MEDICATION_NAME_RE = re.compile(r"\bTake\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)")
+# "Give X" is as standard as "Take X" in a clinical order, and is the normal
+# phrasing for anything injected.
+_MEDICATION_NAME_RE = re.compile(r"\b(?:Take|Give)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)")
 
 _FREQUENCY_PATTERNS = [
+    # PRN first: "every 6 hours as needed" is an as-needed order, not a
+    # scheduled q6h one, and Module 2 treats the two differently (a PRN dose
+    # requires a documented reason — see _check_is_prn).
+    (re.compile(r"\bas needed\b|\bPRN\b", re.IGNORECASE), "as needed"),
     (re.compile(r"\btwice daily\b|\bBID\b", re.IGNORECASE), "twice daily"),
     (re.compile(r"\bthree times daily\b|\bTID\b", re.IGNORECASE), "three times daily"),
     (re.compile(r"\bonce daily\b|\bQD\b|\bdaily\b", re.IGNORECASE), "once daily"),
@@ -86,6 +93,11 @@ _ROUTE_PATTERNS = [
     # safe generation would spuriously fail fact-preservation validation.
     (re.compile(r"\borally\b|\bPO\b|\bby mouth\b", re.IGNORECASE), "oral"),
     (re.compile(r"\btopically\b", re.IGNORECASE), "topical"),
+    # Injected routes matter to Module 2's nil-by-mouth check, which is
+    # route-aware: an NPO patient still receives these.
+    (re.compile(r"\bsubcutaneously\b|\bsubcutaneous\b|\bSC\b", re.IGNORECASE), "subcutaneous"),
+    (re.compile(r"\bintravenously\b|\bintravenous\b|\bIV\b", re.IGNORECASE), "intravenous"),
+    (re.compile(r"\bintramuscularly\b|\bintramuscular\b|\bIM\b", re.IGNORECASE), "intramuscular"),
 ]
 _ASSISTANCE_REQUIRED_TRUE_RE = re.compile(
     r"\bassistance\b|\bwith help\b|\bwith (?:your |a |the )?nurse\b", re.IGNORECASE
@@ -328,6 +340,37 @@ class MockLLMProvider:
                 request_id=f"mock-{uuid.uuid4()}",
                 latency_ms=5,
                 token_usage={"prompt_tokens": 0, "completion_tokens": 0},
+            ),
+        )
+
+    def transcribe_audio(self, audio_bytes: bytes, mime_type: str) -> RawTranscriptionResponse:
+        # Same fixture-marker convention as identify_medication_from_image
+        # above — there is no real audio to decode in a deterministic test
+        # double. Fixtures: TRAILING_ZERO / NAKED_DECIMAL / MCG (transcripts
+        # that should trip a dictation-safety warning), SILENT (nothing
+        # heard), PROVIDER_FAILURE. Anything else returns a clean transcript.
+        if b"__FIXTURE_AUDIO__:PROVIDER_FAILURE" in audio_bytes:
+            raise ExtractionProviderError("Simulated provider failure (PROVIDER_FAILURE fixture)")
+
+        if b"__FIXTURE_AUDIO__:SILENT" in audio_bytes:
+            text = ""
+        elif b"__FIXTURE_AUDIO__:TRAILING_ZERO" in audio_bytes:
+            text = "Take Metoprolol Succinate ER 25.0 mg orally twice daily."
+        elif b"__FIXTURE_AUDIO__:NAKED_DECIMAL" in audio_bytes:
+            text = "Take Digoxin .25 mg orally once daily."
+        elif b"__FIXTURE_AUDIO__:MCG" in audio_bytes:
+            text = "Take Levothyroxine 50 mcg orally once daily in the morning."
+        else:
+            text = "Take Metoprolol Succinate ER 25 mg orally twice daily."
+
+        return RawTranscriptionResponse(
+            text=text,
+            metadata=ProviderMetadata(
+                provider="mock",
+                model=MODEL_NAME,
+                request_id=f"mock-{uuid.uuid4()}",
+                latency_ms=5,
+                token_usage=None,
             ),
         )
 

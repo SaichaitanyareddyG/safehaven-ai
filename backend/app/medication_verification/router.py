@@ -10,6 +10,8 @@ from app.core.db import get_db
 from app.medication_verification import service
 from app.medication_verification.schemas import (
     AdministerRequest,
+    AdministrationHistoryResponse,
+    NotGivenRequest,
     ImageIdentificationResponse,
     MedicationProductRead,
     VerifyConfirmedRequest,
@@ -17,7 +19,12 @@ from app.medication_verification.schemas import (
     VerifyResponse,
 )
 from app.medication_verification.service import (
+    AdministrationReasonRequiredError,
     AlreadyAdministeredError,
+    AlreadyResolvedError,
+    CoSignAuthenticationError,
+    CoSignRequiredError,
+    CoSignSamePersonError,
     DuplicateAdministrationError,
     OrderChangedError,
     VerificationNotAdministrableError,
@@ -37,6 +44,7 @@ def _to_verify_response(event, product: MedicationProductRead | None) -> VerifyR
         mismatch_reasons=event.mismatch_reasons,
         care_instruction_id=event.care_instruction_id,
         product=product,
+        order_is_prn=event.order_is_prn,
         created_at=event.created_at,
     )
 
@@ -72,7 +80,14 @@ def administer(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> dict:
     try:
-        event = service.administer(db, payload.verification_id, administered_by=uuid.UUID(current_user.id))
+        event = service.administer(
+            db,
+            payload.verification_id,
+            administered_by=uuid.UUID(current_user.id),
+            co_signer_email=payload.co_signer_email,
+            co_signer_password=payload.co_signer_password,
+            administration_reason=payload.administration_reason,
+        )
     except VerificationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Verification not found") from exc
     except VerificationNotAdministrableError as exc:
@@ -82,9 +97,22 @@ def administer(
         ) from exc
     except AlreadyAdministeredError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already administered") from exc
+    except AlreadyResolvedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This dose was already documented as not given",
+        ) from exc
     except DuplicateAdministrationError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except OrderChangedError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except AdministrationReasonRequiredError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except CoSignRequiredError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except CoSignAuthenticationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except CoSignSamePersonError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     return {"id": str(event.id), "administered_at": event.administered_at.isoformat()}
@@ -139,3 +167,44 @@ def verify_confirmed(
         route=payload.candidate.route,
     )
     return _to_verify_response(event, confirmed_product)
+
+
+@router.post("/medication-verification/not-given")
+def record_not_given(
+    payload: NotGivenRequest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> dict:
+    """Records that a verified dose was deliberately NOT given — refused,
+    held, patient unavailable. This is documentation of care: without it the
+    dose simply never appeared, and an abandoned scan looked identical to a
+    refusal."""
+    try:
+        event = service.record_not_given(
+            db,
+            payload.verification_id,
+            recorded_by=uuid.UUID(current_user.id),
+            reason=payload.reason,
+            note=payload.note,
+        )
+    except VerificationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Verification not found") from exc
+    except AlreadyResolvedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="This verification already has an outcome recorded"
+        ) from exc
+
+    return {"id": str(event.id), "not_given_at": event.not_given_at.isoformat()}
+
+
+@router.get("/patients/{patient_id}/administrations", response_model=AdministrationHistoryResponse)
+def list_administration_history(
+    patient_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> AdministrationHistoryResponse:
+    """The patient's medication administration record. Until this existed the
+    rows were written and never read: nobody could see what had been given,
+    by whom, or what had been blocked."""
+    records = service.list_administration_history(db, patient_id)
+    return AdministrationHistoryResponse(total=len(records), results=records)

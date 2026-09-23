@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -23,6 +24,16 @@ class Settings(BaseSettings):
     # intercept); set to "require" or "verify-full" the moment the database
     # isn't on the same host as the app anymore. See app/core/db.py.
     database_ssl_mode: str = "disable"
+    # The hospital's local timezone (IANA name), used by Module 2's
+    # administration-time check to turn "in the morning" into a real wall
+    # clock. Without this the engine compared a local-time schedule against
+    # UTC, so a nurse giving an 8am medication at 8am was told they were
+    # outside the window everywhere except a UTC±0 hospital — an alert firing
+    # on correct work, every morning dose, which is exactly how staff learn to
+    # click through warnings. Validated at boot (see
+    # _reject_unknown_hospital_timezone) rather than failing silently at the
+    # bedside.
+    hospital_timezone: str = "UTC"
 
     # "dev" is the only implemented provider in Phase 1. A CognitoAuthProvider can be
     # added later behind the same AuthProvider protocol without touching route code.
@@ -42,6 +53,13 @@ class Settings(BaseSettings):
     # Defaults to openai_model when unset, so leaving this blank is a no-op,
     # not a silent behavior change.
     openai_vision_model: str | None = None
+    # Speech-to-text for clinician dictation (see
+    # MODULE_1_VOICE_DICTATION_DESIGN.md). A separate setting because
+    # transcription is a different API surface entirely (audio.transcriptions,
+    # not chat.completions) and its model names don't overlap with the chat
+    # models above — so unlike openai_vision_model this cannot sensibly
+    # default to openai_model.
+    openai_transcription_model: str = "gpt-4o-transcribe"
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-sonnet-5"
     # Local inference via Ollama — never falls back to a cloud provider if
@@ -70,6 +88,21 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @model_validator(mode="after")
+    def _reject_unknown_hospital_timezone(self) -> "Settings":
+        """Fail at boot, not at the bedside. A typo'd timezone would otherwise
+        surface as every morning medication warning "outside the window" —
+        an alert firing on correct work, which is how alert fatigue starts.
+        Same refuse-to-boot posture as the JWT placeholder check below."""
+        try:
+            ZoneInfo(self.hospital_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(
+                f"HOSPITAL_TIMEZONE {self.hospital_timezone!r} is not a valid IANA timezone "
+                f"(e.g. 'Asia/Kolkata', 'America/New_York', 'UTC')."
+            ) from exc
+        return self
 
     @model_validator(mode="after")
     def _reject_placeholder_jwt_secret(self) -> "Settings":

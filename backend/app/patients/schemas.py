@@ -18,6 +18,13 @@ class PatientCreate(BaseModel):
     date_of_birth: date
     room_number: str | None = None
     preferred_language: Language = Language.ENGLISH
+    # Why the patient has come in. Optional on the API so existing callers
+    # keep working, but asked for in the registration form — the Encounter
+    # model has carried reason_for_visit from the start and almost nothing
+    # ever populated it, because the only way to set it was a separate panel
+    # further down the patient page that nobody had reason to open. Supplying
+    # it here opens the patient's first encounter in the same step.
+    reason_for_visit: str | None = None
 
     _validate_dob = field_validator("date_of_birth")(_validate_not_future)
 

@@ -1,4 +1,15 @@
-export type Language = 'ENGLISH' | 'TELUGU' | 'HINDI'
+export type Language =
+  | 'ENGLISH'
+  | 'TELUGU'
+  | 'HINDI'
+  | 'SPANISH'
+  | 'MANDARIN'
+  | 'VIETNAMESE'
+  | 'TAGALOG'
+  | 'ARABIC'
+  | 'KOREAN'
+  | 'RUSSIAN'
+  | 'FRENCH'
 
 export type AdmissionStatus = 'ACTIVE' | 'DISCHARGED'
 
@@ -26,6 +37,7 @@ export interface PatientCreate {
   date_of_birth: string
   room_number?: string | null
   preferred_language: Language
+  reason_for_visit?: string | null
 }
 
 export interface PatientUpdate {
