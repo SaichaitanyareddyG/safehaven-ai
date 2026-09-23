@@ -10,6 +10,7 @@ import { PatientListPage } from '@/pages/PatientListPage'
 import { PatientDetailPage } from '@/pages/PatientDetailPage'
 import { InstructionWorkflowPage } from '@/pages/InstructionWorkflowPage'
 import { MedicationVerificationPage } from '@/pages/MedicationVerificationPage'
+import { SafetyAlertsPage } from '@/pages/SafetyAlertsPage'
 import { PatientCarePage } from '@/pages/PatientCarePage'
 
 export default function App() {
@@ -50,6 +51,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <MedicationVerificationPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/safety-monitoring"
+              element={
+                <ProtectedRoute>
+                  <SafetyAlertsPage />
                 </ProtectedRoute>
               }
             />
