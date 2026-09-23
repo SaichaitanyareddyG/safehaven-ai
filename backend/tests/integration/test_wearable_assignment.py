@@ -441,3 +441,41 @@ def test_assignment_audit_metadata_carries_no_patient_identifiers(client, db_ses
         assert "Gladys" not in blob
         assert "Pemberton" not in blob
         assert patient["patient_code"] not in blob
+
+
+def test_fleet_view_reports_which_devices_are_free(client):
+    """`online` cannot distinguish "free" from "assigned but silent", so the
+    fleet view exposes `assigned` separately. Without it the assign dialog
+    offers devices that are already monitoring someone else, and the nurse only
+    finds out from a 409 at the bedside."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    taken, _ = _enrolled_device(client, headers, "SH-WEAR-001")
+    _free, _ = _enrolled_device(client, headers, "SH-WEAR-002")
+    unenrolled = _registered_only_device(client, headers, "SH-WEAR-003")
+    _assign(client, headers, patient["id"], taken["id"])
+
+    by_code = {
+        d["device_code"]: d
+        for d in client.get("/wearable-devices", headers=headers).json()["results"]
+    }
+
+    assert by_code["SH-WEAR-001"]["assigned"] is True
+    assert by_code["SH-WEAR-002"]["assigned"] is False
+    assert by_code["SH-WEAR-003"]["assigned"] is False
+    assert by_code["SH-WEAR-003"]["enrolled"] is False
+    assert unenrolled["device_code"] == "SH-WEAR-003"
+
+
+def test_device_becomes_free_again_after_unassignment(client):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    device, _ = _enrolled_device(client, headers)
+    _assign(client, headers, patient["id"], device["id"])
+
+    def assigned_flag() -> bool:
+        return client.get("/wearable-devices", headers=headers).json()["results"][0]["assigned"]
+
+    assert assigned_flag() is True
+    client.delete(f"/patients/{patient['id']}/wearable-assignment", headers=headers)
+    assert assigned_flag() is False

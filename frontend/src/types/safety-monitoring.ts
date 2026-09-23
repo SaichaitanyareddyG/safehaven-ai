@@ -68,6 +68,9 @@ export interface WearableDevice {
   /** Derived: assigned AND reporting recently. An unassigned device in a
    *  drawer is idle, not offline. */
   online: boolean
+  /** Derived: currently monitoring a patient. `online` cannot distinguish
+   *  "free" from "assigned but silent", so this is separate. */
+  assigned: boolean
 }
 
 export interface WearableDeviceListResponse {
@@ -92,4 +95,28 @@ export interface DeviceAssignment {
 
 export interface PatientAssignmentResponse {
   assignment: DeviceAssignment | null
+}
+
+export type SensorEventType =
+  | 'POSSIBLE_FALL'
+  | 'ABNORMAL_MOVEMENT'
+  | 'UNEXPECTED_MOBILITY'
+  | 'DEVICE_LOW_BATTERY'
+
+export interface SensorEvent {
+  id: string
+  device_id: string
+  assignment_id: string
+  event_type: SensorEventType
+  /** When the device detected it. */
+  occurred_at: string
+  /** When the backend received it. Differs from occurred_at after an outage. */
+  received_at: string
+  delayed: boolean
+  metrics: Record<string, unknown>
+}
+
+export interface SensorEventListResponse {
+  total: number
+  results: SensorEvent[]
 }

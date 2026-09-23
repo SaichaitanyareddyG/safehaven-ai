@@ -40,6 +40,11 @@ class WearableDeviceRead(BaseModel):
     # AND is currently assigned (an unassigned device is idle, not offline).
     enrolled: bool
     online: bool
+    # Derived: currently assigned to a patient. Needed because `online` cannot
+    # distinguish "free" from "assigned but silent" — without it the assign
+    # dialog would offer devices that are already monitoring someone else, and
+    # the nurse would only find out from a 409.
+    assigned: bool
 
 
 class WearableDeviceListResponse(BaseModel):

@@ -19,6 +19,8 @@ import { EncountersPanel } from '@/features/patients/EncountersPanel'
 import { PatientAllergiesPanel } from '@/features/patients/PatientAllergiesPanel'
 import { AdministrationHistoryPanel } from '@/features/medication-verification/AdministrationHistoryPanel'
 import { PatientConditionsPanel } from '@/features/patients/PatientConditionsPanel'
+import { SafetyEventHistoryPanel } from '@/features/safety-monitoring/SafetyEventHistoryPanel'
+import { WearableDevicePanel } from '@/features/safety-monitoring/WearableDevicePanel'
 import { ApiError } from '@/lib/api-client'
 
 export function PatientDetailPage() {
@@ -46,6 +48,11 @@ export function PatientDetailPage() {
       // viewing (see InstructionActions.tsx's own note on this same pattern).
       queryClient.invalidateQueries({ queryKey: ['patient-audit', patientId] })
       queryClient.invalidateQueries({ queryKey: ['care-access-tokens', patientId] })
+      // Discharge also ends any wearable assignment (the same cascade), so the
+      // safety-monitoring panel on this page must not keep showing a device
+      // that is no longer monitoring anyone.
+      queryClient.invalidateQueries({ queryKey: ['wearable-assignment', patientId] })
+      queryClient.invalidateQueries({ queryKey: ['wearable-devices'] })
       toast.success('Patient discharged')
     },
     onError: (error) => {
@@ -127,6 +134,12 @@ export function PatientDetailPage() {
           <div className="mt-6 border-t pt-4">
             <EncountersPanel patientId={patient.id} />
           </div>
+          <div className="mt-6 border-t pt-4">
+            <WearableDevicePanel
+              patientId={patient.id}
+              patientIsActive={patient.admission_status === 'ACTIVE'}
+            />
+          </div>
         </CardContent>
       </Card>
 
@@ -137,6 +150,9 @@ export function PatientDetailPage() {
           </TabsTrigger>
           <TabsTrigger value="medications-given" data-testid="patient-tab-medications-given">
             Medications Given
+          </TabsTrigger>
+          <TabsTrigger value="safety-events" data-testid="patient-tab-safety-events">
+            Wearable Events
           </TabsTrigger>
           <TabsTrigger value="activity" data-testid="patient-tab-activity">
             Activity &amp; Safety Timeline
@@ -158,6 +174,11 @@ export function PatientDetailPage() {
         </TabsContent>
         <TabsContent value="medications-given" data-testid="patient-tab-panel-medications-given">
           <AdministrationHistoryPanel patientId={patient.id} />
+        </TabsContent>
+
+        <TabsContent value="safety-events" data-testid="patient-tab-panel-safety-events">
+          <h2 className="mb-4 text-lg font-semibold tracking-tight">Wearable Events</h2>
+          <SafetyEventHistoryPanel patientId={patient.id} />
         </TabsContent>
 
         <TabsContent value="activity" data-testid="patient-tab-panel-activity">

@@ -135,6 +135,7 @@ def to_read(device: WearableDevice, assignment: DeviceAssignment | None = None) 
         created_at=device.created_at,
         enrolled=device.credential_hash is not None,
         online=assignment is not None and not device_is_offline(device, assignment),
+        assigned=assignment is not None,
     )
 
 
