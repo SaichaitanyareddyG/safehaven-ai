@@ -32,6 +32,11 @@ const CATEGORY_BY_EVENT_TYPE: Record<string, AuditEventCategory> = {
   // A reported fall or abnormal-movement event is the whole point of the
   // module; it must never render as a grey 'info' dot next to a login.
   SAFETY_EVENT_RECEIVED: 'safety-warning',
+  SAFETY_ALERT_RAISED: 'safety-warning',
+  // Acknowledging and resolving are a clinician taking responsibility, which
+  // is what the 'approval' category already means elsewhere.
+  SAFETY_ALERT_ACKNOWLEDGED: 'approval',
+  SAFETY_ALERT_RESOLVED: 'approval',
 }
 
 export function auditEventCategory(eventType: string): AuditEventCategory {
@@ -81,6 +86,31 @@ function sensorEventLabel(event: AuditEvent): string {
 // point: an unlabelled 15-minute-old fall reads as happening right now.
 function delayedSuffix(event: AuditEvent): string {
   return event.event_metadata['delayed'] === true ? ' (delayed delivery)' : ''
+}
+
+// Alert types add DEVICE_OFFLINE, which no device can report — the backend
+// derives it from a missing heartbeat.
+const ALERT_LABELS: Record<string, string> = {
+  ...SENSOR_EVENT_LABELS,
+  DEVICE_OFFLINE: 'Safety monitor offline',
+}
+
+function alertLabel(event: AuditEvent): string {
+  const type = event.event_metadata['alert_type']
+  if (typeof type !== 'string') return 'Safety'
+  return ALERT_LABELS[type] ?? 'Safety'
+}
+
+function prioritySuffix(event: AuditEvent): string {
+  const priority = event.event_metadata['priority']
+  return typeof priority === 'string' && priority ? ` (${priority.toLowerCase()} priority)` : ''
+}
+
+// One alert is one episode. Showing how many events folded into it keeps the
+// deduplication visible instead of looking like lost data.
+function eventCountSuffix(event: AuditEvent): string {
+  const count = event.event_metadata['event_count']
+  return typeof count === 'number' && count > 1 ? ` (${count} events)` : ''
 }
 
 function profileSuffix(event: AuditEvent): string {
@@ -217,6 +247,12 @@ export function auditEventDescription(event: AuditEvent): string {
         : `Safety monitoring stopped${deviceSuffix(event)}`
     case 'SAFETY_EVENT_RECEIVED':
       return `${sensorEventLabel(event)} reported by wearable${deviceSuffix(event)}${delayedSuffix(event)}`
+    case 'SAFETY_ALERT_RAISED':
+      return `${alertLabel(event)} alert raised${prioritySuffix(event)}${delayedSuffix(event)}`
+    case 'SAFETY_ALERT_ACKNOWLEDGED':
+      return `${alertLabel(event)} alert acknowledged by clinician`
+    case 'SAFETY_ALERT_RESOLVED':
+      return `${alertLabel(event)} alert resolved${eventCountSuffix(event)}`
     default:
       return event.event_type
   }

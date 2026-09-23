@@ -92,6 +92,16 @@ class Settings(BaseSettings):
     # alert (suppressing one would discard a real fall) but are flagged so
     # staff never read a 15-minute-old event as happening now.
     device_delayed_after_seconds: int = 300
+    # One physical episode is one alert. Clinical events of the same type for
+    # the same patient within this window fold into the existing alert rather
+    # than raising another, so one fall cannot produce twenty alerts. Short,
+    # because a genuinely separate fall an hour later deserves its own.
+    alert_dedupe_seconds: int = 120
+    # Server-side re-check of the device's fall evidence. The firmware
+    # already applies a threshold before sending, but a device with stale
+    # config, modified firmware or a bug could send a weak candidate — so the
+    # decision is re-made here, where the value is controlled.
+    alert_min_fall_score: int = 3
 
     @field_validator("cors_origins", mode="before")
     @classmethod

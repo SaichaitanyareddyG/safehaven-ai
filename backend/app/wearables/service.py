@@ -20,6 +20,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -27,12 +28,17 @@ from app.audit.models import ActorType, AuditEventType
 from app.audit.service import record_event
 from app.core.config import get_settings
 from app.encounters.models import Encounter, EncounterStatus
-from app.patients.models import AdmissionStatus
+from app.patients.models import AdmissionStatus, Patient
 from app.patients.service import get_patient
+from app.wearables import rules
 from app.wearables.models import (
+    AlertPriority,
+    AlertStatus,
+    AlertType,
     DeviceAssignment,
     DeviceStatus,
     MonitoringProfile,
+    SafetyAlert,
     SensorEvent,
     WearableDevice,
 )
@@ -40,6 +46,7 @@ from app.wearables.schemas import (
     DeviceAssignmentCreate,
     DeviceAssignmentRead,
     DeviceHeartbeatRequest,
+    SafetyAlertRead,
     SensorEventSubmit,
     WearableDeviceCreate,
     WearableDeviceRead,
@@ -78,6 +85,14 @@ class InvalidEnrollmentCodeError(Exception):
 
 class AssignmentNotFoundError(Exception):
     pass
+
+
+class AlertNotFoundError(Exception):
+    pass
+
+
+class AlertTransitionError(Exception):
+    """An illegal status move, e.g. acknowledging an already-resolved alert."""
 
 
 class DeviceNotAssignableError(Exception):
@@ -609,9 +624,215 @@ def ingest_event(
             "delayed": delayed,
         },
     )
+
+    _apply_alert_rules(db, device, assignment, event)
+
     db.commit()
     db.refresh(event)
     return "CREATED", event
+
+
+def _apply_alert_rules(
+    db: Session,
+    device: WearableDevice,
+    assignment: DeviceAssignment,
+    event: SensorEvent,
+) -> SafetyAlert | None:
+    """Turn a stored event into an alert, or fold it into the open one.
+
+    Runs inside ingest_event's transaction, so an event and the alert it caused
+    are committed together — there is no window in which an event exists but
+    the alert it should have raised does not.
+    """
+    decision = rules.evaluate(
+        event_type=event.event_type,
+        metrics=event.metrics,
+        profile=assignment.monitoring_profile,
+        min_fall_score=get_settings().alert_min_fall_score,
+    )
+    if not decision.should_alert:
+        # Deliberately silent, and deliberately logged: "nothing happened" is
+        # the hardest outcome to debug and the most important to get right.
+        logger.info(
+            "No alert for %s from %s: %s",
+            event.event_type.value,
+            device.device_code,
+            decision.reason,
+        )
+        return None
+
+    assert decision.alert_type is not None and decision.priority is not None
+    existing = _open_alert_to_fold_into(db, assignment.patient_id, decision.alert_type)
+    if existing is not None:
+        # §16 layer 4: one physical episode is one alert. Twenty fall-like
+        # events in three seconds must not become twenty alerts.
+        existing.event_count += 1
+        existing.last_event_at = event.occurred_at
+        # An episode that escalates should be reflected, but never de-escalated:
+        # a nurse who saw HIGH must not later find it downgraded under them.
+        if _priority_rank(decision.priority) > _priority_rank(existing.priority):
+            existing.priority = decision.priority
+        return existing
+
+    alert = SafetyAlert(
+        patient_id=assignment.patient_id,
+        device_id=device.id,
+        sensor_event_id=event.id,
+        alert_type=decision.alert_type,
+        priority=decision.priority,
+        status=AlertStatus.OPEN,
+        event_count=1,
+        last_event_at=event.occurred_at,
+        delayed=event.delayed,
+    )
+    db.add(alert)
+    db.flush()
+
+    record_event(
+        db,
+        event_type=AuditEventType.SAFETY_ALERT_RAISED,
+        actor_type=ActorType.SYSTEM,
+        patient_id=assignment.patient_id,
+        entity_type="SafetyAlert",
+        entity_id=alert.id,
+        event_metadata={
+            "device_code": device.device_code,
+            "alert_type": decision.alert_type.value,
+            "priority": decision.priority.value,
+            "delayed": event.delayed,
+        },
+    )
+    return alert
+
+
+def _open_alert_to_fold_into(
+    db: Session, patient_id: uuid.UUID, alert_type: AlertType
+) -> SafetyAlert | None:
+    """Find an alert this event belongs to, if any.
+
+    Two different dedupe rules, because the signals behave differently:
+
+    • Clinical observations (fall, abnormal movement, mobility) fold into an
+      alert raised within the last `alert_dedupe_seconds`. A short window,
+      because a genuinely separate fall an hour later deserves its own alert.
+
+    • Device health (low battery, offline) folds into ANY open alert of that
+      type, with no time window at all. A battery stays low for hours; a
+      windowed rule would re-alert every couple of minutes, which is exactly
+      the fatigue this module is supposed to avoid.
+
+    Both include ACKNOWLEDGED, not just OPEN: a nurse who has acknowledged and
+    is walking to the room should not be handed a fresh alert for the same
+    ongoing episode.
+    """
+    live = (AlertStatus.OPEN, AlertStatus.ACKNOWLEDGED)
+    query = db.query(SafetyAlert).filter(
+        SafetyAlert.patient_id == patient_id,
+        SafetyAlert.alert_type == alert_type,
+        SafetyAlert.status.in_(live),
+    )
+    if not rules.is_operational(alert_type):
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            seconds=get_settings().alert_dedupe_seconds
+        )
+        query = query.filter(SafetyAlert.created_at >= cutoff)
+    return query.order_by(SafetyAlert.created_at.desc()).first()
+
+
+_PRIORITY_ORDER = {AlertPriority.LOW: 0, AlertPriority.MEDIUM: 1, AlertPriority.HIGH: 2}
+
+
+def _priority_rank(priority: AlertPriority) -> int:
+    return _PRIORITY_ORDER[priority]
+
+
+# ── alert lifecycle (staff) ─────────────────────────────────────────────────
+
+
+def list_alerts(
+    db: Session, statuses: list[AlertStatus] | None = None, limit: int = 100
+) -> list[SafetyAlert]:
+    """Cross-patient alert queue — the nurse dashboard's only hot query.
+
+    Ordered by priority then recency so a possible fall never sits below a low
+    battery, whatever their timestamps.
+    """
+    query = db.query(SafetyAlert)
+    if statuses:
+        query = query.filter(SafetyAlert.status.in_(statuses))
+    return (
+        query.order_by(
+            case(_PRIORITY_ORDER, value=SafetyAlert.priority).desc(),
+            SafetyAlert.created_at.desc(),
+        )
+        .limit(limit)
+        .all()
+    )
+
+
+def get_alert(db: Session, alert_id: uuid.UUID) -> SafetyAlert:
+    alert = db.get(SafetyAlert, alert_id)
+    if alert is None:
+        raise AlertNotFoundError(str(alert_id))
+    return alert
+
+
+def acknowledge_alert(db: Session, alert_id: uuid.UUID, actor_id: uuid.UUID) -> SafetyAlert:
+    """Record that a human has seen this and is acting on it.
+
+    Idempotent for an already-acknowledged alert: a double-click must not
+    rewrite who acknowledged it first. Acknowledging a RESOLVED alert is
+    rejected — it would move the record backwards.
+    """
+    alert = get_alert(db, alert_id)
+    if alert.status is AlertStatus.RESOLVED:
+        raise AlertTransitionError("alert is already resolved")
+    if alert.status is AlertStatus.ACKNOWLEDGED:
+        return alert
+
+    alert.status = AlertStatus.ACKNOWLEDGED
+    alert.acknowledged_by = actor_id
+    alert.acknowledged_at = datetime.now(timezone.utc)
+
+    record_event(
+        db,
+        event_type=AuditEventType.SAFETY_ALERT_ACKNOWLEDGED,
+        actor_type=ActorType.CLINICIAN,
+        actor_id=actor_id,
+        patient_id=alert.patient_id,
+        entity_type="SafetyAlert",
+        entity_id=alert.id,
+        event_metadata={"alert_type": alert.alert_type.value, "priority": alert.priority.value},
+    )
+    db.commit()
+    db.refresh(alert)
+    return alert
+
+
+def resolve_alert(db: Session, alert_id: uuid.UUID, actor_id: uuid.UUID) -> SafetyAlert:
+    """Close the alert out. Allowed from OPEN as well as ACKNOWLEDGED —
+    requiring acknowledgement first would add a click with no safety value."""
+    alert = get_alert(db, alert_id)
+    if alert.status is AlertStatus.RESOLVED:
+        return alert
+
+    alert.status = AlertStatus.RESOLVED
+    alert.resolved_by = actor_id
+    alert.resolved_at = datetime.now(timezone.utc)
+
+    record_event(
+        db,
+        event_type=AuditEventType.SAFETY_ALERT_RESOLVED,
+        actor_type=ActorType.CLINICIAN,
+        actor_id=actor_id,
+        patient_id=alert.patient_id,
+        entity_type="SafetyAlert",
+        entity_id=alert.id,
+        event_metadata={"alert_type": alert.alert_type.value, "event_count": alert.event_count},
+    )
+    db.commit()
+    db.refresh(alert)
+    return alert
 
 
 def list_patient_sensor_events(
@@ -652,3 +873,64 @@ def record_heartbeat(
     db.commit()
     db.refresh(device)
     return device
+
+
+# WORDING IS A PRODUCT RULE, NOT A STYLE CHOICE
+# (MODULE_3_IMPLEMENTATION_PLAN.md §14, §15, §23).
+#
+# The wearable observes movement. It cannot know a cause, so the alert may
+# never state one. "Abnormal repetitive movement" must never become "seizure";
+# "unexpected mobility" must never become "patient left bed" — a wrist sensor
+# cannot establish either.
+#
+# Rendered server-side from this single table so the wording cannot drift
+# between the dashboard, the audit timeline and any future surface. A guard
+# test asserts no diagnostic term appears here.
+_ALERT_MESSAGES = {
+    AlertType.POSSIBLE_FALL: "Possible fall detected — check patient.",
+    AlertType.ABNORMAL_MOVEMENT: (
+        "Abnormal repetitive movement detected — patient check recommended."
+    ),
+    AlertType.UNEXPECTED_MOBILITY: (
+        "Unexpected mobility detected — assistance may be required."
+    ),
+    AlertType.DEVICE_LOW_BATTERY: "Wearable battery low.",
+    AlertType.DEVICE_OFFLINE: "Safety monitor offline — device check required.",
+}
+
+
+def alert_message(alert_type: AlertType) -> str:
+    return _ALERT_MESSAGES[alert_type]
+
+
+def alert_to_read(db: Session, alert: SafetyAlert) -> SafetyAlertRead:
+    """Join in the patient and device context a nurse needs to act.
+
+    Patient identity appears here and nowhere on the device API: this is a
+    clinician-authenticated view, and an alert that cannot be attributed to a
+    person and a room is useless.
+    """
+    patient = db.get(Patient, alert.patient_id)
+    device = db.get(WearableDevice, alert.device_id)
+    assert patient is not None and device is not None  # FKs guarantee both
+
+    return SafetyAlertRead(
+        id=alert.id,
+        alert_type=alert.alert_type,
+        priority=alert.priority,
+        status=alert.status,
+        message=alert_message(alert.alert_type),
+        patient_id=patient.id,
+        patient_code=patient.patient_code,
+        patient_name=f"{patient.first_name} {patient.last_name}",
+        room_number=patient.room_number,
+        device_id=device.id,
+        device_code=device.device_code,
+        event_count=alert.event_count,
+        delayed=alert.delayed,
+        created_at=alert.created_at,
+        last_event_at=alert.last_event_at,
+        acknowledged_by=alert.acknowledged_by,
+        acknowledged_at=alert.acknowledged_at,
+        resolved_at=alert.resolved_at,
+    )

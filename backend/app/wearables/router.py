@@ -15,7 +15,7 @@ than inventing the first RBAC here, and it is recorded as a known gap
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
@@ -23,10 +23,13 @@ from app.auth.provider import AuthenticatedUser
 from app.core.db import get_db
 from app.patients.service import PatientNotFoundError
 from app.wearables import service
+from app.wearables.models import AlertStatus
 from app.wearables.schemas import (
     DeviceAssignmentCreate,
     DeviceAssignmentRead,
     PatientAssignmentResponse,
+    SafetyAlertListResponse,
+    SafetyAlertRead,
     SensorEventListResponse,
     SensorEventRead,
     WearableDeviceCreate,
@@ -212,3 +215,65 @@ def list_patient_safety_events(
     return SensorEventListResponse(
         total=len(events), results=[SensorEventRead.model_validate(e) for e in events]
     )
+
+
+# ── alerts ──────────────────────────────────────────────────────────────────
+
+
+@router.get("/safety-alerts", response_model=SafetyAlertListResponse)
+def list_safety_alerts(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    status_filter: Annotated[list[AlertStatus] | None, Query(alias="status")] = None,
+) -> SafetyAlertListResponse:
+    """The cross-patient alert queue.
+
+    This is the endpoint the nurse dashboard polls (decision D1: polling, not
+    WebSocket/SSE, because in-process push silently drops alerts under more
+    than one uvicorn worker and Redis is not available to fan out). It is also
+    the fix for the "cross-patient alert queue" that DOCUMENTATION.md §13 calls
+    the single biggest remaining usability gap.
+
+    Defaults to live alerts only — OPEN and ACKNOWLEDGED. A dashboard showing
+    resolved alerts by default would bury the ones needing action, which is how
+    alert fatigue starts.
+
+    Ordered by priority then recency, so a possible fall never sits below a low
+    battery whatever their timestamps.
+    """
+    statuses = status_filter or [AlertStatus.OPEN, AlertStatus.ACKNOWLEDGED]
+    alerts = service.list_alerts(db, statuses=statuses)
+    return SafetyAlertListResponse(
+        total=len(alerts), results=[service.alert_to_read(db, a) for a in alerts]
+    )
+
+
+@router.post("/safety-alerts/{alert_id}/acknowledge", response_model=SafetyAlertRead)
+def acknowledge_safety_alert(
+    alert_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> SafetyAlertRead:
+    """Record that a human has seen this and is acting on it."""
+    try:
+        alert = service.acknowledge_alert(db, alert_id, actor_id=uuid.UUID(current_user.id))
+    except service.AlertNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found") from exc
+    except service.AlertTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return service.alert_to_read(db, alert)
+
+
+@router.post("/safety-alerts/{alert_id}/resolve", response_model=SafetyAlertRead)
+def resolve_safety_alert(
+    alert_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> SafetyAlertRead:
+    """Close the alert out. Allowed directly from OPEN — requiring an
+    acknowledge first would add a click with no safety value."""
+    try:
+        alert = service.resolve_alert(db, alert_id, actor_id=uuid.UUID(current_user.id))
+    except service.AlertNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found") from exc
+    return service.alert_to_read(db, alert)

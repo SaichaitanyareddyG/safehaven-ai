@@ -259,3 +259,116 @@ class SensorEvent(Base):
     # alert — suppressing it would discard a real safety signal — but it must be
     # labelled, or staff would read it as happening now.
     delayed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class AlertType(str, enum.Enum):
+    """The five V1 alert types.
+
+    Mostly mirrors SensorEventType, plus DEVICE_OFFLINE — which no device can
+    report, because it is derived by the backend from a missing heartbeat
+    (Stage 6). Kept as a separate enum rather than reusing SensorEventType
+    precisely so that asymmetry is explicit in the type system."""
+
+    POSSIBLE_FALL = "POSSIBLE_FALL"
+    ABNORMAL_MOVEMENT = "ABNORMAL_MOVEMENT"
+    UNEXPECTED_MOBILITY = "UNEXPECTED_MOBILITY"
+    DEVICE_LOW_BATTERY = "DEVICE_LOW_BATTERY"
+    DEVICE_OFFLINE = "DEVICE_OFFLINE"
+
+
+class AlertPriority(str, enum.Enum):
+    """OPERATIONAL priority — how soon someone should look — and explicitly
+    NOT a clinical severity. Nothing in Module 3 can judge medical acuity, and
+    labelling these as clinical severity would be a claim the sensor cannot
+    support."""
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
+class AlertStatus(str, enum.Enum):
+    """Three states, deliberately.
+
+    DISMISSED was considered and rejected: it invites ambiguity about whether
+    anyone actually checked the patient. RESOLVED covers "dealt with", and the
+    audit trail records who and when."""
+
+    OPEN = "OPEN"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    RESOLVED = "RESOLVED"
+
+
+class SafetyAlert(Base):
+    """Something a nurse needs to look at.
+
+    One alert represents one EPISODE, not one event. Twenty fall-like events in
+    three seconds are one fall, so they collapse into a single row with
+    event_count incremented (see service.evaluate_event). That collapse is the
+    core of this module's alert-fatigue defence: DOCUMENTATION.md §7 rule 6
+    says an alert that fires on correct work is itself a safety problem,
+    because it teaches people to click through.
+
+    patient_id is denormalised onto the alert deliberately, unlike
+    SensorEvent which resolves the patient through its assignment. An alert is
+    a permanent record of who was alerted about, and it must stay answerable
+    even if assignment history is later reorganised — whereas an event is raw
+    input whose attribution should follow the assignment it arrived under.
+    """
+
+    __tablename__ = "safety_alerts"
+
+    __table_args__ = (
+        # The nurse dashboard's only hot query: open alerts, newest first.
+        Index("ix_safety_alerts_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False, index=True
+    )
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("wearable_devices.id"), nullable=False, index=True
+    )
+    # The event that opened the episode. NULL for DEVICE_OFFLINE, which is
+    # derived from the absence of data rather than from an event.
+    sensor_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sensor_events.id"), nullable=True
+    )
+
+    alert_type: Mapped[AlertType] = mapped_column(
+        SAEnum(AlertType, name="safety_alert_type", native_enum=True), nullable=False, index=True
+    )
+    priority: Mapped[AlertPriority] = mapped_column(
+        SAEnum(AlertPriority, name="safety_alert_priority", native_enum=True), nullable=False
+    )
+    status: Mapped[AlertStatus] = mapped_column(
+        SAEnum(AlertStatus, name="safety_alert_status", native_enum=True),
+        default=AlertStatus.OPEN,
+        nullable=False,
+        index=True,
+    )
+
+    # How many events folded into this episode, and when the last one arrived.
+    # Without these the dedupe would silently discard information: a nurse
+    # seeing "14 fall-like events over 40 seconds" knows more than one seeing
+    # a bare alert, and it makes the collapse observable rather than invisible.
+    event_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # True if the opening event was a delayed delivery. Carried onto the alert
+    # so the UI can say so without joining back to the event.
+    delayed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True
+    )
+    acknowledged_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

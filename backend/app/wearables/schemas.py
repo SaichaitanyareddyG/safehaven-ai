@@ -4,7 +4,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.wearables.models import DeviceStatus, MonitoringProfile, SensorEventType
+from app.wearables.models import (
+    AlertPriority,
+    AlertStatus,
+    AlertType,
+    DeviceStatus,
+    MonitoringProfile,
+    SensorEventType,
+)
 
 # ── staff-facing (clinician JWT) ────────────────────────────────────────────
 
@@ -110,6 +117,50 @@ class SensorEventRead(BaseModel):
 class SensorEventListResponse(BaseModel):
     total: int
     results: list[SensorEventRead]
+
+
+# ── alerts (staff) ──────────────────────────────────────────────────────────
+
+
+class SafetyAlertRead(BaseModel):
+    """One alert card on the nurse dashboard.
+
+    Patient identity IS included here — unlike anything on the device API. This
+    is a clinician-authenticated view, and an alert a nurse cannot attribute to
+    a person and a room is useless.
+
+    `message` is rendered server-side from a fixed table so the observed-not-
+    diagnosed wording cannot drift between surfaces."""
+
+    id: uuid.UUID
+    alert_type: AlertType
+    priority: AlertPriority
+    status: AlertStatus
+    message: str
+
+    patient_id: uuid.UUID
+    patient_code: str
+    patient_name: str
+    room_number: str | None
+
+    device_id: uuid.UUID
+    device_code: str
+
+    # How many events folded into this episode. Makes the dedupe observable
+    # rather than silently discarding information.
+    event_count: int
+    delayed: bool
+
+    created_at: datetime
+    last_event_at: datetime | None
+    acknowledged_by: uuid.UUID | None
+    acknowledged_at: datetime | None
+    resolved_at: datetime | None
+
+
+class SafetyAlertListResponse(BaseModel):
+    total: int
+    results: list[SafetyAlertRead]
 
 
 # ── device-facing (per-device credential) ───────────────────────────────────
