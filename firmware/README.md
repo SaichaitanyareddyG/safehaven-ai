@@ -34,6 +34,27 @@ device API is built. Drop the flag once Stage 1 lands.
 
 ---
 
+## Run it in the Wokwi simulator — ESP32-S3, Wi-Fi, serial heartbeat
+
+A **generic ESP32-S3 DevKitC-1**, not the M5StickS3; Wokwi has no StickS3 board.
+Today it only boots, joins `Wokwi-GUEST` and prints a heartbeat every 5 s.
+
+Needs PlatformIO Core (`pio`) and the VS Code extensions `platformio.platformio-ide`
+and `wokwi.wokwi-vscode`.
+
+```bash
+code firmware          # open THIS folder as the workspace, not the repo root
+pio run -e wokwi       # → .pio/build/wokwi/firmware.bin + firmware.elf
+```
+
+Then in VS Code: `Cmd+Shift+P` → **Wokwi: Start Simulator**. Serial output shows
+in the Wokwi terminal panel. `wokwi.toml` and `diagram.json` configure it.
+
+Wokwi's Wi-Fi reaches the internet through Wokwi's gateway — **synthetic data
+only**, never point it at an instance holding real patient data.
+
+---
+
 ## Layout
 
 ```
@@ -49,7 +70,10 @@ firmware/
     EventJson.h          THE DEVICE → BACKEND WIRE CONTRACT
   include/hal/Hal.h      the five hardware interfaces
   native/                host-only: traces, tests, replay tool, Makefile
-  platformio.ini         native + device environments (device = Stage 7)
+  src/main.cpp           simulator bring-up: Wi-Fi + heartbeat (env:wokwi)
+  wokwi.toml             points Wokwi at .pio/build/wokwi/firmware.{bin,elf}
+  diagram.json           simulated board: ESP32-S3 DevKitC-1 + serial monitor
+  platformio.ini         native, wokwi and device environments (device = Stage 7)
 ```
 
 ### The one rule
