@@ -1279,3 +1279,169 @@ open decisions land in later stages and do not gate it.
 
 **Two claims Module 3 must never make:** that it diagnoses anything, or that its thresholds are
 clinically validated. The device observes. SAFEHAVEN alerts. The nurse assesses.
+
+---
+
+## 35. Demo plan — the 5-minute walkthrough
+
+> **Numbering note.** This was section 28 in the original brief and was missed
+> when the plan was written; the document went from Test plan straight to
+> Implementation order. Added here rather than renumbering, because §28, §29
+> and §33 are cited by name in code comments and commit messages across the
+> repo.
+
+Written after Stages 0–6 were built, so this is a rehearsed script rather than
+an aspiration: every beat below is asserted by
+`frontend/verify_safety_monitoring.mjs`, which passes 16/16. **No hardware is
+required** — the wearable is the Stage 0 simulator, which speaks the same
+device API a real M5StickS3 will.
+
+### Before the room
+
+```bash
+# 1. Backend, with a short offline threshold so Scenario 6 fits in the demo
+cd backend && DEVICE_OFFLINE_AFTER_SECONDS=20 .venv/bin/python3 -m uvicorn app.main:app
+
+# 2. Frontend
+cd frontend && npm run dev
+
+# 3. Rehearse — if this passes, the demo works
+cd frontend && node verify_safety_monitoring.mjs
+```
+
+Have ready: one patient (with a room number), two registered + enrolled
+devices, and a terminal with the simulator. Two browser tabs: the patient
+page, and **Safety Monitoring**.
+
+> Turn **Sound on** in the alert queue before you start. Browsers block audio
+> until a click, so do it during setup, not mid-demo.
+
+### The script
+
+**1 · The problem** *(20s — no screen)*
+
+> "Hospitals often can't put cameras in patient rooms, and staff aren't at the
+> bedside most of the time. So when a patient falls at 3am, the first anyone
+> knows is the next round. Module 3 is a low-cost wrist wearable that watches
+> for movement worth checking on — and tells someone in seconds."
+
+**2 · Assign a device** *(45s — patient page)*
+
+*Scroll to Safety Monitoring. Click **Assign device**.*
+
+> "Devices are reusable, so they're not tied to a patient. I pick a free one —
+> note it shows battery and when it last checked in, so I don't hand out a
+> dead device."
+
+*Open the profile select. Pause on **Restricted mobility**.*
+
+> "And I choose what to watch for. Read what it says about restricted
+> mobility: *a wrist sensor cannot confirm a patient left the bed*. We put that
+> in the UI on purpose. I'll take Fall risk."
+
+*Assign. Panel shows **Connected**.*
+
+**3 · Normal movement — nothing happens** *(30s)* ⭐ **the most important beat**
+
+```bash
+python3 backend/scripts/simulate_device.py --secret "$S" scenario normal
+python3 backend/scripts/simulate_device.py --secret "$S" scenario weak-fall
+```
+
+*Switch to Safety Monitoring. Let it sit. Nothing appears.*
+
+> "That second one was a real impact — someone sitting down hard. The device
+> detected it, the backend stored it, and deliberately told nobody. An alert
+> that fires on normal behaviour teaches staff to ignore alerts, so the
+> silence here is a feature, not the system being asleep."
+
+**4 · A fall** *(60s — stay on the dashboard, do not reload)*
+
+```bash
+python3 backend/scripts/simulate_device.py --secret "$S" scenario fall
+```
+
+*Alert appears on its own, with a chime.*
+
+> "I didn't refresh. Name, patient ID, room, device, and the wording —
+> *possible fall*, not *the patient fell*. The device observes; the nurse
+> decides."
+
+*Point at the event count.*
+
+> "One physical fall produced several detections. That's **one** alert saying
+> *8 events*, not eight alerts. Same idea as before — the system is trying
+> hard not to shout."
+
+**5 · Movement, and why the profile matters** *(45s)*
+
+```bash
+python3 backend/scripts/simulate_device.py --secret "$S" scenario abnormal
+python3 backend/scripts/simulate_device.py --secret "$S" scenario mobility
+```
+
+> "Abnormal repetitive movement — and notice what it does *not* say. It
+> doesn't say seizure. It can't know that, so it doesn't claim it. There's a
+> test that fails the build if that wording ever drifts."
+
+*The mobility event produces nothing.*
+
+> "The mobility one was ignored, because this patient is on Fall risk, not
+> Restricted mobility. That's switched on deliberately by a clinician — never
+> inferred from a diagnosis."
+
+**6 · The device goes quiet** *(30s)*
+
+*Stop the simulator. Wait ~20s.*
+
+> "A safety monitor that silently stops is the dangerous failure — you'd think
+> the patient was watched when they weren't. So going quiet is itself a
+> high-priority alert. And there's no background job doing this: the
+> dashboard's own refresh is what notices."
+
+**7 · Respond, and the audit trail** *(30s)*
+
+*Acknowledge the fall. Open the patient's **Activity & Safety Timeline**.*
+
+> "Every step is recorded — device assigned, event received, alert raised,
+> who acknowledged it and when."
+
+*Open **Wearable Events**.*
+
+> "And here's everything the device reported, including the events that
+> *didn't* alert, with the evidence behind each. Being able to see what was
+> correctly ignored is how you learn to trust the silence."
+
+**8 · Discharge and reuse** *(30s)*
+
+*Discharge the patient.*
+
+> "Monitoring stops automatically — no one has to remember."
+
+*Assign the same device to another patient.*
+
+> "Same hardware, new patient, and the old patient keeps no active link."
+
+**9 · What we don't claim** *(30s — close on this)*
+
+> "Three honest limits. It doesn't diagnose anything. A wrist sensor can't
+> prove someone left a bed, so we never say that. And the thresholds are
+> engineering estimates, not clinically validated — tuning those needs real
+> hardware on real people. Everything you saw ran without a device, which is
+> why we could build and test all of it before one arrived."
+
+### If something goes wrong
+
+| Symptom | Cause / fix |
+|---|---|
+| No alert appears | Device unassigned, or a weak-fall payload. Check the panel says Connected |
+| No sound | Audio needs a click first — press **Sound on** |
+| Alert missing on reload | You resolved it; the live queue hides resolved by default |
+| Offline never fires | Backend not started with `DEVICE_OFFLINE_AFTER_SECONDS=20` |
+| Device not offered | It's already assigned, or registered but never enrolled |
+
+### Deliberately not shown
+
+QR display (Stage 10), real hardware (Stage 7), and detection running on a
+real IMU. The demo shows the **backend rules, alert pipeline and nurse
+workflow**, which is the part that is finished.
