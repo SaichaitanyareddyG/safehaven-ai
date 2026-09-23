@@ -241,6 +241,18 @@ def revoke_device(db: Session, device_id: uuid.UUID, actor_id: uuid.UUID) -> Wea
     point of per-device credentials.
     """
     device = get_device(db, device_id)
+
+    # End any monitoring this device was doing, FIRST.
+    #
+    # Without this the assignment stayed active while the credential was gone:
+    # the patient panel still showed a device, the device got 401 on every
+    # report, and the offline sweep skipped it because that query filters on
+    # status == ACTIVE. The patient appeared monitored and silently was not,
+    # which is the exact failure this module exists to prevent.
+    assignment = active_assignment_for_device(db, device.id)
+    if assignment is not None:
+        _end_assignment(db, assignment, unassigned_by=actor_id, reason="device_revoked")
+
     device.status = DeviceStatus.DISABLED
     device.credential_hash = None
     device.enrollment_code_hash = None
@@ -253,7 +265,10 @@ def revoke_device(db: Session, device_id: uuid.UUID, actor_id: uuid.UUID) -> Wea
         actor_id=actor_id,
         entity_type="WearableDevice",
         entity_id=device.id,
-        event_metadata={"device_code": device.device_code},
+        event_metadata={
+            "device_code": device.device_code,
+            "ended_active_assignment": assignment is not None,
+        },
     )
     db.commit()
     db.refresh(device)
@@ -278,9 +293,9 @@ def enroll_device(db: Session, enrollment_code: str, hardware_id: str) -> tuple[
     if device is None:
         logger.warning("Device enrolment attempted with an unrecognised code.")
         raise InvalidEnrollmentCodeError("not found")
-    if device.status is not DeviceStatus.ACTIVE:
-        logger.warning("Device enrolment attempted for a non-active device.")
-        raise InvalidEnrollmentCodeError("not active")
+    if device.status is DeviceStatus.RETIRED:
+        logger.warning("Device enrolment attempted for a retired device.")
+        raise InvalidEnrollmentCodeError("retired")
     if device.enrollment_expires_at is None or device.enrollment_expires_at < datetime.now(timezone.utc):
         logger.warning("Device enrolment attempted with an expired code.")
         raise InvalidEnrollmentCodeError("expired")
@@ -288,6 +303,12 @@ def enroll_device(db: Session, enrollment_code: str, hardware_id: str) -> tuple[
     raw_secret = secrets.token_urlsafe(SECRET_BYTES)
     device.credential_hash = _hash(raw_secret)
     device.hardware_id = hardware_id.strip()
+    # Re-enrolling returns a revoked device to service. Revocation is meant to
+    # be reversible — RETIRED is the terminal state — and without this a device
+    # revoked by mistake, or one recovered after being lost, was bricked
+    # forever: reissue_enrollment_code would hand out a code that enrol then
+    # refused.  The clinician's act of reissuing the code is the authorisation.
+    device.status = DeviceStatus.ACTIVE
     # Consume the code so it can never enrol a second device.
     device.enrollment_code_hash = None
     device.enrollment_expires_at = None
@@ -475,7 +496,18 @@ def end_assignments_for_patient(
         .all()
     )
     for assignment in assignments:
+        device = get_device(db, assignment.device_id)
         _end_assignment(db, assignment, unassigned_by=None, reason="patient_discharged")
+        # Close out DEVICE health alerts. Once the assignment ends, the device
+        # is unassigned, so neither the offline sweep nor a reconnect can ever
+        # resolve them — they would sit in the live queue forever, about a
+        # patient who has gone home.
+        #
+        # Clinical alerts are deliberately NOT touched: a fall that happened is
+        # still a fall, and closing it is a human decision, not a side effect
+        # of paperwork.
+        for alert_type in (AlertType.DEVICE_OFFLINE, AlertType.DEVICE_LOW_BATTERY):
+            _auto_resolve(db, device, assignment.patient_id, alert_type, "patient_discharged")
     if commit:
         db.commit()
     return assignments

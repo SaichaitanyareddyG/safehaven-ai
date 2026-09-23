@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { formatDistanceToNow } from 'date-fns'
 import { BatteryFull, BatteryLow, Plus, Wifi, WifiOff } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -184,6 +185,11 @@ function DeviceOption({
   onSelect: () => void
 }) {
   const lowBattery = device.battery_percent !== null && device.battery_percent <= 20
+  // Mirrors the backend's offline threshold closely enough to be useful
+  // guidance here; the backend remains the authority once assigned.
+  const stale =
+    device.last_seen_at !== null &&
+    Date.now() - new Date(device.last_seen_at).getTime() > 2 * 60 * 1000
 
   return (
     <button
@@ -205,13 +211,16 @@ function DeviceOption({
             {device.battery_percent}%
           </span>
         )}
-        {/* An unassigned device is idle, not offline — so this shows whether it
-            has ever checked in, not an alarm state. */}
-        <span className="flex items-center gap-1">
+        {/* An unassigned device is idle, not offline, so this is information
+            rather than an alarm. But it must be specific: a bare "Seen" for a
+            device last heard from two days ago reads as healthy, and assigning
+            it raises an offline alert seconds later. Showing WHEN lets a nurse
+            pick a charged, awake device instead. */}
+        <span className={cn('flex items-center gap-1', stale && 'text-amber-700')}>
           {device.last_seen_at ? (
             <>
-              <Wifi className="h-3 w-3" />
-              Seen
+              {stale ? <WifiOff className="h-3 w-3" /> : <Wifi className="h-3 w-3" />}
+              {formatDistanceToNow(new Date(device.last_seen_at), { addSuffix: true })}
             </>
           ) : (
             <>

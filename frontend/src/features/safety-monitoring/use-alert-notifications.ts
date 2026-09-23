@@ -27,24 +27,37 @@ export function useAlertNotifications() {
   const { data } = useLiveSafetyAlerts()
   const { play } = useAlertSound()
 
-  const seenIds = useRef<Set<string> | null>(null)
+  // Priority is tracked per alert, not just the id. Tracking ids alone missed
+  // ESCALATION: an ongoing episode promoted from MEDIUM to HIGH keeps the same
+  // id, so it produced no toast and no sound — the alert silently became
+  // urgent while nobody was told. See §3 of the edge-case review.
+  const seen = useRef<Map<string, SafetyAlert['priority']> | null>(null)
 
   useEffect(() => {
     if (!data) return
     const alerts = data.results
 
     // First load: remember what already exists, announce none of it.
-    if (seenIds.current === null) {
-      seenIds.current = new Set(alerts.map((a) => a.id))
+    if (seen.current === null) {
+      seen.current = new Map(alerts.map((a) => [a.id, a.priority]))
       return
     }
 
-    const fresh = alerts.filter((a) => !seenIds.current!.has(a.id))
-    for (const alert of fresh) seenIds.current.add(alert.id)
+    const announceable: SafetyAlert[] = []
+    for (const alert of alerts) {
+      const previous = seen.current.get(alert.id)
+      const isNew = previous === undefined
+      // Only upward moves count. A de-escalation is not news, and the backend
+      // never downgrades anyway.
+      const escalatedToHigh = !isNew && previous !== 'HIGH' && alert.priority === 'HIGH'
 
-    const announceable = fresh.filter((a) => a.priority !== 'LOW')
+      seen.current.set(alert.id, alert.priority)
+
+      if (alert.priority === 'LOW') continue
+      if (isNew || escalatedToHigh) announceable.push(alert)
+    }
+
     if (announceable.length === 0) return
-
     for (const alert of announceable) announce(alert)
 
     // One sound for the batch, however many arrived — a burst of chimes would

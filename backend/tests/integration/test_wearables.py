@@ -346,3 +346,90 @@ def test_audit_metadata_never_contains_the_secret_or_its_hash(client, db_session
         assert secret not in blob
         assert code not in blob
         assert (device.credential_hash or "x") not in blob
+
+
+# ── edge-case review regressions ────────────────────────────────────────────
+
+
+def test_revoked_device_can_be_returned_to_service(client, db_session):
+    """Revocation is reversible; RETIRED is the terminal state.
+
+    Regression: reissue_enrollment_code happily minted a code for a DISABLED
+    device, but enroll_device then refused it because it required status ACTIVE
+    — so a device revoked by mistake, or recovered after being lost, was
+    bricked forever with no path back.
+    """
+    headers = _register_and_login(client)
+    device, old_secret = _enrolled_device(client, headers)
+    client.post(f"/wearable-devices/{device['id']}/revoke", headers=headers)
+
+    reissue = client.post(f"/wearable-devices/{device['id']}/enrollment-code", headers=headers)
+    assert reissue.status_code == 200
+
+    status_code, body = _enroll(client, reissue.json()["enrollment_code"], "HW-REENROLLED")
+    assert status_code == 200
+    new_secret = body["device_secret"]
+    assert new_secret != old_secret
+
+    row = db_session.query(WearableDevice).one()
+    assert row.status is DeviceStatus.ACTIVE
+
+    heartbeat = client.post(
+        "/device-api/heartbeat",
+        json={"battery_percent": 55, "firmware_version": "0.1.0"},
+        headers=_device_headers(new_secret),
+    )
+    assert heartbeat.status_code == 200
+    # The old credential stays dead — re-enrolment issues a new secret.
+    assert client.post(
+        "/device-api/heartbeat",
+        json={"battery_percent": 55, "firmware_version": "0.1.0"},
+        headers=_device_headers(old_secret),
+    ).status_code == 401
+
+
+def test_revoking_an_assigned_device_stops_the_monitoring_it_implied(client, db_session):
+    """The worst defect the edge-case review found.
+
+    Regression: revoking left the assignment ACTIVE while destroying the
+    credential. The patient panel still showed a device, the device got 401 on
+    every report, and the offline sweep skipped it because that query filters
+    on status == ACTIVE. The patient appeared monitored and silently was not —
+    the exact failure this module exists to prevent.
+    """
+    from app.wearables.models import DeviceAssignment
+
+    headers = _register_and_login(client)
+    patient = client.post(
+        "/patients",
+        json={
+            "first_name": "John", "last_name": "Doe", "date_of_birth": "1950-01-01",
+            "preferred_language": "ENGLISH", "room_number": "204",
+        },
+        headers=headers,
+    ).json()
+    device, _secret = _enrolled_device(client, headers)
+    client.post(
+        f"/patients/{patient['id']}/wearable-assignment",
+        json={"device_id": device["id"], "monitoring_profile": "FALL_RISK"},
+        headers=headers,
+    )
+
+    client.post(f"/wearable-devices/{device['id']}/revoke", headers=headers)
+
+    assert db_session.query(DeviceAssignment).one().unassigned_at is not None
+    panel = client.get(f"/patients/{patient['id']}/wearable-assignment", headers=headers).json()
+    assert panel["assignment"] is None
+
+
+def test_revocation_records_whether_it_ended_monitoring(client, db_session):
+    headers = _register_and_login(client)
+    device, _ = _enrolled_device(client, headers)
+    client.post(f"/wearable-devices/{device['id']}/revoke", headers=headers)
+
+    event = (
+        db_session.query(AuditEvent)
+        .filter(AuditEvent.event_type == AuditEventType.WEARABLE_DEVICE_REVOKED.value)
+        .one()
+    )
+    assert event.event_metadata["ended_active_assignment"] is False

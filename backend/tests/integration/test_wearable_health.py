@@ -334,3 +334,65 @@ def test_a_fall_alert_is_never_auto_resolved_by_a_heartbeat(client, db_session):
     assert body["total"] == 1
     assert body["results"][0]["alert_type"] == "POSSIBLE_FALL"
     assert body["results"][0]["status"] == "OPEN"
+
+
+# ── edge-case review regressions ────────────────────────────────────────────
+
+
+def test_discharge_resolves_device_health_alerts(client, db_session):
+    """Regression: an open DEVICE_OFFLINE alert survived discharge and could
+    never be cleared. The assignment ends, so the offline sweep no longer sees
+    the device and a reconnect cannot auto-resolve it — the alert sat in the
+    live queue forever, about a patient who had gone home.
+    """
+    headers = _register_and_login(client)
+    patient, _device, secret = _monitored(client, headers)
+    _go_silent(db_session, "SH-WEAR-001", minutes=30)
+    _alerts(client, headers)
+    assert _alerts(client, headers)["total"] == 1
+
+    client.patch(
+        f"/patients/{patient['id']}", json={"admission_status": "DISCHARGED"}, headers=headers
+    )
+
+    assert _alerts(client, headers)["total"] == 0
+    assert db_session.query(SafetyAlert).one().status is AlertStatus.RESOLVED
+
+
+def test_discharge_resolves_a_low_battery_alert_too(client, db_session):
+    headers = _register_and_login(client)
+    patient, _device, secret = _monitored(client, headers)
+    _heartbeat(client, secret, battery=8)
+    assert _alerts(client, headers)["total"] == 1
+
+    client.patch(
+        f"/patients/{patient['id']}", json={"admission_status": "DISCHARGED"}, headers=headers
+    )
+    assert _alerts(client, headers)["total"] == 0
+
+
+def test_discharge_does_NOT_resolve_a_clinical_alert(client, db_session):
+    """Deliberate asymmetry. A fall that happened is still a fall, and closing
+    it is a human decision — not a side effect of paperwork. Only device-health
+    alerts clear themselves at discharge."""
+    headers = _register_and_login(client)
+    patient, _device, secret = _monitored(client, headers)
+    client.post(
+        "/device-api/events",
+        json={
+            "device_event_id": "f1", "event_type": "POSSIBLE_FALL",
+            "occurred_at_ms": int(datetime.now(timezone.utc).timestamp() * 1000),
+            "metrics": {"fall_score": 4, "stages_seen": ["freefall", "impact", "orientation", "inactivity"]},
+        },
+        headers={"Authorization": f"Bearer {secret}"},
+    )
+    assert _alerts(client, headers)["total"] == 1
+
+    client.patch(
+        f"/patients/{patient['id']}", json={"admission_status": "DISCHARGED"}, headers=headers
+    )
+
+    body = _alerts(client, headers)
+    assert body["total"] == 1
+    assert body["results"][0]["alert_type"] == "POSSIBLE_FALL"
+    assert body["results"][0]["status"] == "OPEN"
