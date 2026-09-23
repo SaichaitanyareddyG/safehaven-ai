@@ -1197,19 +1197,27 @@ open-ended; enclosure/strap fabrication.
 
 ## 33. Decisions required from you
 
-Only genuine blockers. Each has my recommendation.
+### ✅ Resolved 2026-09-23
+
+| # | Decision | Outcome |
+|---|---|---|
+| **D1** | Real-time delivery | **Polling (3 s).** Chosen as the option least likely to cause trouble later: it is correct under any uvicorn worker count, whereas in-process SSE/WebSocket silently drops alerts under `--workers 2`. The SSE upgrade path in §21 keeps this from being a dead end |
+| **D2** | Module 2 / QR interop in V1 | **Dropped from V1.** The hospital wristband remains the authoritative bedside identity; the wearable QR is a SAFEHAVEN-auxiliary mechanism only. §11 |
+| **D6** | Firmware QR library | **Accepted.** The "no new dependencies" rule governs the Python/JS repo, not the new `firmware/` tree |
+| **D9** | Firmware location | **This repo, top-level `firmware/`** |
+
+### Still open
 
 | # | Decision | My recommendation |
 |---|---|---|
-| **D1** | **Real-time: polling vs SSE/WebSocket for V1?** | **Polling.** In-process push silently breaks with `--workers 2` and Redis is not available to fix it. §21 |
-| **D2** | **Drop Module 2 / QR interop from V1?** | **Yes, drop it.** Three repo docs forbid Module 3 depending on Module 2. Wristband stays authoritative. §11 |
 | **D3** | **Does discharge auto-unassign, or require staff confirmation?** | **Auto-unassign**, mirroring the existing care-token cascade. A device believing it monitors a discharged patient is the worse failure. §25 |
 | **D4** | **Keep `UNEXPECTED_MOBILITY` in V1 given a wrist cannot prove bed-exit?** | **Keep it**, `MEDIUM` priority, `RESTRICTED_MOBILITY` only, wording capped at "unexpected mobility." Defer if hardware testing shows gait detection is unreliable. §15 |
 | **D5** | **Buy hardware now?** | **Yes — two M5StickS3 ($43 total).** Stages 0–6 don't need it, but Stage 7 tuning is the long pole and R1/R6 stay unresolved until it's in hand |
-| **D6** | **Firmware QR library** — no backend `qrcode` lib exists and none may be added, so QR must render on-device | Accept a **firmware-side** QR library. Confirm "no new dependencies" governs the Python/JS repo, not the new `firmware/` tree |
 | **D7** | **Is an audible browser alert acceptable in your demo environment?** | Include it, default-on with a visible mute. Needs a user gesture to unlock audio |
 | **D8** | **Who may assign a device / acknowledge an alert?** | **Any authenticated clinician for V1.** No role check exists anywhere in the codebase; adding the first RBAC is out of scope. Flag as a known gap |
-| **D9** | **Where does `firmware/` live?** | **This repo, top-level `firmware/`.** Keeps the event contract and its two implementations in one place |
+
+**D3, D4, D5, D7 and D8 do not block Stage 0** — they are needed by Stages 2, 9, 7, 5 and 1
+respectively. Stage 0 can begin on the resolved decisions alone.
 
 ---
 
@@ -1247,8 +1255,9 @@ forces the device/backend event contract to be settled before any code depends o
 (device registry + credential auth), because the `/device-api` security boundary should exist before
 anything is allowed to post events into it.
 
-**Verdict: GO for Stages 0–6 immediately. Order two M5StickS3 in parallel. Answer D1, D2 and D6
-before Stage 0 begins — they change the shape of the work.**
+**Verdict: GO for Stages 0–6 immediately. Order two M5StickS3 in parallel.**
+D1, D2, D6 and D9 were resolved on 2026-09-23 (§33), so **Stage 0 is unblocked**. The remaining
+open decisions land in later stages and do not gate it.
 
 **Two claims Module 3 must never make:** that it diagnoses anything, or that its thresholds are
 clinically validated. The device observes. SAFEHAVEN alerts. The nurse assesses.
