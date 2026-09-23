@@ -41,8 +41,37 @@ const browser = await chromium.launch({
 let context
 let page
 
+// How long a caption card stays up.
+//
+// These cards are dense — the longest runs to 33 words — and a viewer gets one
+// pass at them with no scrubbing. The previous flat 3200ms worked out at
+// 470-530 wpm on the longer cards, about double a comfortable reading speed,
+// so in practice they could not be read.
+//
+// Duration is now derived from the text: a short beat to notice the card has
+// appeared, plus reading time at CAPTION_WPM. Override for a faster or slower
+// cut without touching any call site:
+//
+//     CAPTION_WPM=260 node record_full_demo.mjs   # snappier
+//     CAPTION_WPM=180 node record_full_demo.mjs   # slower, for a non-native
+//                                                 # or non-technical audience
+const CAPTION_WPM = Number(process.env.CAPTION_WPM ?? 220)
+const CAPTION_LEAD_IN_MS = 1300
+
+/**
+ * An explicit `ms` argument is treated as a FLOOR, not an override, so the few
+ * cards deliberately given extra weight keep that emphasis while still never
+ * being held for less than they take to read.
+ */
+function captionMs(title, body, floor = 0) {
+  const words = `${title} ${body}`.trim().split(/\s+/).length
+  const read = CAPTION_LEAD_IN_MS + Math.round((words / CAPTION_WPM) * 60_000)
+  return Math.max(read, floor)
+}
+
 /** Full-screen explanation card, so the video is self-describing. */
-async function caption(title, body, ms = 3200) {
+async function caption(title, body, floorMs = 0) {
+  const ms = captionMs(title, body, floorMs)
   await page.evaluate(
     ({ title, body }) => {
       document.getElementById('__cap__')?.remove()
