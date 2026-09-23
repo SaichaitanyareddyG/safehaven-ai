@@ -21,8 +21,12 @@ from sqlalchemy.orm import Session
 from app.auth.dependencies import get_current_user
 from app.auth.provider import AuthenticatedUser
 from app.core.db import get_db
+from app.patients.service import PatientNotFoundError
 from app.wearables import service
 from app.wearables.schemas import (
+    DeviceAssignmentCreate,
+    DeviceAssignmentRead,
+    PatientAssignmentResponse,
     WearableDeviceCreate,
     WearableDeviceListResponse,
     WearableDeviceRead,
@@ -113,3 +117,77 @@ def revoke_device(
     except service.DeviceNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found") from exc
     return service.to_read(device)
+
+
+# ── assignment ──────────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/patients/{patient_id}/wearable-assignment", response_model=PatientAssignmentResponse
+)
+def get_patient_assignment(
+    patient_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> PatientAssignmentResponse:
+    """Current wearable for a patient, or null. Null is the normal case."""
+    assignment = service.active_assignment_for_patient(db, patient_id)
+    if assignment is None:
+        return PatientAssignmentResponse(assignment=None)
+    return PatientAssignmentResponse(assignment=service.assignment_to_read(db, assignment))
+
+
+@router.post(
+    "/patients/{patient_id}/wearable-assignment",
+    response_model=DeviceAssignmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def assign_wearable(
+    patient_id: uuid.UUID,
+    payload: DeviceAssignmentCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> DeviceAssignmentRead:
+    """Assign a device to a patient with an explicit monitoring profile.
+
+    409 covers every "you cannot assign this right now" case — discharged
+    patient, patient already monitored, device unenrolled/disabled/taken. The
+    reason is returned in the detail because the caller is an authenticated
+    clinician who needs to act on it (unlike the device API, where failures are
+    deliberately opaque).
+    """
+    try:
+        assignment = service.assign_device(
+            db, patient_id, payload, assigned_by=uuid.UUID(current_user.id)
+        )
+    except PatientNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found") from exc
+    except service.DeviceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found") from exc
+    except (service.DeviceNotAssignableError, service.PatientNotAssignableError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return service.assignment_to_read(db, assignment)
+
+
+@router.delete(
+    "/patients/{patient_id}/wearable-assignment", response_model=DeviceAssignmentRead
+)
+def unassign_wearable(
+    patient_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> DeviceAssignmentRead:
+    """End monitoring and return the device to the pool.
+
+    The device learns of this on its next heartbeat and drops to its safe
+    unassigned state.
+    """
+    try:
+        assignment = service.unassign_device(
+            db, patient_id, unassigned_by=uuid.UUID(current_user.id)
+        )
+    except service.AssignmentNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Patient has no assigned wearable"
+        ) from exc
+    return service.assignment_to_read(db, assignment)

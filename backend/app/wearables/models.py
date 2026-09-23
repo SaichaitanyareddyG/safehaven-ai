@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, SmallInteger, String
+from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Index, SmallInteger, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -86,3 +86,90 @@ class WearableDevice(Base):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+
+
+class MonitoringProfile(str, enum.Enum):
+    """Which detectors the device runs, set explicitly by staff at assignment.
+
+    RESTRICTED_MOBILITY is the only profile that enables the unexpected-mobility
+    detector, and it must be chosen deliberately — never inferred from a
+    diagnosis, a procedure name, or a mobility care instruction. That rule is
+    the whole reason this is a stored field rather than something derived:
+    inferring "this patient shouldn't be walking" from clinical data is exactly
+    the kind of inference this codebase refuses to make elsewhere
+    (DOCUMENTATION.md §7 rule 2).
+    """
+
+    STANDARD = "STANDARD"
+    FALL_RISK = "FALL_RISK"
+    RESTRICTED_MOBILITY = "RESTRICTED_MOBILITY"
+
+
+class DeviceAssignment(Base):
+    """A period during which one device monitored one patient.
+
+    Append-only in spirit: unassigning sets `unassigned_at` rather than
+    deleting, so a reassigned device keeps a resolvable history and old sensor
+    events stay attributable to the patient they actually came from.
+
+    "Active" is DERIVED — `unassigned_at IS NULL` — and is deliberately not a
+    stored boolean. A stored flag would be a second source of truth that can
+    drift out of step with the timestamp, and there would be no way to tell
+    which one was right.
+
+    The two invariants (one active assignment per device, one per patient) are
+    enforced by partial unique indexes in the database rather than by Python
+    checks alone, so two concurrent assignment requests cannot both succeed.
+    """
+
+    __tablename__ = "device_assignments"
+
+    __table_args__ = (
+        Index(
+            "ux_device_assignments_active_device",
+            "device_id",
+            unique=True,
+            postgresql_where=text("unassigned_at IS NULL"),
+        ),
+        Index(
+            "ux_device_assignments_active_patient",
+            "patient_id",
+            unique=True,
+            postgresql_where=text("unassigned_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("wearable_devices.id"), nullable=False, index=True
+    )
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False, index=True
+    )
+    # Context only. Recorded so an event can be tied to the visit it happened
+    # during, never used to decide whether to monitor. Note Encounter.status and
+    # Patient.admission_status are independent, unlinked state machines in this
+    # codebase — admission_status is what discharge actually sets, so it is the
+    # authority for ending an assignment, not this column.
+    encounter_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("encounters.id"), nullable=True
+    )
+
+    monitoring_profile: Mapped[MonitoringProfile] = mapped_column(
+        SAEnum(MonitoringProfile, name="device_monitoring_profile", native_enum=True),
+        nullable=False,
+    )
+
+    assigned_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+    # NULL on both = active. unassigned_by is also NULL when the cascade ended
+    # the assignment automatically on discharge, which is recorded as a SYSTEM
+    # actor in the audit trail rather than attributed to a clinician.
+    unassigned_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    unassigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -52,6 +52,16 @@ function deviceSuffix(event: AuditEvent): string {
   return typeof code === 'string' && code ? `: ${code}` : ''
 }
 
+// Which detectors were enabled. Worth showing on the timeline because
+// RESTRICTED_MOBILITY is a deliberate clinical decision, not a default — so
+// "who turned it on, and when" is exactly the kind of thing an audit trail
+// exists to answer.
+function profileSuffix(event: AuditEvent): string {
+  const profile = event.event_metadata['monitoring_profile']
+  if (typeof profile !== 'string' || !profile) return ''
+  return ` (${profile.toLowerCase().replace(/_/g, ' ')})`
+}
+
 function resultSuffix(event: AuditEvent): string {
   const result = event.event_metadata['result']
   const reasons = event.event_metadata['reasons']
@@ -172,6 +182,12 @@ export function auditEventDescription(event: AuditEvent): string {
       return `Wearable device enrolled and credentialled${deviceSuffix(event)}`
     case 'WEARABLE_DEVICE_REVOKED':
       return `Wearable device credential revoked${deviceSuffix(event)}`
+    case 'WEARABLE_DEVICE_ASSIGNED':
+      return `Safety monitoring started${deviceSuffix(event)}${profileSuffix(event)}`
+    case 'WEARABLE_DEVICE_UNASSIGNED':
+      return event.event_metadata['reason'] === 'patient_discharged'
+        ? `Safety monitoring auto-stopped (discharge)${deviceSuffix(event)}`
+        : `Safety monitoring stopped${deviceSuffix(event)}`
     default:
       return event.event_type
   }

@@ -19,6 +19,7 @@ from app.wearables import service
 from app.wearables.dependencies import get_current_device
 from app.wearables.models import WearableDevice
 from app.wearables.schemas import (
+    DeviceAssignmentView,
     DeviceEnrollResponse,
     DeviceEnrollRequest,
     DeviceHeartbeatRequest,
@@ -77,9 +78,24 @@ def heartbeat(
     carries whatever the backend wants it to know. That is why no server push
     (and therefore no MQTT broker) is needed for assignment changes.
 
-    `assignment` is always null until Stage 2 adds assignments. `server_time_ms`
-    is returned so a device without SNTP can still convert its monotonic event
-    timestamps to wall clock before sending them.
+    `server_time_ms` is returned so a device without SNTP can still convert its
+    monotonic event timestamps to wall clock before sending them.
+
+    `assignment` is null whenever the device is unassigned — including
+    immediately after a discharge cascade ended it — and the firmware treats
+    that as a safe idle state in which no patient events are produced. Note the
+    view deliberately carries no patient identity of any kind.
     """
     service.record_heartbeat(db, device, payload)
-    return DeviceHeartbeatResponse(server_time_ms=int(time.time() * 1000), assignment=None)
+
+    assignment = service.active_assignment_for_device(db, device.id)
+    view = (
+        DeviceAssignmentView(
+            assignment_id=assignment.id,
+            monitoring_profile=assignment.monitoring_profile,
+            assigned_at_ms=int(assignment.assigned_at.timestamp() * 1000),
+        )
+        if assignment is not None
+        else None
+    )
+    return DeviceHeartbeatResponse(server_time_ms=int(time.time() * 1000), assignment=view)

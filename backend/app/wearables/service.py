@@ -26,8 +26,18 @@ from sqlalchemy.orm import Session
 from app.audit.models import ActorType, AuditEventType
 from app.audit.service import record_event
 from app.core.config import get_settings
-from app.wearables.models import DeviceStatus, WearableDevice
+from app.encounters.models import Encounter, EncounterStatus
+from app.patients.models import AdmissionStatus
+from app.patients.service import get_patient
+from app.wearables.models import (
+    DeviceAssignment,
+    DeviceStatus,
+    MonitoringProfile,
+    WearableDevice,
+)
 from app.wearables.schemas import (
+    DeviceAssignmentCreate,
+    DeviceAssignmentRead,
     DeviceHeartbeatRequest,
     WearableDeviceCreate,
     WearableDeviceRead,
@@ -56,6 +66,20 @@ class InvalidEnrollmentCodeError(Exception):
     """Raised uniformly for "no such code" / "expired" / "already used" /
     "device disabled". The HTTP layer must not let a caller tell these apart —
     same reasoning as InvalidCareAccessTokenError."""
+
+
+class AssignmentNotFoundError(Exception):
+    pass
+
+
+class DeviceNotAssignableError(Exception):
+    """Device is disabled, retired, not yet enrolled, or already assigned to
+    someone else. Unlike the credential errors, this one IS safe to explain —
+    the caller is an authenticated clinician who needs to know why."""
+
+
+class PatientNotAssignableError(Exception):
+    """Patient is discharged, or already has a wearable."""
 
 
 class InvalidDeviceCredentialError(Exception):
@@ -266,6 +290,184 @@ def authenticate_device(db: Session, raw_secret: str) -> WearableDevice:
         logger.warning("Device API called by a non-active device.")
         raise InvalidDeviceCredentialError("not active")
     return device
+
+
+# ── assignment ──────────────────────────────────────────────────────────────
+
+
+def active_assignment_for_device(db: Session, device_id: uuid.UUID) -> DeviceAssignment | None:
+    return (
+        db.query(DeviceAssignment)
+        .filter(
+            DeviceAssignment.device_id == device_id,
+            DeviceAssignment.unassigned_at.is_(None),
+        )
+        .first()
+    )
+
+
+def active_assignment_for_patient(db: Session, patient_id: uuid.UUID) -> DeviceAssignment | None:
+    return (
+        db.query(DeviceAssignment)
+        .filter(
+            DeviceAssignment.patient_id == patient_id,
+            DeviceAssignment.unassigned_at.is_(None),
+        )
+        .first()
+    )
+
+
+def assignment_to_read(db: Session, assignment: DeviceAssignment) -> DeviceAssignmentRead:
+    device = get_device(db, assignment.device_id)
+    return DeviceAssignmentRead(
+        id=assignment.id,
+        device_id=assignment.device_id,
+        device_code=device.device_code,
+        patient_id=assignment.patient_id,
+        encounter_id=assignment.encounter_id,
+        monitoring_profile=assignment.monitoring_profile,
+        assigned_at=assignment.assigned_at,
+        unassigned_at=assignment.unassigned_at,
+        battery_percent=device.battery_percent,
+        last_seen_at=device.last_seen_at,
+        device_status=device.status,
+    )
+
+
+def assign_device(
+    db: Session, patient_id: uuid.UUID, data: DeviceAssignmentCreate, assigned_by: uuid.UUID
+) -> DeviceAssignment:
+    """Start monitoring a patient with a specific device and profile.
+
+    Refuses in four cases, each for a safety reason rather than tidiness:
+      • patient discharged — monitoring someone who has left is meaningless
+      • patient already has a device — two monitors means two alert streams
+        for one person, and no way to tell which is authoritative
+      • device not enrolled — it has no credential, so it can never report
+        anything; assigning it would create a false impression of monitoring
+      • device disabled/retired, or already on another patient
+    """
+    patient = get_patient(db, patient_id)  # raises PatientNotFoundError
+    if patient.admission_status is not AdmissionStatus.ACTIVE:
+        raise PatientNotAssignableError("patient is discharged")
+    if active_assignment_for_patient(db, patient_id) is not None:
+        raise PatientNotAssignableError("patient already has an assigned wearable")
+
+    device = get_device(db, data.device_id)  # raises DeviceNotFoundError
+    if device.status is not DeviceStatus.ACTIVE:
+        raise DeviceNotAssignableError(f"device is {device.status.value}")
+    if device.credential_hash is None:
+        raise DeviceNotAssignableError("device is not enrolled")
+    if active_assignment_for_device(db, device.id) is not None:
+        raise DeviceNotAssignableError("device is already assigned to another patient")
+
+    # Context only — the visit this monitoring happened during. Absence of an
+    # open encounter is not a reason to refuse: encounters and admission status
+    # are separate, unlinked state machines here, and admission status is what
+    # actually gates monitoring.
+    open_encounter = (
+        db.query(Encounter)
+        .filter(Encounter.patient_id == patient_id, Encounter.status == EncounterStatus.OPEN)
+        .order_by(Encounter.admission_date.desc())
+        .first()
+    )
+
+    assignment = DeviceAssignment(
+        device_id=device.id,
+        patient_id=patient_id,
+        encounter_id=open_encounter.id if open_encounter else None,
+        monitoring_profile=data.monitoring_profile,
+        assigned_by=assigned_by,
+    )
+    db.add(assignment)
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        # Lost a race against a concurrent assignment; the partial unique
+        # indexes caught what the checks above could not.
+        db.rollback()
+        raise DeviceNotAssignableError("device or patient was assigned concurrently") from exc
+
+    record_event(
+        db,
+        event_type=AuditEventType.WEARABLE_DEVICE_ASSIGNED,
+        actor_type=ActorType.CLINICIAN,
+        actor_id=assigned_by,
+        patient_id=patient_id,
+        entity_type="DeviceAssignment",
+        entity_id=assignment.id,
+        event_metadata={
+            "device_code": device.device_code,
+            "monitoring_profile": data.monitoring_profile.value,
+        },
+    )
+    db.commit()
+    db.refresh(assignment)
+    return assignment
+
+
+def unassign_device(
+    db: Session, patient_id: uuid.UUID, unassigned_by: uuid.UUID
+) -> DeviceAssignment:
+    """End the patient's active assignment. Staff-initiated."""
+    assignment = active_assignment_for_patient(db, patient_id)
+    if assignment is None:
+        raise AssignmentNotFoundError(str(patient_id))
+    _end_assignment(db, assignment, unassigned_by=unassigned_by, reason="staff_unassigned")
+    db.commit()
+    db.refresh(assignment)
+    return assignment
+
+
+def end_assignments_for_patient(
+    db: Session, patient_id: uuid.UUID, commit: bool = True
+) -> list[DeviceAssignment]:
+    """End every active assignment for a patient, attributed to SYSTEM.
+
+    Called by the discharge cascade in app/orchestration/patient_ops.py with
+    commit=False so the discharge, the unassignment and both audit rows land in
+    one transaction — the same contract revoke_all_tokens_for_patient already
+    has. A device still believing it monitors a discharged patient is the
+    failure this prevents.
+    """
+    assignments = (
+        db.query(DeviceAssignment)
+        .filter(
+            DeviceAssignment.patient_id == patient_id,
+            DeviceAssignment.unassigned_at.is_(None),
+        )
+        .all()
+    )
+    for assignment in assignments:
+        _end_assignment(db, assignment, unassigned_by=None, reason="patient_discharged")
+    if commit:
+        db.commit()
+    return assignments
+
+
+def _end_assignment(
+    db: Session, assignment: DeviceAssignment, unassigned_by: uuid.UUID | None, reason: str
+) -> None:
+    """Close out an assignment and audit it.
+
+    unassigned_by is None for the discharge cascade — there is no clinician to
+    attribute an automatic action to, so it is recorded as a SYSTEM actor, the
+    same convention revoke_all_tokens_for_patient uses.
+    """
+    device = get_device(db, assignment.device_id)
+    assignment.unassigned_at = datetime.now(timezone.utc)
+    assignment.unassigned_by = unassigned_by
+
+    record_event(
+        db,
+        event_type=AuditEventType.WEARABLE_DEVICE_UNASSIGNED,
+        actor_type=ActorType.CLINICIAN if unassigned_by else ActorType.SYSTEM,
+        actor_id=unassigned_by,
+        patient_id=assignment.patient_id,
+        entity_type="DeviceAssignment",
+        entity_id=assignment.id,
+        event_metadata={"device_code": device.device_code, "reason": reason},
+    )
 
 
 def record_heartbeat(

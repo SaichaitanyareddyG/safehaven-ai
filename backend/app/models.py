@@ -24,4 +24,4 @@ from app.medication_verification.models import AdministrationEvent  # noqa: F401
 from app.patient_access.models import PatientCareAccessToken  # noqa: F401
 from app.patient_chat.models import PatientChatMessage  # noqa: F401
 from app.patient_feedback.models import PatientComprehensionFeedback, PatientTeachBackResponse  # noqa: F401
-from app.wearables.models import WearableDevice  # noqa: F401
+from app.wearables.models import DeviceAssignment, WearableDevice  # noqa: F401

@@ -758,6 +758,24 @@ Composite index `(status, created_at)` for the dashboard query.
 `Patient.room_number` already exists. New `AuditEventType` members need **no migration** (it is a
 `String(64)` column) — but **must** get frontend labels or the guard test fails the build.
 
+### ❗ Correction made during Stage 2: `assignment_token_hash` deferred to Stage 10
+
+The `device_assignments` table above listed `assignment_token_hash`. It was **not** built in
+Stage 2, because implementing it exposed a flaw in the design above.
+
+The device must **receive the raw token** in order to render the QR, and the heartbeat response is
+the only channel to it. A stored hash cannot be served to the device, so hashing the assignment
+token as originally specified makes the feature impossible.
+
+The token is also not the same kind of secret as a device credential: per §11 it resolves to a
+patient only for a caller holding a **clinician JWT**, so it is an opaque *identifier*, not a
+bearer credential. Hashing therefore buys much less than it does for `credential_hash` — an
+attacker with database access already has the patients.
+
+Likely resolution in Stage 10: store the token in plaintext, keep it opaque and high-entropy, and
+null it on unassignment (which still satisfies "old QR invalid immediately"). Deferred rather than
+guessed, so an unused security-relevant column is not shipped on a design that is still open.
+
 ### Event types (V1, exactly five + one internal)
 `POSSIBLE_FALL` · `ABNORMAL_MOVEMENT` · `UNEXPECTED_MOBILITY` · `DEVICE_LOW_BATTERY` ·
 `DEVICE_OFFLINE` · (internal) `DEVICE_HEARTBEAT`
