@@ -17,6 +17,8 @@ from app.core.rate_limit import limiter
 from app.encounters.router import router as encounters_router
 from app.instructions.router import router as instructions_router
 from app.medication_verification.router import router as medication_verification_router
+from app.wearables.device_router import router as wearable_device_api_router
+from app.wearables.router import router as wearables_router
 from app.patient_access.router import router as patient_access_router
 from app.patient_chat.router import router as patient_chat_router
 from app.patients.router import router as patients_router
@@ -50,6 +52,11 @@ app.include_router(allergies_router)
 app.include_router(patient_chat_router)
 app.include_router(encounters_router)
 app.include_router(medication_verification_router)
+app.include_router(wearables_router)
+# Separate router, separate path prefix, separate auth dependency: a device
+# credential must never be usable on a clinician route (see
+# app/wearables/dependencies.py).
+app.include_router(wearable_device_api_router)
 
 
 @app.get("/health")

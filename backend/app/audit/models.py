@@ -69,6 +69,13 @@ class AuditEventType(str, enum.Enum):
     MEDICATION_MISMATCH = "MEDICATION_MISMATCH"
     ADMINISTRATION_CONFIRMED = "ADMINISTRATION_CONFIRMED"
 
+    # Module 3 — wearable patient-safety monitoring (see app/wearables/).
+    # These three carry no patient_id: a device is registered and credentialled
+    # independently of whoever it is later assigned to.
+    WEARABLE_DEVICE_REGISTERED = "WEARABLE_DEVICE_REGISTERED"
+    WEARABLE_DEVICE_ENROLLED = "WEARABLE_DEVICE_ENROLLED"
+    WEARABLE_DEVICE_REVOKED = "WEARABLE_DEVICE_REVOKED"
+
 
 class AuditEvent(Base):
     """Immutable record of a clinically relevant action. Rows are only ever

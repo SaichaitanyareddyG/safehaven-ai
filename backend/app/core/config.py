@@ -82,6 +82,12 @@ class Settings(BaseSettings):
     # re-opening/refreshing their care link doesn't spam the audit trail.
     care_plan_view_dedup_minutes: int = 5
 
+    # Module 3: how long a wearable's single-use enrolment code stays valid.
+    # Short on purpose — the code is human-typeable and therefore inherently
+    # more guessable than the 256-bit secret it is exchanged for, so its safety
+    # comes from being single-use and short-lived, not from length.
+    device_enrollment_ttl_minutes: int = 60
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_cors_origins(cls, value: object) -> object:

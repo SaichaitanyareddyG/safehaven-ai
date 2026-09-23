@@ -25,6 +25,10 @@ const CATEGORY_BY_EVENT_TYPE: Record<string, AuditEventCategory> = {
   MEDICATION_VERIFIED: 'approval',
   ADMINISTRATION_CONFIRMED: 'approval',
   ADMINISTRATION_NOT_GIVEN: 'safety-warning',
+  // Module 3. Registration and enrolment are routine setup, so 'info'.
+  // Revocation is not: it removes a patient-safety monitor's ability to report
+  // anything at all, and a monitor going dark should never look like a login.
+  WEARABLE_DEVICE_REVOKED: 'safety-warning',
 }
 
 export function auditEventCategory(eventType: string): AuditEventCategory {
@@ -39,6 +43,13 @@ function languageSuffix(event: AuditEvent): string {
 function medicationSuffix(event: AuditEvent): string {
   const name = event.event_metadata['medication_name']
   return typeof name === 'string' && name ? `: ${name}` : ''
+}
+
+// Module 3. device_code is an asset tag (e.g. SH-WEAR-001), not patient data,
+// so it is safe to render on the timeline.
+function deviceSuffix(event: AuditEvent): string {
+  const code = event.event_metadata['device_code']
+  return typeof code === 'string' && code ? `: ${code}` : ''
 }
 
 function resultSuffix(event: AuditEvent): string {
@@ -153,6 +164,14 @@ export function auditEventDescription(event: AuditEvent): string {
         : 'Patient said they still have a question'
     case 'PATIENT_TEACH_BACK_NEEDS_ATTENTION':
       return "Patient's own explanation missed part of this instruction — teach-back flagged for review"
+    case 'WEARABLE_DEVICE_REGISTERED':
+      return event.event_metadata['reissued'] === true
+        ? `Wearable enrolment code re-issued${deviceSuffix(event)}`
+        : `Wearable device registered${deviceSuffix(event)}`
+    case 'WEARABLE_DEVICE_ENROLLED':
+      return `Wearable device enrolled and credentialled${deviceSuffix(event)}`
+    case 'WEARABLE_DEVICE_REVOKED':
+      return `Wearable device credential revoked${deviceSuffix(event)}`
     default:
       return event.event_type
   }
