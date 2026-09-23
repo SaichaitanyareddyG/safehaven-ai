@@ -152,6 +152,20 @@ INPUT: scanned patient_code, scanned barcode
         - contradicts (e.g. order says "tartrate", product is succinate): BLOCKED
         - order specifies nothing about formulation at all:               REVIEW_REQUIRED
         - order's text is consistent with the product's formulation:      pass
+
+      REVISED (2026-09-15): "specifies nothing at all" only counts as ambiguous
+      when the scanned drug is actually stocked in MORE THAN ONE formulation
+      (see `formulations_for_drug_family` in reference/medication_products.py).
+      As written above, this rule made three of the five catalog drugs —
+      Lisinopril, Metformin, Warfarin, none of which carry a salt/release
+      qualifier in their name — permanently un-VERIFIABLE, and since
+      REVIEW_REQUIRED never renders a confirm button, permanently
+      un-administerable. Most real drug names carry no such qualifier, so this
+      would have sent the majority of correct scans to review for a
+      distinction that does not exist for those drugs. The check still applies
+      in full to Metoprolol, where Succinate ER vs Tartrate is genuine and
+      dangerous. Valid because the catalog is a closed world: an unrecognized
+      barcode never reaches this comparison at all.
    d. clinical_status must be ACTIVE (already guaranteed by step 4, kept
       explicit here as a defense-in-depth check).                        fail → BLOCKED
 
@@ -162,6 +176,16 @@ INPUT: scanned patient_code, scanned barcode
       explicitly labeled prototype configuration, not a clinical standard).
       outside window → WARNING
       within window  → pass
+
+      REVISED (2026-09-15): the comparison is against the HOSPITAL's wall
+      clock (`HOSPITAL_TIMEZONE`, an IANA name validated at boot), not UTC.
+      "Morning" is a wall-clock instruction; comparing 08:00 against
+      `datetime.now(timezone.utc).hour` was only correct in a UTC±0 hospital.
+      In Hyderabad (UTC+5:30) — which this prototype's own demo patients and
+      Telugu/Hindi support imply — an 8am dose given at 8am was reported 5.5
+      hours out of window, every morning, on correct work. The resulting
+      message now names the timezone and the local time it believes it is, so
+      a misconfiguration is visible at the bedside rather than silent.
 
 7. (Optional, only if allergy data is added — see §3/§17) Cross-check the
    product's medication_name against a documented allergy list.
