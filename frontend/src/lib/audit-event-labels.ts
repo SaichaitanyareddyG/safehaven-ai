@@ -29,6 +29,9 @@ const CATEGORY_BY_EVENT_TYPE: Record<string, AuditEventCategory> = {
   // Revocation is not: it removes a patient-safety monitor's ability to report
   // anything at all, and a monitor going dark should never look like a login.
   WEARABLE_DEVICE_REVOKED: 'safety-warning',
+  // A reported fall or abnormal-movement event is the whole point of the
+  // module; it must never render as a grey 'info' dot next to a login.
+  SAFETY_EVENT_RECEIVED: 'safety-warning',
 }
 
 export function auditEventCategory(eventType: string): AuditEventCategory {
@@ -56,6 +59,30 @@ function deviceSuffix(event: AuditEvent): string {
 // RESTRICTED_MOBILITY is a deliberate clinical decision, not a default — so
 // "who turned it on, and when" is exactly the kind of thing an audit trail
 // exists to answer.
+// WORDING IS A PRODUCT RULE (MODULE_3_IMPLEMENTATION_PLAN.md §14/§15), not a
+// style choice. The wearable observes movement; it never diagnoses a cause.
+// "Abnormal repetitive movement" must never become "seizure", and "unexpected
+// mobility" must never become "patient left bed" — a wrist sensor cannot know
+// either of those.
+const SENSOR_EVENT_LABELS: Record<string, string> = {
+  POSSIBLE_FALL: 'Possible fall',
+  ABNORMAL_MOVEMENT: 'Abnormal repetitive movement',
+  UNEXPECTED_MOBILITY: 'Unexpected mobility',
+  DEVICE_LOW_BATTERY: 'Low battery',
+}
+
+function sensorEventLabel(event: AuditEvent): string {
+  const type = event.event_metadata['sensor_event_type']
+  if (typeof type !== 'string') return 'Safety event'
+  return SENSOR_EVENT_LABELS[type] ?? 'Safety event'
+}
+
+// A delayed event describes the past, not the present. Saying so is the whole
+// point: an unlabelled 15-minute-old fall reads as happening right now.
+function delayedSuffix(event: AuditEvent): string {
+  return event.event_metadata['delayed'] === true ? ' (delayed delivery)' : ''
+}
+
 function profileSuffix(event: AuditEvent): string {
   const profile = event.event_metadata['monitoring_profile']
   if (typeof profile !== 'string' || !profile) return ''
@@ -188,6 +215,8 @@ export function auditEventDescription(event: AuditEvent): string {
       return event.event_metadata['reason'] === 'patient_discharged'
         ? `Safety monitoring auto-stopped (discharge)${deviceSuffix(event)}`
         : `Safety monitoring stopped${deviceSuffix(event)}`
+    case 'SAFETY_EVENT_RECEIVED':
+      return `${sensorEventLabel(event)} reported by wearable${deviceSuffix(event)}${delayedSuffix(event)}`
     default:
       return event.event_type
   }

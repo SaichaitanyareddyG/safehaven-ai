@@ -135,9 +135,10 @@ def scenario_steps(name: str) -> list[Step]:
             Step("heartbeat"),
         ]
     if name == "fall":
-        # Scenario 3.
+        # Scenario 3. The heartbeat first is not decoration: it is how the
+        # device learns its assignment_id, same as the real firmware.
         return [
-            Step("heartbeat", note="baseline"),
+            Step("heartbeat", note="baseline (also learns the assignment)"),
             Step(
                 "event",
                 event_type="POSSIBLE_FALL",
@@ -213,9 +214,22 @@ class DeviceSimulator:
         self.secret = secret
         self.dry_run = dry_run
         self.seq = 0
+        # Set from the heartbeat response, exactly as the firmware does.
+        self.assignment_id: str | None = None
         # Stable per-run prefix so a re-run does not collide with earlier
         # device_event_ids, while a retry inside one run reuses the same id.
         self.run_id = uuid.uuid4().hex[:8]
+
+    def _remember_assignment(self, path: str, body: str) -> None:
+        """Mirror the firmware: the heartbeat response is how a device learns
+        which assignment it is running."""
+        if not path.endswith("/heartbeat"):
+            return
+        try:
+            assignment = json.loads(body).get("assignment")
+        except (ValueError, AttributeError):
+            return
+        self.assignment_id = assignment.get("assignment_id") if assignment else None
 
     def next_event_id(self) -> str:
         self.seq += 1
@@ -241,6 +255,7 @@ class DeviceSimulator:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 text = resp.read().decode("utf-8", "replace")
                 print(f"  -> POST {path}  [{resp.status}] {text[:200]}")
+                self._remember_assignment(path, text)
         except urllib.error.HTTPError as exc:
             text = exc.read().decode("utf-8", "replace")
             if exc.code == 404:
@@ -292,17 +307,21 @@ class DeviceSimulator:
     ) -> str:
         eid = event_id or self.next_event_id()
         occurred_ms = int((time.time() - age_seconds) * 1000)
-        self._post(
-            "/device-api/events",
-            {
-                "device_event_id": eid,
-                "event_type": event_type,
-                "occurred_at_ms": occurred_ms,
-                "battery_percent": battery,
-                "firmware_version": FIRMWARE_VERSION,
-                "metrics": metrics,
-            },
-        )
+        body: dict[str, Any] = {
+            "device_event_id": eid,
+            "event_type": event_type,
+            "occurred_at_ms": occurred_ms,
+            "battery_percent": battery,
+            "firmware_version": FIRMWARE_VERSION,
+            "metrics": metrics,
+        }
+        # Learned from the heartbeat response. Sending it lets the backend
+        # attribute an event that was detected under an assignment which has
+        # since ended -- the offline-queue case. Omitted when unknown, in which
+        # case the backend falls back to the device's current assignment.
+        if self.assignment_id:
+            body["assignment_id"] = self.assignment_id
+        self._post("/device-api/events", body)
         return eid
 
     # ── drivers ────────────────────────────────────────────────────────────

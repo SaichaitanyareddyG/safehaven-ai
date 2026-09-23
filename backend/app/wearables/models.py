@@ -2,8 +2,18 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Index, SmallInteger, String, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Index,
+    SmallInteger,
+    String,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -173,3 +183,79 @@ class DeviceAssignment(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
     unassigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SensorEventType(str, enum.Enum):
+    """What a device may report.
+
+    DEVICE_OFFLINE is deliberately absent: it is derived by the backend from a
+    missing heartbeat, and a device claiming to be offline is a contradiction.
+    A device that submits it is rejected."""
+
+    POSSIBLE_FALL = "POSSIBLE_FALL"
+    ABNORMAL_MOVEMENT = "ABNORMAL_MOVEMENT"
+    UNEXPECTED_MOBILITY = "UNEXPECTED_MOBILITY"
+    DEVICE_LOW_BATTERY = "DEVICE_LOW_BATTERY"
+
+
+class SensorEvent(Base):
+    """One candidate event reported by a device.
+
+    Sparse by design. The device does its own signal processing and sends only
+    a compact summary when a pattern matches, so this table holds occasional
+    rows rather than a raw IMU stream. Heartbeats are NOT stored here — they
+    update WearableDevice in place, because a row per device every 30s is
+    exactly the historical sensor-data lake this module must not build.
+
+    `assignment_id` is NOT NULL: an event that cannot be attributed to a
+    patient is not stored at all (the API answers 202 and discards it). An
+    unassigned device should not be producing events in the first place, and
+    orphan rows attributable to nobody could never become alerts anyway.
+
+    `metrics` holds motion measurements only, enforced by a strict schema with
+    extra fields forbidden — so a buggy or compromised device cannot smuggle
+    arbitrary content, including PHI, into the database.
+    """
+
+    __tablename__ = "sensor_events"
+
+    __table_args__ = (
+        # The idempotency guarantee (MODULE_3_IMPLEMENTATION_PLAN.md §22).
+        # Network retries and offline-queue drains resend events freely; this
+        # constraint is what makes that safe, rather than relying on callers
+        # being careful.
+        UniqueConstraint("device_id", "device_event_id", name="ux_sensor_events_device_event"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("wearable_devices.id"), nullable=False, index=True
+    )
+    assignment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("device_assignments.id"), nullable=False, index=True
+    )
+
+    # Device-supplied, monotonic per device and persisted across reboot. Half of
+    # the idempotency key.
+    device_event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    event_type: Mapped[SensorEventType] = mapped_column(
+        SAEnum(SensorEventType, name="sensor_event_type", native_enum=True), nullable=False, index=True
+    )
+
+    # Both timestamps, always. occurred_at is when the device detected it;
+    # received_at is when the backend got it. They differ whenever an event was
+    # queued through a network outage, and a nurse needs to see which is which.
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+    metrics: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+    # True when occurred_at is far enough behind received_at that the event
+    # describes the past rather than the present. A delayed fall still raises an
+    # alert — suppressing it would discard a real safety signal — but it must be
+    # labelled, or staff would read it as happening now.
+    delayed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

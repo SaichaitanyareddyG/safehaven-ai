@@ -32,12 +32,26 @@ namespace safehaven {
 /// timestamp at send time so queued events keep their true time.
 ///
 /// Returns the number of bytes written (excluding NUL), or -1 on overflow.
+/// `assignment_id` is the assignment the device was running when it DETECTED
+/// the event (from the heartbeat response), or nullptr if unknown. Sending it
+/// matters for the offline-queue case: a fall detected at 10:43 and delivered
+/// at 10:55, after the patient was unassigned at 10:50, is still attributable
+/// to the assignment it happened under. Without it the backend would have
+/// nowhere to put the event and would discard a real fall. The backend always
+/// verifies the assignment belongs to the authenticated device.
 inline int serialise_event(char* buf, size_t buf_len, const DetectedEvent& ev,
                            const char* device_event_id,
                            uint64_t occurred_at_epoch_ms,
                            uint8_t battery_percent,
-                           const char* firmware_version) {
+                           const char* firmware_version,
+                           const char* assignment_id = nullptr) {
   if (!buf || buf_len == 0) return -1;
+
+  char assignment_field[64] = "";
+  if (assignment_id && assignment_id[0]) {
+    std::snprintf(assignment_field, sizeof(assignment_field),
+                  "\"assignment_id\":\"%s\",", assignment_id);
+  }
 
   const EventMetrics& m = ev.metrics;
   const int n = std::snprintf(
@@ -46,6 +60,7 @@ inline int serialise_event(char* buf, size_t buf_len, const DetectedEvent& ev,
       "\"device_event_id\":\"%s\","
       "\"event_type\":\"%s\","
       "\"occurred_at_ms\":%llu,"
+      "%s"
       "\"battery_percent\":%u,"
       "\"firmware_version\":\"%s\","
       "\"metrics\":{"
@@ -61,7 +76,7 @@ inline int serialise_event(char* buf, size_t buf_len, const DetectedEvent& ev,
       "\"stages_seen\":[%s%s%s%s]"
       "}}",
       device_event_id, to_string(ev.type),
-      static_cast<unsigned long long>(occurred_at_epoch_ms),
+      static_cast<unsigned long long>(occurred_at_epoch_ms), assignment_field,
       static_cast<unsigned>(battery_percent), firmware_version,
       m.fall_score, static_cast<double>(m.peak_g),
       static_cast<double>(m.tilt_delta_deg),

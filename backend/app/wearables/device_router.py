@@ -10,7 +10,7 @@ returns patient data: a device never learns who it is monitoring
 import time
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -24,6 +24,8 @@ from app.wearables.schemas import (
     DeviceEnrollRequest,
     DeviceHeartbeatRequest,
     DeviceHeartbeatResponse,
+    SensorEventAccepted,
+    SensorEventSubmit,
 )
 
 router = APIRouter(prefix="/device-api", tags=["wearable-device-api"])
@@ -36,6 +38,10 @@ router = APIRouter(prefix="/device-api", tags=["wearable-device-api"])
 # to saturate the API either.
 _ENROLL_RATE_LIMIT = "10/minute"
 _HEARTBEAT_RATE_LIMIT = "120/minute"
+# Generous: a genuine burst around one physical fall is expected and is
+# handled by alert-level dedupe, not by refusing the data. This limit only
+# exists to stop a device with a broken retry loop saturating the API.
+_EVENTS_RATE_LIMIT = "240/minute"
 
 
 @router.post("/enroll", response_model=DeviceEnrollResponse)
@@ -99,3 +105,44 @@ def heartbeat(
         else None
     )
     return DeviceHeartbeatResponse(server_time_ms=int(time.time() * 1000), assignment=view)
+
+
+@router.post("/events", response_model=SensorEventAccepted)
+@limiter.limit(_EVENTS_RATE_LIMIT)
+def submit_event(
+    request: Request,
+    response: Response,
+    payload: SensorEventSubmit,
+    db: Annotated[Session, Depends(get_db)],
+    device: Annotated[WearableDevice, Depends(get_current_device)],
+) -> SensorEventAccepted:
+    """Submit one candidate event.
+
+    Status codes are meaningful to the firmware's offline queue:
+
+      201 CREATED    stored — stop retrying
+      200 DUPLICATE  already had it — stop retrying, and no second alert
+      202 DISCARDED  nowhere to attribute it; retrying will not help either
+
+    The 200-on-duplicate behaviour is the idempotency guarantee (§22): a queue
+    drain or a retry after a timeout can resend freely, and the unique
+    constraint on (device_id, device_event_id) means it can never produce a
+    second event — and later, never a second alert.
+
+    Note what this endpoint does NOT return: nothing about the patient. A device
+    submits observations and is told only whether they were accepted.
+    """
+    outcome, event = service.ingest_event(db, device, payload)
+
+    if outcome == "CREATED":
+        response.status_code = status.HTTP_201_CREATED
+    elif outcome == "DUPLICATE":
+        response.status_code = status.HTTP_200_OK
+    else:
+        response.status_code = status.HTTP_202_ACCEPTED
+
+    return SensorEventAccepted(
+        outcome=outcome,
+        event_id=event.id if event else None,
+        delayed=event.delayed if event else False,
+    )

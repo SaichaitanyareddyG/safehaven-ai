@@ -33,12 +33,14 @@ from app.wearables.models import (
     DeviceAssignment,
     DeviceStatus,
     MonitoringProfile,
+    SensorEvent,
     WearableDevice,
 )
 from app.wearables.schemas import (
     DeviceAssignmentCreate,
     DeviceAssignmentRead,
     DeviceHeartbeatRequest,
+    SensorEventSubmit,
     WearableDeviceCreate,
     WearableDeviceRead,
 )
@@ -52,6 +54,12 @@ SECRET_BYTES = 32  # 256 bits, same strength as the patient care-link token
 # Short lifetime and single use is what keeps them safe, not length.
 _ENROLLMENT_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 _ENROLLMENT_LENGTH = 10
+
+# How far ahead of the server a device's clock may be before we stop believing
+# it. Small, because the only legitimate source of forward skew is SNTP jitter;
+# anything larger is a broken clock, and a future-dated event would pin itself
+# to the top of a time-ordered nurse queue.
+_FUTURE_SKEW_TOLERANCE_S = 60
 
 
 class DeviceNotFoundError(Exception):
@@ -467,6 +475,161 @@ def _end_assignment(
         entity_type="DeviceAssignment",
         entity_id=assignment.id,
         event_metadata={"device_code": device.device_code, "reason": reason},
+    )
+
+
+# ── event ingestion ─────────────────────────────────────────────────────────
+
+
+def _resolve_assignment_for_event(
+    db: Session, device: WearableDevice, claimed_assignment_id: uuid.UUID | None
+) -> DeviceAssignment | None:
+    """Work out which assignment an incoming event belongs to.
+
+    Two paths, and the second exists to avoid losing a real safety signal:
+
+    1. The device names an assignment it was running. Accepted even if that
+       assignment has since ended — this is the queued-through-an-outage case: a
+       fall detected at 10:43, network down, patient unassigned at 10:50, device
+       reconnects at 10:55. Attributing it to the assignment it actually
+       happened under is correct; discarding it would throw away a fall.
+       Always filtered by device_id, so a device cannot claim another's
+       assignment.
+
+    2. No claim: fall back to the device's currently active assignment.
+
+    Returns None when neither resolves, and the caller discards the event.
+    """
+    if claimed_assignment_id is not None:
+        return (
+            db.query(DeviceAssignment)
+            .filter(
+                DeviceAssignment.id == claimed_assignment_id,
+                DeviceAssignment.device_id == device.id,
+            )
+            .first()
+        )
+    return active_assignment_for_device(db, device.id)
+
+
+def ingest_event(
+    db: Session, device: WearableDevice, payload: SensorEventSubmit
+) -> tuple[str, SensorEvent | None]:
+    """Store one candidate event.
+
+    Returns (outcome, event) where outcome is CREATED, DUPLICATE or DISCARDED.
+    Stage 3 stores and attributes events; turning them into nurse alerts is
+    Stage 4.
+    """
+    assignment = _resolve_assignment_for_event(db, device, payload.assignment_id)
+    if assignment is None:
+        # Nothing to attribute this to. An unassigned device should not be
+        # producing patient events at all, so this is a stale queue or a bug —
+        # either way there is no patient, and a row attributable to nobody could
+        # never become an alert.
+        logger.warning(
+            "Discarding sensor event from device %s: no resolvable assignment.", device.device_code
+        )
+        return "DISCARDED", None
+
+    now = datetime.now(timezone.utc)
+    occurred_at = datetime.fromtimestamp(payload.occurred_at_ms / 1000.0, tz=timezone.utc)
+
+    # A device with a wrong clock must not be able to date an event in the
+    # future: the nurse queue is ordered by time, and a future-dated alert would
+    # sort above every genuine one and stay there.
+    if occurred_at > now + timedelta(seconds=_FUTURE_SKEW_TOLERANCE_S):
+        logger.warning(
+            "Device %s reported a future occurred_at; clamping to receipt time.", device.device_code
+        )
+        occurred_at = now
+
+    delayed = (now - occurred_at) > timedelta(seconds=get_settings().device_delayed_after_seconds)
+
+    existing = (
+        db.query(SensorEvent)
+        .filter(
+            SensorEvent.device_id == device.id,
+            SensorEvent.device_event_id == payload.device_event_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        # Idempotent: a retry or queue drain resent this. No second row, and
+        # later no second alert.
+        return "DUPLICATE", existing
+
+    event = SensorEvent(
+        device_id=device.id,
+        assignment_id=assignment.id,
+        device_event_id=payload.device_event_id,
+        event_type=payload.event_type,
+        occurred_at=occurred_at,
+        received_at=now,
+        metrics=payload.metrics.model_dump(),
+        delayed=delayed,
+    )
+    db.add(event)
+    try:
+        db.flush()
+    except IntegrityError:
+        # Lost a race with a concurrent submission of the same event id. The
+        # unique constraint is what guarantees this, not the check above.
+        db.rollback()
+        existing = (
+            db.query(SensorEvent)
+            .filter(
+                SensorEvent.device_id == device.id,
+                SensorEvent.device_event_id == payload.device_event_id,
+            )
+            .first()
+        )
+        return "DUPLICATE", existing
+
+    # Keep the device's last-known health fresh even when it reports via an
+    # event rather than a heartbeat.
+    if payload.battery_percent is not None:
+        device.battery_percent = payload.battery_percent
+    if payload.firmware_version is not None:
+        device.firmware_version = payload.firmware_version
+    device.last_seen_at = now
+
+    record_event(
+        db,
+        event_type=AuditEventType.SAFETY_EVENT_RECEIVED,
+        actor_type=ActorType.SYSTEM,
+        patient_id=assignment.patient_id,
+        entity_type="SensorEvent",
+        entity_id=event.id,
+        # A small structured summary, per record_event's own rule — not the
+        # whole metrics blob.
+        event_metadata={
+            "device_code": device.device_code,
+            "sensor_event_type": payload.event_type.value,
+            "delayed": delayed,
+        },
+    )
+    db.commit()
+    db.refresh(event)
+    return "CREATED", event
+
+
+def list_patient_sensor_events(
+    db: Session, patient_id: uuid.UUID, limit: int = 50
+) -> list[SensorEvent]:
+    """Newest-first history for the patient detail panel.
+
+    Joins through assignments rather than storing patient_id on the event: the
+    assignment already owns that fact, and duplicating it would allow the two to
+    disagree after a reassignment.
+    """
+    return (
+        db.query(SensorEvent)
+        .join(DeviceAssignment, SensorEvent.assignment_id == DeviceAssignment.id)
+        .filter(DeviceAssignment.patient_id == patient_id)
+        .order_by(SensorEvent.occurred_at.desc())
+        .limit(limit)
+        .all()
     )
 
 

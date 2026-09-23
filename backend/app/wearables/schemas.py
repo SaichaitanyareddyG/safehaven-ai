@@ -1,9 +1,10 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.wearables.models import DeviceStatus, MonitoringProfile
+from app.wearables.models import DeviceStatus, MonitoringProfile, SensorEventType
 
 # ── staff-facing (clinician JWT) ────────────────────────────────────────────
 
@@ -87,6 +88,30 @@ class PatientAssignmentResponse(BaseModel):
     assignment: DeviceAssignmentRead | None
 
 
+class SensorEventRead(BaseModel):
+    """Staff-facing view of a reported event.
+
+    Both timestamps are exposed, plus `delayed`, because a nurse reading the
+    history needs to know whether an event describes now or fifteen minutes
+    ago."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    device_id: uuid.UUID
+    assignment_id: uuid.UUID
+    event_type: SensorEventType
+    occurred_at: datetime
+    received_at: datetime
+    delayed: bool
+    metrics: dict
+
+
+class SensorEventListResponse(BaseModel):
+    total: int
+    results: list[SensorEventRead]
+
+
 # ── device-facing (per-device credential) ───────────────────────────────────
 
 
@@ -134,6 +159,75 @@ class DeviceAssignmentView(BaseModel):
     # Echoed so the device can detect a reassignment it missed and reset its
     # detectors rather than carrying state across two different patients.
     assigned_at_ms: int
+
+
+class SensorEventMetrics(BaseModel):
+    """Motion measurements only, and nothing else.
+
+    `extra="forbid"` is a deliberate safety control, not strictness for its own
+    sake: it means a buggy or compromised device cannot put arbitrary content —
+    including patient data — into the metrics JSONB. Anything outside this
+    whitelist is a 422.
+
+    Field names and ranges mirror firmware/include/core/EventJson.h exactly. If
+    one changes, both change.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Fall evidence (§13). The stage flags are what produced fall_score, kept so
+    # the basis for an alert stays inspectable rather than being a bare boolean.
+    fall_score: int = Field(default=0, ge=0, le=4)
+    peak_g: float = Field(default=0.0, ge=0.0, le=64.0)
+    tilt_delta_deg: float = Field(default=0.0, ge=0.0, le=180.0)
+    freefall_ms: int = Field(default=0, ge=0, le=60_000)
+    inactive_ms: int = Field(default=0, ge=0, le=3_600_000)
+    stages_seen: list[Literal["freefall", "impact", "orientation", "inactivity"]] = Field(
+        default_factory=list, max_length=4
+    )
+
+    # Movement / mobility evidence (§14, §15)
+    duration_s: float = Field(default=0.0, ge=0.0, le=86_400.0)
+    dom_freq_hz: float = Field(default=0.0, ge=0.0, le=100.0)
+    magnitude: float = Field(default=0.0, ge=0.0, le=64.0)
+    periodicity: float = Field(default=0.0, ge=-1.0, le=1.0)
+
+
+class SensorEventSubmit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Monotonic per device, persisted across reboot. Half of the idempotency
+    # key; the backend supplies the other half from the authenticated device.
+    device_event_id: str = Field(min_length=1, max_length=64)
+    event_type: SensorEventType
+    # Epoch milliseconds, converted from the device's monotonic clock at send
+    # time so a queued event keeps its true detection time.
+    occurred_at_ms: int = Field(ge=0)
+
+    # Optional. A device that knows which assignment it was running when it
+    # detected the event lets the backend attribute an event that was queued
+    # through an outage and delivered after the assignment ended. Without it,
+    # such an event would be discarded — losing a real fall. Always verified
+    # against the authenticated device, so a device cannot claim another's
+    # assignment.
+    assignment_id: uuid.UUID | None = None
+
+    battery_percent: int | None = Field(default=None, ge=0, le=100)
+    firmware_version: str | None = Field(default=None, max_length=32)
+    metrics: SensorEventMetrics = Field(default_factory=SensorEventMetrics)
+
+
+class SensorEventAccepted(BaseModel):
+    """What the device learns about its submission.
+
+    `outcome` matters to the firmware's offline queue: CREATED and DUPLICATE
+    both mean "stop retrying, it is safely delivered". DISCARDED means the
+    backend had nowhere to attribute it, and retrying will not help either.
+    """
+
+    outcome: Literal["CREATED", "DUPLICATE", "DISCARDED"]
+    event_id: uuid.UUID | None = None
+    delayed: bool = False
 
 
 class DeviceHeartbeatResponse(BaseModel):

@@ -27,6 +27,8 @@ from app.wearables.schemas import (
     DeviceAssignmentCreate,
     DeviceAssignmentRead,
     PatientAssignmentResponse,
+    SensorEventListResponse,
+    SensorEventRead,
     WearableDeviceCreate,
     WearableDeviceListResponse,
     WearableDeviceRead,
@@ -191,3 +193,22 @@ def unassign_wearable(
             status_code=status.HTTP_404_NOT_FOUND, detail="Patient has no assigned wearable"
         ) from exc
     return service.assignment_to_read(db, assignment)
+
+
+@router.get("/patients/{patient_id}/safety-events", response_model=SensorEventListResponse)
+def list_patient_safety_events(
+    patient_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> SensorEventListResponse:
+    """Newest-first event history for a patient, across every device they have
+    worn.
+
+    Resolved by joining through assignments rather than storing patient_id on
+    the event, so a reassigned device's old events stay attributed to the
+    patient they actually came from.
+    """
+    events = service.list_patient_sensor_events(db, patient_id)
+    return SensorEventListResponse(
+        total=len(events), results=[SensorEventRead.model_validate(e) for e in events]
+    )

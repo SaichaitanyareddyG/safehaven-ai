@@ -80,6 +80,7 @@ class AuditEventType(str, enum.Enum):
     # discharge cascade ended it, and CLINICIAN when staff did it deliberately.
     WEARABLE_DEVICE_ASSIGNED = "WEARABLE_DEVICE_ASSIGNED"
     WEARABLE_DEVICE_UNASSIGNED = "WEARABLE_DEVICE_UNASSIGNED"
+    SAFETY_EVENT_RECEIVED = "SAFETY_EVENT_RECEIVED"
 
 
 class AuditEvent(Base):

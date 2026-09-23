@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     # more guessable than the 256-bit secret it is exchanged for, so its safety
     # comes from being single-use and short-lived, not from length.
     device_enrollment_ttl_minutes: int = 60
+    # A sensor event older than this when it arrives describes the past, not
+    # the present — it was queued through a network outage. Such events still
+    # alert (suppressing one would discard a real fall) but are flagged so
+    # staff never read a 15-minute-old event as happening now.
+    device_delayed_after_seconds: int = 300
 
     @field_validator("cors_origins", mode="before")
     @classmethod
