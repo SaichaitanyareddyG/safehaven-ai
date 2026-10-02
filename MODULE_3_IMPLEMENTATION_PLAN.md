@@ -1495,8 +1495,10 @@ workflow**, which is the part that is finished.
 
 ### Still open
 
-1. **Threshold tuning on real wrist motion** — every value in `DetectionConfig.h` is still a
-   prototype estimate. Needs recorded sessions (walking, sitting, waving, staged falls).
+1. **Threshold tuning on real wrist motion** — fall thresholds are now tuned and scored against
+   two public wrist datasets (WEDA-FALL, UMAFall): 98–100% of falls caught, 96–97% of immediate
+   alerts real (`firmware/DETECTION_ACCURACY.md`). Still needed: a recorded session on our own
+   band, a worn-for-a-day false-alarm count, and tuning of the movement and mobility detectors.
 2. **Measured battery life** — the band logs battery each minute to flash; a multi-hour run off
    USB has not been done yet.
 3. **Before any real deployment:** HTTPS for the device link, NVS + flash encryption for the

@@ -12,7 +12,7 @@ CXX      ?= c++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Wpedantic -I../include -I.
 BUILD    := build
 
-.PHONY: test replay replay-rec eval-weda clean
+.PHONY: test replay replay-rec eval-weda eval-umafall clean
 
 test: $(BUILD)/test_detection $(BUILD)/test_fall_cases $(BUILD)/test_scenarios $(BUILD)/test_battery
 	@$(BUILD)/test_detection
@@ -40,6 +40,12 @@ eval-weda: $(BUILD)/eval_weda
 
 $(BUILD)/eval_weda: eval_weda.cpp $(wildcard ../include/core/*.h) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ eval_weda.cpp
+
+eval-umafall: $(BUILD)/eval_umafall
+	@$(BUILD)/eval_umafall $(UMAFALL)
+
+$(BUILD)/eval_umafall: eval_umafall.cpp $(wildcard ../include/core/*.h) | $(BUILD)
+	$(CXX) $(CXXFLAGS) -o $@ eval_umafall.cpp
 
 replay-rec: $(BUILD)/replay_recording
 	@$(BUILD)/replay_recording $(REC) $(LABELS)

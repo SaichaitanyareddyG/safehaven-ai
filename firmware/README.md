@@ -244,8 +244,10 @@ explicitly set `RESTRICTED_MOBILITY`.
 
 ## Honest limits of what you just ran
 
-- Every threshold in `DetectionConfig.h` is a **prototype engineering guess.
-  None is clinically validated.**
+- The fall thresholds in `DetectionConfig.h` are tuned against two public
+  wrist datasets — 100% / 98% of falls caught, 97% / 96% of immediate alerts
+  real (see `DETECTION_ACCURACY.md`). **None is clinically validated**, and the
+  movement and mobility thresholds are still prototype guesses.
 - The traces are **synthetic**, not recordings. They pin behaviour and catch
   regressions; they say nothing about real wrist motion. Real BMI270 noise,
   drift and impact shape can only come from hardware.

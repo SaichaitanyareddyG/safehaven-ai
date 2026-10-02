@@ -135,6 +135,15 @@ int main(int argc, char** argv) {
   DetectionConfig cfg;
   cfg.offbody_acc_sd_g = 0.0f;   // see header: quantised watch, off-body untestable here
   cfg.offbody_gyro_dps = 0.0f;
+  if (const char* e = getenv("CHECK_FLIP")) cfg.check_flip_deg = std::atof(e);
+  // Overrides for held-out tuning: tune on one half of the people, test on
+  // the other (SPLIT=odd|even keeps only those subject numbers).
+  if (const char* e = getenv("CONFIRM_TILT")) cfg.confirm_orientation_deg = std::atof(e);
+  if (const char* e = getenv("ACTIVE_PEAKS")) cfg.active_after_peaks = static_cast<uint8_t>(std::atoi(e));
+  if (const char* e = getenv("MOVING_TILT")) cfg.check_moving_tilt_deg = std::atof(e);
+  if (const char* e = getenv("MOVING_PEAK")) cfg.check_moving_peak_g = std::atof(e);
+  const char* split = getenv("SPLIT");
+  int old_n = 0, old_a = 0, old_c = 0;  // elderly participants (U21-U31): daily activities only
 
   std::map<std::string, int> n, alerts, checks, miss_why;
   DIR* d = opendir(root.c_str());
@@ -151,6 +160,8 @@ int main(int argc, char** argv) {
       // "_vertical_accel.csv" is a derived signal with no matching gyro file;
       // counting it as a trial doubled every total in the first run.
       if (k == std::string::npos || f.find("_vertical") != std::string::npos) continue;
+      const int subject = std::atoi(f.c_str() + 1);  // "U07_R01" -> 7
+      if (split && (subject % 2 == 1) != (std::string(split) == "odd")) continue;
       const Verdict v = run_trial(root + code + "/" + f.substr(0, k), cfg);
       if (code[0] == 'F' && v == NOTHING) {
         std::string why = !g_diag.candidate ? "never a candidate"
@@ -172,6 +183,7 @@ int main(int argc, char** argv) {
       ++n[code];
       if (v == ALERT) ++alerts[code];
       if (v == CHECK) ++checks[code];
+      if (subject >= 21) { ++old_n; old_a += v == ALERT; old_c += v == CHECK; }
     }
     closedir(cd);
   }
@@ -188,6 +200,9 @@ int main(int argc, char** argv) {
               100.0 * fa / fn, 100.0 * fc / fn, 100.0 * (fa + fc) / fn, 100.0 * (fn - fa - fc) / fn);
   std::printf("DAILY  %d trials: FALSE ALERT %.1f%%, asked 'Are you OK?' %.1f%%, quiet %.1f%%\n", dn, 100.0 * da / dn,
               100.0 * dc / dn, 100.0 * (dn - da - dc) / dn);
+  if (old_n)
+    std::printf("ELDERLY daily (%d trials): FALSE ALERT %.1f%%, asked 'Are you OK?' %.1f%%\n", old_n,
+                100.0 * old_a / old_n, 100.0 * old_c / old_n);
   if (fa + da) std::printf("Of all immediate alerts, %.0f%% were real falls.\n", 100.0 * fa / (fa + da));
   std::printf("Missed falls, by where they dropped out:\n");
   for (const auto& kv : miss_why) std::printf("  %-28s %d\n", kv.first.c_str(), kv.second);

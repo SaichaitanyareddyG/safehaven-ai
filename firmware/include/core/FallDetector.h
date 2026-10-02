@@ -245,7 +245,8 @@ class FallDetector {
     if (stage_orientation_ && stage_inactivity_ && hard && !off_body &&
         tilt_delta_deg_ >= cfg_.confirm_orientation_deg) {
       verdict = EventType::POSSIBLE_FALL;
-    } else if ((stage_orientation_ && (hard || (stage_impact_ && stage_inactivity_))) || collapse) {
+    } else if ((stage_orientation_ && (hard || (stage_impact_ && stage_inactivity_))) || collapse ||
+               (stage_impact_ && tilt_delta_deg_ >= cfg_.check_flip_deg)) {
       // Weaker or ambiguous: ask the wearer first. Covers a soft impact
       // (set-down shape), a drop followed by movement (toss-and-catch shape),
       // a faint onto a bed, and a hard fall whose stillness looks like a table.

@@ -122,6 +122,17 @@ int main() {
     const Result r = run(t);
     check(only(r, EventType::FALL_CHECK), "hard hit, still, wrist turned only 90 deg -> CHECK, not an alert", describe(r));
   }
+  {  // Moderate fall, arm flips over, then the person tries to get up. Both
+    // datasets' missed falls looked like this (3 g, 120-179 deg, no stillness).
+    Noise nz(15);
+    Trace t;
+    add_resting(t, 3000, nz);
+    add_impact(t, 80, nz, 3.0f, 0.5f, 1.0f);
+    add_rotation(t, 600, nz, 0, 165, 1.3f);
+    add_normal_movement(t, 6000, nz);
+    const Result r = run(t);
+    check(only(r, EventType::FALL_CHECK), "3 g hit, arm flips 165 deg, keeps moving -> CHECK (was missed)", describe(r));
+  }
   {  // Bench pattern A: setting the band down on a table.
     Noise nz(3);
     Trace t;

@@ -63,6 +63,9 @@ struct DetectionConfig {
   // (WEDA-FALL: removed 24 activity prompts, no falls lost).
   float    check_moving_tilt_deg = 120.0f;
   float    check_moving_peak_g   = 4.0f;
+  // A real impact and the arm flipped over, then the wearer kept moving:
+  // the shape of every fall both datasets missed (people got up). Asked.
+  float    check_flip_deg        = 150.0f;  ///< WEDA 98->100%, UMAFall 95->98% caught
 
   // ── Worn / not worn ─────────────────────────────────────────────────────
   // Measured on SH-WEAR-001: on a table |a| sd 0.001 g, gyro mean 0.37 dps;
