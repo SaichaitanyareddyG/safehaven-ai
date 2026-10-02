@@ -23,3 +23,5 @@ firmware/.pio/
 
 # Real-device Wi-Fi credentials (copy from wifi_secrets.example.h)
 firmware/include/wifi_secrets.h
+# Dev backend CA for the band (backend/scripts/dev_tls.sh) — machine-specific
+firmware/include/backend_ca.h

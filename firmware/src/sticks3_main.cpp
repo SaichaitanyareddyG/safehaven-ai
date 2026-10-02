@@ -35,6 +35,7 @@
 // TEST returns to HOME by itself after 10 minutes without a button press.
 
 #include <LittleFS.h>
+#include <Preferences.h>
 #include <M5Unified.h>
 #include <WiFi.h>
 #include <esp_timer.h>
@@ -55,6 +56,15 @@
 #else
 #define SH_WIFI_SSID ""
 #define SH_WIFI_PASSWORD ""
+#endif
+// The CA that signed the backend's certificate, as SH_BACKEND_CA (a PEM
+// string). Generated for the dev backend by backend/scripts/dev_tls.sh;
+// git-ignored because it is specific to one machine.
+#if __has_include("backend_ca.h")
+#include "backend_ca.h"
+#endif
+#ifndef SH_BACKEND_CA
+#define SH_BACKEND_CA nullptr
 #endif
 #ifndef SH_BACKEND_URL
 #define SH_BACKEND_URL ""
@@ -253,9 +263,40 @@ static EventType lastEvent = EventType::NONE;
 static uint64_t lastEventMs = 0;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-static bool wifiConfigured() {
-  return strlen(SH_WIFI_SSID) > 0 && strcmp(SH_WIFI_SSID, "your-2.4GHz-network-name") != 0;
+// The network: set by staff over USB (`wifi ...`, kept in NVS) or, on the
+// bench, compiled in from wifi_secrets.h. A hospital network is normally
+// WPA2-Enterprise — a login per device (PEAP/MSCHAPv2) — not a shared password.
+struct WifiConfig {
+  bool enterprise = false;
+  bool fromNvs = false;
+  char ssid[33] = "";
+  char identity[65] = "";  // outer (anonymous) identity; often the same as the username
+  char user[65] = "";
+  char pass[65] = "";
+};
+static WifiConfig wifiCfg;
+
+static void loadWifiConfig() {
+  wifiCfg = WifiConfig{};
+  Preferences p;
+  if (p.begin("wifi", true)) {
+    if (p.isKey("ssid")) {
+      wifiCfg.fromNvs = true;
+      wifiCfg.enterprise = p.getBool("eap", false);
+      p.getString("ssid", wifiCfg.ssid, sizeof(wifiCfg.ssid));
+      p.getString("ident", wifiCfg.identity, sizeof(wifiCfg.identity));
+      p.getString("user", wifiCfg.user, sizeof(wifiCfg.user));
+      p.getString("pass", wifiCfg.pass, sizeof(wifiCfg.pass));
+    }
+    p.end();
+  }
+  if (!wifiCfg.fromNvs && strcmp(SH_WIFI_SSID, "your-2.4GHz-network-name") != 0) {
+    strlcpy(wifiCfg.ssid, SH_WIFI_SSID, sizeof(wifiCfg.ssid));
+    strlcpy(wifiCfg.pass, SH_WIFI_PASSWORD, sizeof(wifiCfg.pass));
+  }
 }
+
+static bool wifiConfigured() { return wifiCfg.ssid[0] != 0; }
 
 static uint32_t settleLeftS() {
   const uint64_t now = clock_.millis();
@@ -347,8 +388,18 @@ static void startWifi() {
   lastWifiAttemptMs = millis();
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(true);  // modem sleep between beacons
-  WiFi.begin(SH_WIFI_SSID, SH_WIFI_PASSWORD);
-  Serial.printf("WiFi: connecting to %s...\r\n", SH_WIFI_SSID);
+  if (wifiCfg.enterprise) {
+    // No RADIUS CA is pinned yet: the band cannot tell the hospital's network
+    // from an impostor with the same name. Hospital IT's CA belongs here
+    // (ca_pem) before deployment — see firmware/SECURITY.md.
+    WiFi.begin(wifiCfg.ssid, WPA2_AUTH_PEAP, wifiCfg.identity[0] ? wifiCfg.identity : wifiCfg.user,
+               wifiCfg.user, wifiCfg.pass);
+  } else {
+    WiFi.begin(wifiCfg.ssid, wifiCfg.pass);
+  }
+  Serial.printf("WiFi: connecting to %s (%s, set %s)...\r\n", wifiCfg.ssid,
+                wifiCfg.enterprise ? "WPA2-Enterprise" : "password",
+                wifiCfg.fromNvs ? "over USB" : "in wifi_secrets.h");
 }
 
 // Non-blocking: detection must keep running while Wi-Fi comes and goes.
@@ -1200,9 +1251,15 @@ void setup() {
 #endif
   Serial.printf("Battery log: %s\r\n", fsOk ? "flash /battery.csv (serial d = dump, c = clear)"
                                             : "UNAVAILABLE");
-  if (!wifiConfigured()) Serial.println("WiFi: not configured in include/wifi_secrets.h - offline");
+  loadWifiConfig();
+  if (!wifiConfigured()) Serial.println("WiFi: not configured - offline (set it with the `wifi` command)");
 
-  backendLink.begin(SH_BACKEND_URL, FIRMWARE_VERSION, &monoNow);
+#ifdef SH_ALLOW_HTTP
+  const bool allowHttp = true;  // bench builds only
+#else
+  const bool allowHttp = false;
+#endif
+  backendLink.begin(SH_BACKEND_URL, FIRMWARE_VERSION, &monoNow, SH_BACKEND_CA, allowHttp);
   {
     const LinkStatus ls = backendLink.status();
     Serial.printf("Backend: %s\r\n", !ls.configured ? "not configured (SH_BACKEND_URL) - BENCH mode"
@@ -1317,6 +1374,7 @@ static void handleButtons() {
   // screen awake: it is the button a patient is most likely to fiddle with.
 }
 
+#ifdef SH_BENCH_TOOLS
 // ── screenshots ─────────────────────────────────────────────────────────────
 // "shot" captures every screen, drawn off-screen with sample data where the
 // live state would not show it (an alert, low battery...), and streams each as
@@ -1454,6 +1512,7 @@ static void takeScreenshots() {
   forceRedraw = true;  // the panel itself was never touched; redraw normally
   Serial.println("SHOTS DONE");
 }
+#endif  // SH_BENCH_TOOLS
 
 #ifdef SH_BENCH_TOOLS
 // Bench only (platformio.ini: -DSH_BENCH_TOOLS). Creates an event exactly as
@@ -1520,6 +1579,68 @@ static void printStatus() {
                                                             : "-");
 }
 
+/// Split a command line into words; "double quotes" keep spaces (SSIDs).
+static int splitWords(char *line, char *out[], int max) {
+  int n = 0;
+  while (*line && n < max) {
+    while (*line == ' ') ++line;
+    if (!*line) break;
+    if (*line == '"') {
+      out[n++] = ++line;
+      while (*line && *line != '"') ++line;
+    } else {
+      out[n++] = line;
+      while (*line && *line != ' ') ++line;
+    }
+    if (*line) *line++ = 0;
+  }
+  return n;
+}
+
+/// wifi show | wifi psk <ssid> <password> | wifi eap <ssid> <username> <password> [identity] | wifi clear
+static void wifiCommand(char *args) {
+  char *w[6];
+  const int n = splitWords(args, w, 6);
+  const char *sub = n ? w[0] : "show";
+  Preferences p;
+  if (!strcmp(sub, "psk") && n == 3) {
+    p.begin("wifi", false);
+    p.clear();
+    p.putBool("eap", false);
+    p.putString("ssid", w[1]);
+    p.putString("pass", w[2]);
+    p.end();
+  } else if (!strcmp(sub, "eap") && (n == 4 || n == 5)) {
+    p.begin("wifi", false);
+    p.clear();
+    p.putBool("eap", true);
+    p.putString("ssid", w[1]);
+    p.putString("user", w[2]);
+    p.putString("pass", w[3]);
+    if (n == 5) p.putString("ident", w[4]);
+    p.end();
+  } else if (!strcmp(sub, "clear")) {
+    p.begin("wifi", false);
+    p.clear();
+    p.end();
+  } else if (strcmp(sub, "show") != 0) {
+    Serial.println("wifi show | wifi psk \"<ssid>\" \"<password>\" | "
+                   "wifi eap \"<ssid>\" \"<username>\" \"<password>\" [\"<identity>\"] | wifi clear");
+    return;
+  }
+  if (strcmp(sub, "show") != 0) {
+    loadWifiConfig();
+    WiFi.disconnect();
+    wifiAnnounced = false;
+    startWifi();
+  }
+  // Never print the password.
+  Serial.printf("[WIFI] %s | %s | %s%s%s | set %s\r\n", wifiCfg.ssid[0] ? wifiCfg.ssid : "(none)",
+                wifiCfg.enterprise ? "WPA2-Enterprise" : "password", wifiCfg.enterprise ? "user " : "",
+                wifiCfg.enterprise ? wifiCfg.user : "", wifiCfg.pass[0] ? " (password stored)" : "",
+                wifiCfg.fromNvs ? "over USB" : "in wifi_secrets.h");
+}
+
 static void runCommand(char *line) {
   while (*line == ' ') ++line;
   if (!strncmp(line, "enroll ", 7)) {
@@ -1531,6 +1652,8 @@ static void runCommand(char *line) {
       backendLink.requestEnroll(code);
       Serial.println("[LINK] enrolment requested - waiting for Wi-Fi/backend...");
     }
+  } else if (!strncmp(line, "wifi", 4) && (line[4] == 0 || line[4] == ' ')) {
+    wifiCommand(line + 4);
   } else if (!strcmp(line, "forget")) {
     backendLink.forget();
     Serial.println("[LINK] credential and assignment erased - back to BENCH mode");
@@ -1541,9 +1664,9 @@ static void runCommand(char *line) {
     recCommand(line + 4);
   } else if (!strncmp(line, "noise", 5)) {
     measureNoise(atoi(line + 5));
-#endif
-  } else if (!strcmp(line, "shot")) {
+  } else if (!strcmp(line, "shot")) {  // the screen can show the patient QR
     takeScreenshots();
+#endif
   } else if (!strcmp(line, "status")) {
     printStatus();
   } else if (!strcmp(line, "d")) {
@@ -1557,7 +1680,7 @@ static void runCommand(char *line) {
 }
 
 static void handleSerial() {
-  static char line[64];
+  static char line[200];  // room for an enterprise Wi-Fi login
   static size_t len = 0;
   while (Serial.available()) {
     const char ch = (char)Serial.read();

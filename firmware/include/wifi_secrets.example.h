@@ -6,8 +6,9 @@
 //
 // wifi_secrets.h is git-ignored — never commit a real password.
 // The ESP32-S3 only supports 2.4 GHz networks; a 5 GHz-only SSID will never
-// connect. Bench/lab network only: hospital WPA2-Enterprise is a separate
-// problem (MODULE_3_IMPLEMENTATION_PLAN.md R2).
+// connect. This file is the BENCH fallback: staff set the real network on
+// the band over USB with the `wifi` command (incl. WPA2-Enterprise), which
+// overrides these. See firmware/SECURITY.md.
 
 #define SH_WIFI_SSID "your-2.4GHz-network-name"
 #define SH_WIFI_PASSWORD "your-wifi-password"
@@ -17,5 +18,6 @@
 //   ipconfig getifaddr en0
 // and start the backend with --host 0.0.0.0 so it accepts LAN connections.
 // Leave empty for BENCH mode (nothing is sent anywhere).
-// Plain HTTP is for a trusted bench LAN only.
+// https://<address>:8443 with backend/scripts/dev_tls.sh (writes backend_ca.h).
+// Plain http:// works only in the bench build (env:m5sticks3-bench).
 #define SH_BACKEND_URL ""

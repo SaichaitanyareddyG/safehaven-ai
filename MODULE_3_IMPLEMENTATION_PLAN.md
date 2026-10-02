@@ -1506,12 +1506,14 @@ workflow**, which is the part that is finished.
    band, a worn-for-a-day false-alarm count, and tuning of the movement and mobility detectors.
 2. **Measured battery life** — the band logs battery each minute to flash; a multi-hour run off
    USB has not been done yet.
-3. **Before any real deployment:** HTTPS for the device link, NVS + flash encryption for the
-   device secret, and WPA2-Enterprise onboarding (R2).
+3. **Before any real deployment** (`firmware/SECURITY.md`): HTTPS with certificate checking ✅ and
+   WPA2-Enterprise setup over USB ✅ (untested on a real enterprise network; RADIUS CA not yet
+   pinned). Flash + NVS encryption and secure boot: procedure written, **not applied** — it burns
+   eFuses, so it is done per production band, never on the development band.
 4. **Speaker/microphone** — speaker used for tones and spoken prompts; the microphone is
-   deliberately disabled and stays so unless a clinical need and hospital approval exist. The
-   spoken prompts use a macOS system voice: replace with licensed recordings before deployment.
+   deliberately disabled and stays so unless a clinical need and hospital approval exist. Spoken
+   prompts: Piper TTS, LJ Speech voice (MIT model, public-domain training data) ✅.
 5. **Reboot mid-alarm** loses the beacon and escalation timer (edge-case review 2, #9).
-6. **Remove `SH_BENCH_TOOLS`** from `platformio.ini` before any deployment.
+6. ✅ Bench tools live only in `env:m5sticks3-bench`; `env:m5sticks3` has none.
 7. **Module 3 freeze report**, as Modules 1 and 2 have, once the on-band sessions are done.
 

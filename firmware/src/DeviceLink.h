@@ -25,6 +25,7 @@
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <WiFi.h>
@@ -86,8 +87,14 @@ class DeviceLink {
     bool sensorOk = true;
   };
 
-  void begin(const char* baseUrl, const char* firmwareVersion, uint64_t (*monoMs)()) {
+  /// `caPem`: the CA that signed the backend's TLS certificate. An https://
+  /// backend is only used with it — the band never connects without checking
+  /// who it is talking to. Plain http:// is refused unless `allowPlainHttp`
+  /// (bench builds only): the device secret travels in every request.
+  void begin(const char* baseUrl, const char* firmwareVersion, uint64_t (*monoMs)(), const char* caPem,
+             bool allowPlainHttp) {
     baseUrl_ = baseUrl;
+    caPem_ = caPem;
     fw_ = firmwareVersion;
     monoMs_ = monoMs;
     lock_ = xSemaphoreCreateMutex();
@@ -112,14 +119,23 @@ class DeviceLink {
 
     LittleFS.mkdir("/q");
     xSemaphoreTake(lock_, portMAX_DELAY);
-    st_.configured = baseUrl_ && strncmp(baseUrl_, "http", 4) == 0;
+    const bool https = baseUrl_ && strncmp(baseUrl_, "https://", 8) == 0;
+    const bool http = baseUrl_ && strncmp(baseUrl_, "http://", 7) == 0;
+    tls_ = https;
+    if (https && !(caPem_ && caPem_[0])) {
+      Serial.println("[LINK] https backend but no CA certificate (include/backend_ca.h) - NOT connecting");
+    } else if (http && !allowPlainHttp) {
+      Serial.println("[LINK] plain http backend refused in this build - use https (firmware/SECURITY.md)");
+    }
+    st_.configured = (https && caPem_ && caPem_[0]) || (http && allowPlainHttp);
     st_.enrolled = secret_[0] != 0;
     st_.assignment = a;
     st_.assignmentKnown = st_.enrolled;
     st_.queueDepth = countQueue();
     xSemaphoreGive(lock_);
 
-    xTaskCreatePinnedToCore(&DeviceLink::taskEntry, "device-link", 12288, this, 1, nullptr, 0);
+    // TLS handshakes need more stack than plain HTTP.
+    xTaskCreatePinnedToCore(&DeviceLink::taskEntry, "device-link", 16384, this, 1, nullptr, 0);
   }
 
   LinkStatus status() {
@@ -280,7 +296,14 @@ class DeviceLink {
   int post(const char* path, const String& body, String& out, bool auth = true) {
     HTTPClient http;
     String url = String(baseUrl_) + path;
-    if (!http.begin(url)) return -1;
+    if (tls_) {
+      // Verifies the server's certificate chain against caPem_ (and its dates:
+      // before the clock syncs the handshake fails and the request is retried).
+      tlsClient_.setCACert(caPem_);
+      if (!http.begin(tlsClient_, url)) return -1;
+    } else if (!http.begin(url)) {
+      return -1;
+    }
     http.setTimeout(6000);
     http.setConnectTimeout(4000);
     http.addHeader("Content-Type", "application/json");
@@ -583,6 +606,9 @@ class DeviceLink {
   }
 
   const char* baseUrl_ = nullptr;
+  const char* caPem_ = nullptr;
+  bool tls_ = false;
+  WiFiClientSecure tlsClient_;  // used only from the network task
   const char* fw_ = "";
   uint64_t (*monoMs_)() = nullptr;
   SemaphoreHandle_t lock_ = nullptr;

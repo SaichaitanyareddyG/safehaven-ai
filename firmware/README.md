@@ -40,9 +40,12 @@ device API is built. Drop the flag once Stage 1 lands.
 
 ```bash
 cp include/wifi_secrets.example.h include/wifi_secrets.h   # 2.4 GHz network + SH_BACKEND_URL
-pio run -e m5sticks3 -t upload
-pio device monitor -e m5sticks3
+pio run -e m5sticks3-bench -t upload   # development band: test tools, http allowed
+pio device monitor -e m5sticks3-bench
 ```
+
+`env:m5sticks3` is the deployable build — no test tools, https only. See
+[SECURITY.md](SECURITY.md) before a band goes anywhere near a patient.
 
 - **First flash only:** hold a side button until the internal green LED blinks
   (download mode), flash, then single-click the side button to boot. Later
@@ -102,7 +105,8 @@ or Wi-Fi, and the **microphone is disabled** at boot — nothing listens.
 | `status` | Mode, backend link, enrolment, assignment, queue depth |
 | `enroll <CODE>` / `forget` | Fallback enrolment / erase the credential |
 | `d` / `c` | Dump / clear the minute-by-minute battery log (run off USB, then dump) |
-| `shot` | Stream every screen's framebuffer (base64 RGB565) for design review |
+| `wifi show` / `wifi psk …` / `wifi eap …` / `wifi clear` | Set the network on the band, incl. hospital WPA2-Enterprise (SECURITY.md) |
+| `shot` | Bench build only: stream every screen's framebuffer (base64 RGB565) for design review |
 
 ## Run it in the Wokwi simulator — ESP32-S3, screen, IMU, scenarios
 
