@@ -3,6 +3,7 @@ import { formatDistanceToNow } from 'date-fns'
 import {
   Activity,
   BatteryLow,
+  BellRing,
   Check,
   ClockAlert,
   Footprints,
@@ -25,6 +26,7 @@ const ALERT_ICONS: Record<AlertType, typeof Activity> = {
   UNEXPECTED_MOBILITY: Footprints,
   DEVICE_LOW_BATTERY: BatteryLow,
   DEVICE_OFFLINE: WifiOff,
+  HELP_REQUESTED: BellRing,
 }
 
 // Left border only, so the card reads as urgent at a glance without a wall of

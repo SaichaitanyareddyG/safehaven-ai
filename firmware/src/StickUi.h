@@ -94,7 +94,7 @@ enum class HomeView : uint8_t {
 /// Which alert screen. BENCH is used while no backend is linked: it must say
 /// that nobody was notified. NOTIFIED is shown only once the backend has
 /// accepted the event — never before.
-enum class AlertKind : uint8_t { BENCH, SENDING, NOTIFIED, NOT_DELIVERED };
+enum class AlertKind : uint8_t { BENCH, SENDING, NOTIFIED, NOT_DELIVERED, NURSE_COMING };
 enum class Step : uint8_t { PENDING, BUSY, DONE, FAILED, SKIPPED };
 
 /// Everything a HOME screen depends on. Filled from zero each time, so two
@@ -688,6 +688,22 @@ class StickUi {
         text(small_, foot, CX, 228, TEXT3, middle_center);
         break;
       }
+      case AlertKind::NURSE_COMING: {
+        // A nurse acknowledged the alert on the dashboard.
+        c.fillCircle(CX, cy, 32, TEAL_DARK);
+        c.fillCircle(CX, cy, 24, TEAL);
+        // Check mark.
+        for (int d = -1; d <= 1; ++d) {
+          c.drawLine(CX - 11, cy + d, CX - 3, cy + 8 + d, BG);
+          c.drawLine(CX - 3, cy + 8 + d, CX + 12, cy - 8 + d, BG);
+        }
+        text(title_, "A nurse is", CX, 124, TEXT, middle_center);
+        text(title_, "coming", CX, 141, TEXT, middle_center);
+        text(body_, "Stay where you are", CX, 164, TEXT2, middle_center);
+        text(body_, "if you can.", CX, 177, TEXT2, middle_center);
+        text(small_, "SAFEHAVEN \xc2\xb7 Alert acknowledged", CX, 228, TEXT3, middle_center);
+        break;
+      }
       case AlertKind::NOT_DELIVERED: {
         // The backend could not attribute the event (no active assignment).
         // Silence here would be the worst outcome: tell the patient to get help another way.
@@ -705,8 +721,10 @@ class StickUi {
         // No backend linked: detection works, but nobody was told. Say so.
         c.fillCircle(CX, cy, 32, AMBER_DARK);
         bell(CX, cy, AMBER);
-        text(title_, fall ? "Possible fall" : "Movement alert", CX, 124, TEXT, middle_center);
-        text(title_, "detected", CX, 141, TEXT, middle_center);
+        const bool help = m.alertType == EventType::HELP_REQUESTED;
+        text(title_, help ? "Help button" : fall ? "Possible fall" : "Movement alert", CX, 124, TEXT,
+             middle_center);
+        text(title_, help ? "pressed" : "detected", CX, 141, TEXT, middle_center);
         text(body_, "Bench build: nurse", CX, 164, TEXT2, middle_center);
         text(body_, "alerts are not", CX, 177, TEXT2, middle_center);
         text(body_, "connected yet.", CX, 190, TEXT2, middle_center);

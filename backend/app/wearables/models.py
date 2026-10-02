@@ -204,6 +204,9 @@ class SensorEventType(str, enum.Enum):
     ABNORMAL_MOVEMENT = "ABNORMAL_MOVEMENT"
     UNEXPECTED_MOBILITY = "UNEXPECTED_MOBILITY"
     DEVICE_LOW_BATTERY = "DEVICE_LOW_BATTERY"
+    # The patient held the band's front button: an explicit request, not an
+    # inference from motion — so it is the one event type that is not a guess.
+    HELP_REQUESTED = "HELP_REQUESTED"
 
 
 class SensorEvent(Base):
@@ -282,6 +285,7 @@ class AlertType(str, enum.Enum):
     UNEXPECTED_MOBILITY = "UNEXPECTED_MOBILITY"
     DEVICE_LOW_BATTERY = "DEVICE_LOW_BATTERY"
     DEVICE_OFFLINE = "DEVICE_OFFLINE"
+    HELP_REQUESTED = "HELP_REQUESTED"
 
 
 class AlertPriority(str, enum.Enum):

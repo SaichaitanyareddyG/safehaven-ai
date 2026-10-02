@@ -73,6 +73,7 @@ const SENSOR_EVENT_LABELS: Record<string, string> = {
   ABNORMAL_MOVEMENT: 'Abnormal repetitive movement',
   UNEXPECTED_MOBILITY: 'Unexpected mobility',
   DEVICE_LOW_BATTERY: 'Low battery',
+  HELP_REQUESTED: 'Help requested',
 }
 
 function sensorEventLabel(event: AuditEvent): string {

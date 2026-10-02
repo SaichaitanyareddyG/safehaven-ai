@@ -314,6 +314,17 @@ class SensorEventAccepted(BaseModel):
     delayed: bool = False
 
 
+class DeviceAlertView(BaseModel):
+    """The state of the band's most recent clinical alert, so the band can
+    tell its wearer "a nurse is coming". Type, status and the time of the
+    latest event folded into it (to match against the band's own event) —
+    nothing about the patient."""
+
+    alert_type: AlertType
+    status: AlertStatus
+    last_event_at_ms: int
+
+
 class DeviceHeartbeatResponse(BaseModel):
     """What the device learns by checking in.
 
@@ -327,6 +338,7 @@ class DeviceHeartbeatResponse(BaseModel):
 
     server_time_ms: int
     assignment: DeviceAssignmentView | None = None
+    alert: DeviceAlertView | None = None
 
 
 class PairingStartRequest(BaseModel):

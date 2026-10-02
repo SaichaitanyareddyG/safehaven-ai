@@ -503,6 +503,36 @@ def resolve_qr_token(db: Session, scanned: str, resolved_by: uuid.UUID) -> tuple
     return assignment, patient, device
 
 
+# Clinical alerts a band shows to its wearer (device-health ones it never does).
+_BAND_VISIBLE_ALERTS = (
+    AlertType.POSSIBLE_FALL,
+    AlertType.ABNORMAL_MOVEMENT,
+    AlertType.UNEXPECTED_MOBILITY,
+    AlertType.HELP_REQUESTED,
+)
+_BAND_ALERT_WINDOW = timedelta(minutes=30)
+
+
+def latest_band_alert(db: Session, device_id: uuid.UUID, assignment: DeviceAssignment) -> SafetyAlert | None:
+    """The newest recent clinical alert from this band for its current patient.
+
+    Tells the band whether a nurse has acknowledged (it then shows "A nurse is
+    coming") or resolved it. Type and status only — never who the patient is.
+    """
+    since = datetime.now(timezone.utc) - _BAND_ALERT_WINDOW
+    return (
+        db.query(SafetyAlert)
+        .filter(
+            SafetyAlert.device_id == device_id,
+            SafetyAlert.patient_id == assignment.patient_id,
+            SafetyAlert.alert_type.in_(_BAND_VISIBLE_ALERTS),
+            SafetyAlert.created_at >= since,
+        )
+        .order_by(SafetyAlert.created_at.desc())
+        .first()
+    )
+
+
 def active_assignment_for_patient(db: Session, patient_id: uuid.UUID) -> DeviceAssignment | None:
     return (
         db.query(DeviceAssignment)
@@ -1287,6 +1317,7 @@ _ALERT_MESSAGES = {
     ),
     AlertType.DEVICE_LOW_BATTERY: "Wearable battery low.",
     AlertType.DEVICE_OFFLINE: "Safety monitor offline — device check required.",
+    AlertType.HELP_REQUESTED: "Patient pressed the help button on their wearable — please attend.",
 }
 
 

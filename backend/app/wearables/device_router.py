@@ -19,6 +19,7 @@ from app.wearables import service
 from app.wearables.dependencies import get_current_device
 from app.wearables.models import WearableDevice
 from app.wearables.schemas import (
+    DeviceAlertView,
     DeviceAssignmentView,
     DeviceEnrollResponse,
     DeviceEnrollRequest,
@@ -153,7 +154,19 @@ def heartbeat(
         if assignment is not None
         else None
     )
-    return DeviceHeartbeatResponse(server_time_ms=int(time.time() * 1000), assignment=view)
+    alert_view = None
+    if assignment is not None:
+        alert = service.latest_band_alert(db, device.id, assignment)
+        if alert is not None:
+            stamp = alert.last_event_at or alert.created_at
+            alert_view = DeviceAlertView(
+                alert_type=alert.alert_type,
+                status=alert.status,
+                last_event_at_ms=int(stamp.timestamp() * 1000),
+            )
+    return DeviceHeartbeatResponse(
+        server_time_ms=int(time.time() * 1000), assignment=view, alert=alert_view
+    )
 
 
 @router.post("/events", response_model=SensorEventAccepted)

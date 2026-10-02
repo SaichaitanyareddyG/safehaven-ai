@@ -49,6 +49,7 @@ _EVENT_TO_ALERT = {
     SensorEventType.ABNORMAL_MOVEMENT: AlertType.ABNORMAL_MOVEMENT,
     SensorEventType.UNEXPECTED_MOBILITY: AlertType.UNEXPECTED_MOBILITY,
     SensorEventType.DEVICE_LOW_BATTERY: AlertType.DEVICE_LOW_BATTERY,
+    SensorEventType.HELP_REQUESTED: AlertType.HELP_REQUESTED,
 }
 
 # Profiles under which a heightened-risk patient's abnormal movement is treated
@@ -97,6 +98,11 @@ def evaluate(
         # patient left a bed, so the most inferential signal in Module 3 must
         # not outrank a possible fall.
         return AlertDecision(True, AlertType.UNEXPECTED_MOBILITY, AlertPriority.MEDIUM)
+
+    if event_type is SensorEventType.HELP_REQUESTED:
+        # A person asked for help. Nothing to second-guess and no profile
+        # gating: HIGH, like a call bell, whatever the monitoring profile.
+        return AlertDecision(True, AlertType.HELP_REQUESTED, AlertPriority.HIGH)
 
     if event_type is SensorEventType.DEVICE_LOW_BATTERY:
         # Operational, not clinical. It matters because a dead wearable stops

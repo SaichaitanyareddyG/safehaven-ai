@@ -29,6 +29,7 @@
 // Buttons — a patient will press them, so no single press may do anything a
 // patient should not trigger:
 //   any single click   wakes the screen, stops a fall alarm, or closes an alert
+//   hold FRONT for 2 s patient help request (sent like an event; never in TEST)
 //   hold BOTH for 3 s  staff only: enter / leave the TEST screen
 //   side click in TEST clears the test results
 // TEST returns to HOME by itself after 10 minutes without a button press.
@@ -151,6 +152,8 @@ static unsigned long comboSinceMs = 0;
 static bool comboFired = false;
 static bool swallowClicks = false;  // after a wake or a combo, until both are released
 static unsigned long lastTestButtonMs = 0;
+static const unsigned long HELP_HOLD_MS = 2000;
+static bool helpFired = false;  // once per hold
 
 // Alert currently on screen.
 static bool alertActive = false;
@@ -171,6 +174,8 @@ static unsigned long lastBeepCycle = UINT32_MAX;
 static bool chimedForAlert = false;
 static char alertEventId[24] = "";       // empty in bench mode
 static char alertSentAt[6] = "";         // filled once the backend accepts it
+static uint64_t alertEventEpochMs = 0;    // to match the backend's view of this alert
+static bool nurseComing = false;          // a nurse acknowledged it on the dashboard
 
 // TEST screen data: |a| history (2.4 s at 50 Hz) and the fall-candidate mirror.
 static const int GRAPH_N = 120;
@@ -384,13 +389,16 @@ static void handleEvent(const DetectedEvent &ev) {
   lastEventMs = now;
   alertEventId[0] = 0;
   alertSentAt[0] = 0;
+  nurseComing = false;
   if (!benchMode) {
-    const char *id = backendLink.submit(ev, backendLink.toEpoch(ev.occurred_at_ms, epoch),
+    alertEventEpochMs = backendLink.toEpoch(ev.occurred_at_ms, epoch);
+    const char *id = backendLink.submit(ev, alertEventEpochMs,
                                  battery.valid() ? (uint8_t)battery.shown_pct() : 0);
     strlcpy(alertEventId, id, sizeof(alertEventId));
     Serial.printf("  queued for delivery as %s\r\n", id);
   }
-  if (ev.type == EventType::POSSIBLE_FALL || ev.type == EventType::ABNORMAL_MOVEMENT) {
+  if (ev.type == EventType::POSSIBLE_FALL || ev.type == EventType::ABNORMAL_MOVEMENT ||
+      ev.type == EventType::HELP_REQUESTED) {
     alertActive = true;
     alertType = ev.type;
     alertSinceMs = millis();
@@ -413,6 +421,34 @@ static void stopAttention(const char *why) {
   M5.Display.setBrightness(screen == Screen::TEST ? BRIGHTNESS_TEST : BRIGHTNESS_HOME);
   forceRedraw = true;
   Serial.printf("[ALERT] attention stopped (%s) - nurse alert unaffected\r\n", why);
+}
+
+/// Follow the nurse's response to this band's alert: acknowledged → "A nurse
+/// is coming" (and the beacon stops); resolved → the alert screen closes.
+/// Only an alert that includes this band's own event counts, so a stale
+/// earlier episode can never close or answer a new one.
+static void serviceNurseResponse() {
+  backendLink.setUrgent(alertActive && !benchMode);
+  if (!alertActive || benchMode || !alertEventId[0] || !alertEventEpochMs) return;
+  const LinkStatus ls = backendLink.status();
+  if (ls.nurseResponse == NurseResponse::NONE || ls.alertLastEventAtMs + 1500 < alertEventEpochMs) return;
+  if (ls.nurseResponse == NurseResponse::ACKNOWLEDGED && !nurseComing) {
+    nurseComing = true;
+    stopAttention("nurse acknowledged");
+    alertSinceMs = millis();  // show "A nurse is coming" for the full period
+    screenWake("nurse acknowledged");
+    M5.Speaker.tone(523, 110);
+    delay(130);
+    M5.Speaker.tone(659, 110);
+    delay(130);
+    M5.Speaker.tone(784, 180);
+    Serial.println("[ALERT] nurse acknowledged - showing 'A nurse is coming'");
+  } else if (ls.nurseResponse == NurseResponse::RESOLVED) {
+    stopAttention("nurse resolved");
+    alertActive = false;
+    forceRedraw = true;
+    Serial.println("[ALERT] nurse resolved the alert - screen closed");
+  }
 }
 
 /// Tone in step with the pulse; silent after the fast phase so a fall at
@@ -561,6 +597,8 @@ static void buildHome(HomeModel &m) {
   }
   if (benchMode || !alertEventId[0]) {
     m.alertKind = ui::AlertKind::BENCH;
+  } else if (nurseComing) {
+    m.alertKind = ui::AlertKind::NURSE_COMING;
   } else {
     const LinkStatus ls = backendLink.status();
     const bool mine = strcmp(ls.lastEventId, alertEventId) == 0;
@@ -777,9 +815,29 @@ static void setScreen(Screen s, const char *why) {
 static void handleButtons() {
   const unsigned long now = millis();
 
+  // Patient help: front button held alone for 2 s. Works with the screen off
+  // too — the press that woke it keeps counting. Never on the staff screen.
+  if (!M5.BtnA.isPressed()) helpFired = false;
+  if (!helpFired && screen == Screen::HOME && assigned && M5.BtnA.pressedFor(HELP_HOLD_MS) &&
+      !M5.BtnB.isPressed()) {
+    helpFired = true;
+    swallowClicks = true;  // the release must not also close the alert it opens
+    screenWake("help button");
+    M5.Speaker.tone(988, 90);
+    delay(110);
+    M5.Speaker.tone(988, 90);
+    DetectedEvent ev;
+    ev.type = EventType::HELP_REQUESTED;
+    ev.occurred_at_ms = clock_.millis();
+    Serial.println("[BTN] help requested by the wearer");
+    handleEvent(ev);
+    return;
+  }
+
   // Staff gesture: both buttons held. Checked first, and it swallows the
-  // clicks those same presses produce on release.
-  if (M5.BtnA.isPressed() && M5.BtnB.isPressed()) {
+  // clicks those same presses produce on release. Not after a help request
+  // in the same press, so a patient cannot slide from one into the other.
+  if (M5.BtnA.isPressed() && M5.BtnB.isPressed() && !helpFired) {
     if (!comboSinceMs) comboSinceMs = now;
     swallowClicks = true;
     if (!comboFired && now - comboSinceMs >= TEST_COMBO_MS) {
@@ -1029,6 +1087,7 @@ void loop() {
     forceRedraw = true;
   }
   serviceSound();
+  serviceNurseResponse();
   if (now - lastBatterySampleMs >= BATTERY_SAMPLE_MS) {
     lastBatterySampleMs = now;
     sampleBattery();

@@ -48,6 +48,10 @@ struct LinkAssignment {
   char qrToken[40] = "";  // random; the band shows "SH:<token>" as its QR
 };
 
+/// The backend's view of the band's latest clinical alert: lets the band tell
+/// its wearer that a nurse acknowledged it. No patient information.
+enum class NurseResponse : uint8_t { NONE, OPEN, ACKNOWLEDGED, RESOLVED };
+
 /// Outcome of the most recent event delivery, for the alert screens.
 enum class Delivery : uint8_t { NONE, QUEUED, DELIVERED, DISCARDED };
 
@@ -66,6 +70,9 @@ struct LinkStatus {
   Delivery lastDelivery = Delivery::NONE;
   // Device-initiated pairing: shown on screen while not enrolled.
   char pairingCode[8] = "";
+  // Latest clinical alert as the backend sees it (from the heartbeat).
+  NurseResponse nurseResponse = NurseResponse::NONE;
+  uint64_t alertLastEventAtMs = 0;  // matched against the band's own event time
 };
 
 class DeviceLink {
@@ -159,6 +166,10 @@ class DeviceLink {
     return lastSubmitted_;
   }
 
+  /// While an alert is on the band, check in every few seconds so a nurse's
+  /// acknowledgement shows quickly ("A nurse is coming").
+  void setUrgent(bool urgent) { urgent_ = urgent; }
+
   void requestEnroll(const char* code) {
     xSemaphoreTake(lock_, portMAX_DELAY);
     strlcpy(pendingEnroll_, code, sizeof(pendingEnroll_));
@@ -184,6 +195,7 @@ class DeviceLink {
  private:
   static constexpr uint32_t kMagic = 0x5AFE0E01;
   static constexpr uint32_t kHeartbeatMs = 30000;
+  static constexpr uint32_t kUrgentHeartbeatMs = 5000;
   static constexpr uint32_t kRetryMs = 10000;
   static constexpr int kEnrollRetries = 6;
   static constexpr uint32_t kPairingPollMs = 3000;
@@ -236,7 +248,8 @@ class DeviceLink {
 
         if (!secret_[0] && !code[0]) servicePairing();
 
-        if (secret_[0] && (firstHeartbeat || millis() - lastHeartbeat >= kHeartbeatMs)) {
+        const uint32_t interval = urgent_ ? kUrgentHeartbeatMs : kHeartbeatMs;
+        if (secret_[0] && (firstHeartbeat || millis() - lastHeartbeat >= interval)) {
           lastHeartbeat = millis();
           firstHeartbeat = false;
           heartbeat();
@@ -374,6 +387,17 @@ class DeviceLink {
       saveAssignment(st_.assignment);
     }
     st_.assignmentKnown = true;
+    JsonVariantConst al = doc["alert"];
+    if (al.isNull()) {
+      st_.nurseResponse = NurseResponse::NONE;
+      st_.alertLastEventAtMs = 0;
+    } else {
+      const char* s = al["status"] | "";
+      st_.nurseResponse = !strcmp(s, "ACKNOWLEDGED") ? NurseResponse::ACKNOWLEDGED
+                          : !strcmp(s, "RESOLVED")   ? NurseResponse::RESOLVED
+                                                     : NurseResponse::OPEN;
+      st_.alertLastEventAtMs = al["last_event_at_ms"] | (uint64_t)0;
+    }
     xSemaphoreGive(lock_);
     if (changed) {
       Serial.printf("[LINK] assignment: %s%s\r\n", a.present ? "ASSIGNED, profile " : "none (device idle)",
@@ -558,6 +582,7 @@ class DeviceLink {
   char pairingId_[40] = "";
   char pollToken_[64] = "";
   uint32_t lastPairingPoll_ = 0;
+  volatile bool urgent_ = false;
   uint32_t bootId_ = 0;
   Health health_;
   LinkStatus st_;

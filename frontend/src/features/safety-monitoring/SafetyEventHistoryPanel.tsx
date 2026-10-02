@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { format } from 'date-fns'
-import { Activity, BatteryLow, ClockAlert, Footprints, PersonStanding } from 'lucide-react'
+import { Activity, BatteryLow, BellRing, ClockAlert, Footprints, PersonStanding } from 'lucide-react'
 
 import { listPatientSafetyEvents } from '@/api/safety-monitoring'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -11,6 +11,7 @@ const EVENT_ICONS: Record<SensorEventType, typeof Activity> = {
   ABNORMAL_MOVEMENT: Activity,
   UNEXPECTED_MOBILITY: Footprints,
   DEVICE_LOW_BATTERY: BatteryLow,
+  HELP_REQUESTED: BellRing,
 }
 
 // Same observed-not-diagnosed wording rule as everywhere else. These describe
@@ -20,6 +21,7 @@ const EVENT_LABELS: Record<SensorEventType, string> = {
   ABNORMAL_MOVEMENT: 'Abnormal repetitive movement',
   UNEXPECTED_MOBILITY: 'Unexpected mobility',
   DEVICE_LOW_BATTERY: 'Low battery',
+  HELP_REQUESTED: 'Help requested',
 }
 
 /**

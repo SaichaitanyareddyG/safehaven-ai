@@ -6,6 +6,7 @@ export type AlertType =
   | 'UNEXPECTED_MOBILITY'
   | 'DEVICE_LOW_BATTERY'
   | 'DEVICE_OFFLINE'
+  | 'HELP_REQUESTED'
 
 /**
  * Operational priority — how soon someone should look. Deliberately NOT a
@@ -102,6 +103,7 @@ export type SensorEventType =
   | 'ABNORMAL_MOVEMENT'
   | 'UNEXPECTED_MOBILITY'
   | 'DEVICE_LOW_BATTERY'
+  | 'HELP_REQUESTED'
 
 export interface SensorEvent {
   id: string
