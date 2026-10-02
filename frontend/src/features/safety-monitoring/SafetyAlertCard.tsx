@@ -5,6 +5,7 @@ import {
   BatteryLow,
   BellRing,
   Check,
+  CircleAlert,
   ClockAlert,
   Footprints,
   PersonStanding,
@@ -27,6 +28,7 @@ const ALERT_ICONS: Record<AlertType, typeof Activity> = {
   DEVICE_LOW_BATTERY: BatteryLow,
   DEVICE_OFFLINE: WifiOff,
   HELP_REQUESTED: BellRing,
+  NO_RESPONSE: CircleAlert,
 }
 
 // Left border only, so the card reads as urgent at a glance without a wall of

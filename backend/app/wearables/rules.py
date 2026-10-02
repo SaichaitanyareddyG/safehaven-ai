@@ -50,6 +50,7 @@ _EVENT_TO_ALERT = {
     SensorEventType.UNEXPECTED_MOBILITY: AlertType.UNEXPECTED_MOBILITY,
     SensorEventType.DEVICE_LOW_BATTERY: AlertType.DEVICE_LOW_BATTERY,
     SensorEventType.HELP_REQUESTED: AlertType.HELP_REQUESTED,
+    SensorEventType.NO_RESPONSE: AlertType.NO_RESPONSE,
 }
 
 # Profiles under which a heightened-risk patient's abnormal movement is treated
@@ -103,6 +104,12 @@ def evaluate(
         # A person asked for help. Nothing to second-guess and no profile
         # gating: HIGH, like a call bell, whatever the monitoring profile.
         return AlertDecision(True, AlertType.HELP_REQUESTED, AlertPriority.HIGH)
+
+    if event_type is SensorEventType.NO_RESPONSE:
+        # A possible fall the wearer has not answered. Its own alert type, not a
+        # fold into the fall alert, so the nurse is told AGAIN (sound, toast,
+        # desktop notification) rather than a counter quietly ticking up.
+        return AlertDecision(True, AlertType.NO_RESPONSE, AlertPriority.HIGH)
 
     if event_type is SensorEventType.DEVICE_LOW_BATTERY:
         # Operational, not clinical. It matters because a dead wearable stops

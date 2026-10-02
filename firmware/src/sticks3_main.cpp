@@ -173,6 +173,13 @@ static const float TONE_ALARM_HZ = 2600;
 static const uint32_t TONE_ALARM_MS = 260;
 static bool attentionActive = false;
 static unsigned long attentionSinceMs = 0;
+// Escalation: a fall nobody answered on the band (no button press, no nurse
+// acknowledgement) within this time is reported again as NO_RESPONSE, so the
+// nurse is alerted a second time. Once per fall.
+static const unsigned long NO_RESPONSE_AFTER_MS = 60000;
+static const float MOVING_DEVIATION_G = 0.15f;  // |a| this far from 1 g = the wearer moved
+static bool noResponseSent = false;
+static unsigned long lastMovementMs = 0;
 static unsigned long lastBeepCycle = UINT32_MAX;
 static bool chimedForAlert = false;
 static char alertEventId[24] = "";       // empty in bench mode
@@ -410,6 +417,8 @@ static void handleEvent(const DetectedEvent &ev) {
     if (ev.type == EventType::POSSIBLE_FALL) {  // the beacon is for falls only
       attentionActive = true;
       attentionSinceMs = millis();
+      noResponseSent = false;
+      lastMovementMs = 0;
       lastBeepCycle = UINT32_MAX;
       M5.Display.setBrightness(BRIGHTNESS_ATTENTION);
       forceRedraw = true;
@@ -424,6 +433,39 @@ static void stopAttention(const char *why) {
   M5.Display.setBrightness(screen == Screen::TEST ? BRIGHTNESS_TEST : BRIGHTNESS_HOME);
   forceRedraw = true;
   Serial.printf("[ALERT] attention stopped (%s) - nurse alert unaffected\r\n", why);
+}
+
+/// A possible fall that nobody has answered — no button press on the band and
+/// no acknowledgement on the dashboard — is reported again after 60 s. It
+/// carries how long the band has been still since the fall (inactive_ms) and
+/// since the alarm started (duration_s): "not pressing but moving" and "not
+/// moving at all" are different situations for the nurse. It reports an
+/// absence of response, never a state of consciousness.
+static void serviceEscalation() {
+  if (!alertActive || !attentionActive || noResponseSent || nurseComing) return;
+  const unsigned long now = millis();
+  const unsigned long elapsed = now - attentionSinceMs;
+  if (elapsed < NO_RESPONSE_AFTER_MS) return;
+  noResponseSent = true;
+
+  DetectedEvent ev;
+  ev.type = EventType::NO_RESPONSE;
+  ev.occurred_at_ms = clock_.millis();
+  const unsigned long stillSince = lastMovementMs > attentionSinceMs ? lastMovementMs : attentionSinceMs;
+  ev.metrics.inactive_ms = (uint32_t)(now - stillSince);
+  ev.metrics.duration_s = elapsed / 1000.0f;
+  Serial.printf("[ALERT] no response for %lus after the fall (still for %lus) - escalating\r\n",
+                elapsed / 1000, (unsigned long)(ev.metrics.inactive_ms / 1000));
+  if (benchMode) {
+    Serial.println("  bench mode - NOT sent (no backend link)");
+    return;
+  }
+  // The escalation becomes the alert the band tracks, so a nurse's response
+  // to it ("A nurse is coming") reaches the wearer.
+  alertEventEpochMs = backendLink.toEpoch(ev.occurred_at_ms, clock_.epoch_ms());
+  const char *id = backendLink.submit(ev, alertEventEpochMs,
+                                      battery.valid() ? (uint8_t)battery.shown_pct() : 0);
+  strlcpy(alertEventId, id, sizeof(alertEventId));
 }
 
 /// Follow the nurse's response to this band's alert: acknowledged → "A nurse
@@ -534,6 +576,7 @@ static void pumpSensor() {
   ImuSample s;
   while (imu.read(s)) {
     lastSample = s;
+    if (attentionActive && fabsf(magnitude(s) - 1.0f) > MOVING_DEVIATION_G) lastMovementMs = millis();
     magHistory[magHead] = magnitude(s);
     magHead = (magHead + 1) % GRAPH_N;
     const DetectedEvent ev = core.update(s);
@@ -1090,6 +1133,7 @@ void loop() {
     forceRedraw = true;
   }
   serviceSound();
+  serviceEscalation();
   serviceNurseResponse();
   if (now - lastBatterySampleMs >= BATTERY_SAMPLE_MS) {
     lastBatterySampleMs = now;

@@ -36,6 +36,7 @@ enum class EventType : uint8_t {
   UNEXPECTED_MOBILITY,
   DEVICE_LOW_BATTERY,
   HELP_REQUESTED,  ///< the wearer held the help button — not a detection
+  NO_RESPONSE,     ///< a possible fall went unanswered on the band (escalation)
 };
 
 /// Set by the backend on assignment. Gates which detectors run at all.
@@ -91,6 +92,7 @@ inline const char* to_string(EventType t) {
     case EventType::UNEXPECTED_MOBILITY: return "UNEXPECTED_MOBILITY";
     case EventType::DEVICE_LOW_BATTERY:  return "DEVICE_LOW_BATTERY";
     case EventType::HELP_REQUESTED:      return "HELP_REQUESTED";
+    case EventType::NO_RESPONSE:         return "NO_RESPONSE";
     case EventType::NONE:                return "NONE";
   }
   return "NONE";

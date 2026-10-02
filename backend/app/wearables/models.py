@@ -207,6 +207,9 @@ class SensorEventType(str, enum.Enum):
     # The patient held the band's front button: an explicit request, not an
     # inference from motion — so it is the one event type that is not a guess.
     HELP_REQUESTED = "HELP_REQUESTED"
+    # After a possible fall the band sounded and flashed and nobody pressed a
+    # button. Reports an absence of response — not a state of consciousness.
+    NO_RESPONSE = "NO_RESPONSE"
 
 
 class SensorEvent(Base):
@@ -286,6 +289,7 @@ class AlertType(str, enum.Enum):
     DEVICE_LOW_BATTERY = "DEVICE_LOW_BATTERY"
     DEVICE_OFFLINE = "DEVICE_OFFLINE"
     HELP_REQUESTED = "HELP_REQUESTED"
+    NO_RESPONSE = "NO_RESPONSE"
 
 
 class AlertPriority(str, enum.Enum):

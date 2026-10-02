@@ -506,6 +506,7 @@ def resolve_qr_token(db: Session, scanned: str, resolved_by: uuid.UUID) -> tuple
 # Clinical alerts a band shows to its wearer (device-health ones it never does).
 _BAND_VISIBLE_ALERTS = (
     AlertType.POSSIBLE_FALL,
+    AlertType.NO_RESPONSE,
     AlertType.ABNORMAL_MOVEMENT,
     AlertType.UNEXPECTED_MOBILITY,
     AlertType.HELP_REQUESTED,
@@ -1318,6 +1319,9 @@ _ALERT_MESSAGES = {
     AlertType.DEVICE_LOW_BATTERY: "Wearable battery low.",
     AlertType.DEVICE_OFFLINE: "Safety monitor offline — device check required.",
     AlertType.HELP_REQUESTED: "Patient pressed the help button on their wearable — please attend.",
+    AlertType.NO_RESPONSE: (
+        "No response on the wearable after a possible fall — attend now."
+    ),
 }
 
 

@@ -112,3 +112,29 @@ def test_device_health_alerts_are_not_shown_to_the_wearer(client):
     _, _, device = _assigned_band(client)
     _event(client, device, "DEVICE_LOW_BATTERY", "ev-1")
     assert _heartbeat(client, device)["alert"] is None
+
+
+def test_unanswered_fall_raises_a_second_high_alert(client):
+    """The nurse must be told again, not just see a counter tick up."""
+    headers, _, device = _assigned_band(client, profile="FALL_RISK")
+    now = int(time.time() * 1000)
+    _event(client, device, "POSSIBLE_FALL", "ev-1",
+           metrics={"fall_score": 4, "stages_seen": ["freefall", "impact", "orientation", "inactivity"]},
+           occurred_ms=now)
+    _event(client, device, "NO_RESPONSE", "ev-2",
+           metrics={"inactive_ms": 58000, "duration_s": 60.0}, occurred_ms=now + 60000)
+
+    alerts = _open_alerts(client, headers)
+    types = sorted(a["alert_type"] for a in alerts)
+    assert types == ["NO_RESPONSE", "POSSIBLE_FALL"]
+    escalation = next(a for a in alerts if a["alert_type"] == "NO_RESPONSE")
+    assert escalation["priority"] == "HIGH"
+    assert "No response" in escalation["message"]
+
+
+def test_band_follows_the_escalation_alert(client):
+    headers, _, device = _assigned_band(client)
+    now = int(time.time() * 1000)
+    _event(client, device, "NO_RESPONSE", "ev-2", occurred_ms=now)
+    view = _heartbeat(client, device)["alert"]
+    assert view["alert_type"] == "NO_RESPONSE" and view["status"] == "OPEN"
