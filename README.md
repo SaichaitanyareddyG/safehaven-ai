@@ -18,6 +18,10 @@ source before a patient sees it.
   translation fidelity before release.
 - **Access control** — JWT auth behind an `AuthProvider` seam, so the dev
   provider can be swapped for Cognito without touching call sites.
+- **Wearable safety monitoring** — an M5StickS3 wrist band detects possible
+  falls and abnormal movement (or the wearer presses for help) and alerts a
+  nurse; deterministic rules decide, the band never learns who wears it. See
+  `firmware/README.md` and `DOCUMENTATION.md §14`.
 - **Audit trail** — every read and write against patient data is recorded.
 
 ## Stack
@@ -25,6 +29,7 @@ source before a patient sees it.
 **Backend** — FastAPI · SQLAlchemy 2 · Alembic · PostgreSQL · Pydantic v2 · pytest
 **Frontend** — React · Vite · TypeScript · TanStack Query · shadcn/ui · Tailwind · ZXing
 **AI** — provider interface over mock / OpenAI / Anthropic / Ollama
+**Firmware** — ESP32-S3 (M5StickS3) · PlatformIO · Arduino · M5Unified
 
 The LLM provider defaults to `mock`. The test suite reads the same setting, so
 a real provider would otherwise make billed calls on every run.
@@ -44,12 +49,19 @@ uvicorn app.main:app --reload
 cd frontend
 npm install
 npm run dev
+
+# Wearable band (optional) — see firmware/README.md
+cd firmware && pio run -e m5sticks3 -t upload
 ```
+
+For the band to reach the backend, run it on the LAN:
+`uvicorn app.main:app --host 0.0.0.0 --port 8000`.
 
 ## Tests
 
 ```bash
 cd backend && pytest          # unit + integration
+cd firmware/native && make test   # detection core, scenario sensor, battery display
 ```
 
 Integration tests run against a real Postgres database rather than mocks — a

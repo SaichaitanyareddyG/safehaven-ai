@@ -24,6 +24,7 @@ plainly what is not.
 11. [Testing](#11-testing)
 12. [Running it](#12-running-it)
 13. [What is deliberately not built](#13-what-is-deliberately-not-built)
+14. [Module 3 — Wearable Safety Monitoring](#14-module-3--wearable-safety-monitoring)
 
 ---
 
@@ -556,10 +557,67 @@ false confidence.
 | **Nurse badge scan at the bedside** | Session auth stands in for the badge leg of the three-way scan |
 | **Drug interaction database** | A small curated table, not First Databank or Lexicomp |
 | **"Due now" worklist** | The nurse must know what to give; the system verifies rather than prompts |
-| **Cross-patient alert queue** | Signals are visible on each patient, not aggregated. The single biggest remaining usability gap |
+| **Cross-patient queue for Module 1/2 signals** | Medication and instruction signals are visible on each patient, not aggregated. (Wearable alerts do have one — §14) |
 | **Escalation from BLOCKED** | Rescan or document as held; no pharmacist referral workflow |
-| **Live / real-time updates** | Views are fetched, not pushed |
-| **Module 3 — wearables, falls, mobility** | Scoped from the start, never begun |
+| **Live / real-time updates** | Views are fetched, not pushed. The wearable alert queue polls every 3 s (§14) |
+| **Production hardening of Module 3** | HTTPS for the device link, encrypted device-secret storage, WPA2-Enterprise onboarding — all required before a real ward (§14) |
+
+---
+
+## 14. Module 3 — Wearable Safety Monitoring
+
+A wrist band (M5StickS3) watches for falls and abnormal movement and alerts a
+nurse. Full design, decisions and stage history: `MODULE_3_IMPLEMENTATION_PLAN.md`
+(status in its §36). Firmware build and bench use: `firmware/README.md`.
+
+### The loop
+
+```
+band detects (or wearer holds the help button)
+  → event queued in flash, sent over Wi-Fi to /device-api/events
+  → backend: authenticate device → resolve assignment → deterministic rules → dedupe
+  → SafetyAlert → nurse queue (Safety Monitoring page, sound, desktop notification)
+  → nurse acknowledges → band shows "A nurse is coming" → nurse resolves
+```
+
+### What each part decides
+
+| Part | Decides | Never does |
+|---|---|---|
+| **Band** (`firmware/`) | Whether a motion pattern matched (fall: 3 of 4 stages; repetitive movement held 20 s; gait only under `RESTRICTED_MOBILITY`) | Diagnose; know who wears it; send raw sensor data |
+| **Backend rules** (`app/wearables/rules.py`) | Whether a nurse is told, and how urgently — re-checking the band's evidence | Trust the band's conclusion; involve a model |
+| **Nurse** | What actually happened | — |
+
+Wording is observational everywhere ("Possible fall detected — check patient"),
+rendered from one server-side table and guarded by a test.
+
+### Privacy boundaries
+
+- **The band never learns the patient.** Its API returns monitoring profile,
+  QR token and alert *status* only — asserted by tests.
+- **The QR is an opaque token**, not a patient ID: it resolves to a patient only
+  for a logged-in clinician, every scan is audited, and it dies when the
+  assignment ends. The hospital wristband stays the authoritative identifier.
+- **Three actor types stay separate:** clinician JWT, patient care-link token,
+  device secret — none is accepted where another belongs.
+- **Microphone disabled**; no audio is recorded or sent.
+
+### Staff surfaces
+
+- **Safety Monitoring** — live alert queue; acknowledge / resolve; optional
+  desktop notifications (patient code + room, never the name).
+- **Devices** — every band's state, battery, last check-in; **Add device** by
+  the 6-digit code shown on a new band.
+- **Scan band** — camera or paste; shows who wears it.
+- **Patient page** — assign / unassign a band with a monitoring profile; event
+  history. Discharge ends the assignment automatically.
+
+### Honest limits
+
+Thresholds are engineering estimates, **not clinically validated**, and have
+been exercised on synthetic traces and a handful of bench drops — not real
+falls. A wrist sensor cannot prove a patient left a bed, so mobility alerts
+never claim it. See `MODULE_3_IMPLEMENTATION_PLAN.md §36` for the open items.
 
 ---
 

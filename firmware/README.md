@@ -3,9 +3,10 @@
 Detection logic for the wrist wearable described in
 [`MODULE_3_IMPLEMENTATION_PLAN.md`](../MODULE_3_IMPLEMENTATION_PLAN.md).
 
-**Stage 7 in progress.** The detection core runs on a real M5StickS3 (BMI270 at
-50 Hz) with the designed screens; a fall has been detected on the real device.
-Nothing is sent to the backend from the device yet.
+**Running on real hardware, linked to the backend.** The detection core runs on
+a real M5StickS3 (BMI270 at 50 Hz). Drops on the bench have travelled device →
+Wi-Fi → backend → nurse alert end to end. Thresholds are still prototype
+estimates: tuning against real wrist motion is the main open item.
 
 ---
 
@@ -38,7 +39,7 @@ device API is built. Drop the flag once Stage 1 lands.
 ## Run it on the real M5StickS3
 
 ```bash
-cp include/wifi_secrets.example.h include/wifi_secrets.h   # then fill in a 2.4 GHz network
+cp include/wifi_secrets.example.h include/wifi_secrets.h   # 2.4 GHz network + SH_BACKEND_URL
 pio run -e m5sticks3 -t upload
 pio device monitor -e m5sticks3
 ```
@@ -48,18 +49,60 @@ pio device monitor -e m5sticks3
   flashes reset the device by themselves.
 - **Memory:** ESP32-S3-PICO-1-N8R8 — 8 MB flash, 8 MB **octal** PSRAM
   (`qio_opi`, per M5Stack's own config). A wrong PSRAM mode boot-loops it.
-- **Buttons:** front = HOME / TEST screen; side = clear test results or close an
-  alert. The screen sleeps after 15 s; a press on a dark screen only wakes it.
-- **Battery log:** one line a minute in flash. Run off USB for a few hours, plug
-  in, open the monitor and type `d` to dump it (`c` clears).
+- **Backend:** `SH_BACKEND_URL` is the Mac's LAN address (not `localhost`); run
+  the backend with `--host 0.0.0.0`. Leave it empty for BENCH mode — a simulated
+  assignment, and alert screens that say plainly that nobody was notified.
 - **Fonts** are the design's (Space Grotesk, IBM Plex Sans, SIL OFL 1.1),
   converted by `tools/make_vlw.py` into `include/fonts/`.
 
-Detection never pauses for the screen or Wi-Fi. The alert screen says plainly
-that nurse alerts are not connected yet; it must not claim otherwise until the
-backend link exists.
+### Adding a band (no USB, no terminal)
 
----
+A band with no credential shows **"Add this band"** and a six-digit code.
+In the web app: **Devices → Add device**, type the code and the label printed on
+the band. The band finishes enrolling within seconds, then shows "Not paired
+yet"; assign it to a patient from the patient's page. Serial `enroll <CODE>`
+(with a code from `backend/scripts/register_device.py`) still works as a fallback,
+and `forget` turns an enrolled band back into a new one.
+
+### Buttons
+
+A patient will press them, so no single press does anything a patient should
+not trigger.
+
+| Action | Effect |
+|---|---|
+| Any single click | Wakes the screen; stops a fall beacon; closes an alert |
+| Hold **front** 2 s | **Help request** → HIGH alert on the nurse dashboard |
+| Hold **both** 3 s | Staff only: enter / leave the TEST screen (auto-exits after 10 min idle) |
+| Side click on TEST | Clears the test results |
+
+### What the wearer sees
+
+- **Monitoring** — time, status, and the assignment's **QR** (an opaque token;
+  staff scan it on the web app's **Scan band** page to see the patient).
+- **Possible fall** — red pulse with expanding rings (~0.55 Hz, well under the
+  3 Hz photosensitivity limit) and a tone each pulse, until a button is pressed.
+  The press only silences the band; **it never cancels the nurse alert**. After
+  2 minutes unpressed the pulse slows and the tone stops.
+- **Notifying your nurse → Your nurse has been notified** — the second only once
+  the backend has accepted the event. **A nurse is coming** once a nurse
+  acknowledges it on the dashboard (the band checks in every 5 s while an
+  alert is open); the screen closes when the alert is resolved.
+- **Alert not delivered** — the backend could not attribute it: use the call
+  button.
+
+The screen sleeps after 15 s (the LCD backlight is the main UI power cost);
+setup, alerts and charging keep it on. Detection never pauses for the screen
+or Wi-Fi, and the **microphone is disabled** at boot — nothing listens.
+
+### Serial commands
+
+| Command | Does |
+|---|---|
+| `status` | Mode, backend link, enrolment, assignment, queue depth |
+| `enroll <CODE>` / `forget` | Fallback enrolment / erase the credential |
+| `d` / `c` | Dump / clear the minute-by-minute battery log (run off USB, then dump) |
+| `shot` | Stream every screen's framebuffer (base64 RGB565) for design review |
 
 ## Run it in the Wokwi simulator — ESP32-S3, screen, IMU, scenarios
 
@@ -143,6 +186,8 @@ firmware/
   src/DisplayUI.h        simulator screen, StickS3-sized viewport on an ILI9341
   src/Mpu6050Sensor.h    LIVE sensor: Wokwi's MPU6050 over I2C (not the BMI270)
   src/sticks3_main.cpp   real-device firmware (env:m5sticks3)
+  src/DeviceLink.h       /device-api client on its own core: pairing, heartbeat,
+                         persistent event queue, nurse response
   src/StickUi.h          the approved wearable screens
   src/Bmi270Sensor.h     the real IMU via M5Unified (fixed at ±8 g)
   tools/make_vlw.py      TTF → VLW font converter

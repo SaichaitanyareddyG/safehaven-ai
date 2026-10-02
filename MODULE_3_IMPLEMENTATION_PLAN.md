@@ -1,6 +1,9 @@
 # Module 3 — Wearable Patient-Safety Monitoring
 
-**Status: DESIGN / PLAN ONLY. Nothing in this document has been implemented.**
+**Status (2026-10-02): implemented and running on a real M5StickS3, end to end.** Stages 0–7 and 10
+are built; 8 and 9 are built but untuned; 11 is partly done. See **§36 Implementation status** for
+what was built, where it departs from this plan, and what is still open. The rest of this document
+is the original plan, kept as written so the reasoning behind each decision stays visible.
 
 Written after direct inspection of the current repository (not from prior documentation), plus
 official-source verification of the candidate hardware. Every claim about existing code cites a
@@ -1445,3 +1448,59 @@ python3 backend/scripts/simulate_device.py --secret "$S" scenario mobility
 QR display (Stage 10), real hardware (Stage 7), and detection running on a
 real IMU. The demo shows the **backend rules, alert pipeline and nurse
 workflow**, which is the part that is finished.
+
+---
+
+## 36. Implementation status (2026-10-02)
+
+### By stage
+
+| Stage | State | Commit(s) |
+|---|---|---|
+| 0 Simulation foundation, detection core | ✅ | `5159d3b` |
+| 1 Device registry, enrolment, `/device-api` | ✅ | `3010132` |
+| 2 Assignment, profiles, discharge cascade | ✅ | `980ba4e` |
+| 3 Event ingestion, idempotency | ✅ | `0b95987` |
+| 4 Rules, alerts, dedupe | ✅ | `09863d4` |
+| 5 Nurse alert queue, polling, notifications | ✅ — plus background-tab alerts (`8dcfa97`) | `c5c5967` |
+| 6 Device health, offline detection | ✅ | `b2021ff` |
+| 7 Real hardware bring-up | ✅ fall detected on a real wrist band, delivered over Wi-Fi to a nurse alert | `ee45895`, `9361207` |
+| 8 Abnormal movement | ⚠️ built (core + rules); **thresholds untuned on real motion** | — |
+| 9 Unexpected mobility | ⚠️ built and profile-gated; **untuned** | — |
+| 10 Dynamic QR | ✅ on-device QR, staff scan page, audited | `343c03d`, `f7cee6e` |
+| 11 Hardening | ⚠️ partial — edge-case review done (`53aede9`); HTTPS, NVS encryption and offline-queue soak not done | — |
+
+### Built beyond this plan
+
+| Addition | Why | Commit |
+|---|---|---|
+| **Device-initiated pairing** — band shows a 6-digit code, staff type it into *Devices → Add device* | §9's enrolment assumed staff could type a code *into* the device; a two-button band cannot take input | `c9a1526` |
+| **Help button** — hold front 2 s → `HELP_REQUESTED`, HIGH | The cheapest high-value use of hardware already on the wrist | `9ea4e88` |
+| **Nurse response on the band** — heartbeat carries the latest alert's status; "A nurse is coming" on acknowledge | Closes the loop for the wearer without any patient data reaching the device | `9ea4e88` |
+| **Fall attention beacon** — red pulse + tone until a button press | Draws attention nearby; the press silences the band, never the nurse alert | `38572ee` |
+| **Staff-only test screen** — hold both buttons 3 s | A single press opened it; patients fiddle with buttons | `f7cee6e` |
+| **Battery display rules** — smoothed, 5 % steps, never rises on battery | Raw voltage sags under Wi-Fi load (bench: 71 → 60 → 71 %) | `ee45895` |
+
+### Where the build departs from the plan
+
+- **§11 / §19 — QR token stored in plaintext.** Resolves the Stage 2 correction as it predicted: the
+  device must receive the raw token to draw it. It is 96-bit random, resolves only with a clinician
+  JWT, and is nulled the moment an assignment ends (`device_assignments.qr_token`).
+- **§19 — event types are now six, not five.** `HELP_REQUESTED` was added: an explicit request, not a
+  motion inference, so it is always HIGH and not profile-gated.
+- **§5 / §12 — accelerometer range is ±8 g, not ±16 g.** M5Unified fixes the BMI270 at ±8 g.
+  Detection is unaffected (impact threshold 2.5 g); a reported `peak_g` near 8 means "at least 8".
+- **No PlatformIO board definition exists** for the StickS3; `env:m5sticks3` follows M5Stack's
+  published config (generic ESP32-S3 + octal PSRAM).
+
+### Still open
+
+1. **Threshold tuning on real wrist motion** — every value in `DetectionConfig.h` is still a
+   prototype estimate. Needs recorded sessions (walking, sitting, waving, staged falls).
+2. **Measured battery life** — the band logs battery each minute to flash; a multi-hour run off
+   USB has not been done yet.
+3. **Before any real deployment:** HTTPS for the device link, NVS + flash encryption for the
+   device secret, and WPA2-Enterprise onboarding (R2).
+4. **Speaker/microphone** — speaker used for the fall tone and chimes; the microphone is
+   deliberately disabled and stays so unless a clinical need and hospital approval exist.
+
