@@ -68,19 +68,22 @@ class MobilityDetector {
 
     // Search only the step-cadence band here: unlike §14 we *want* gait.
     const WindowStats w = analyse_window(at, n, cfg_.sample_rate_hz,
-                                         cfg_.gait_freq_min_hz,
-                                         cfg_.gait_freq_max_hz);
+                                         cfg_.mob_freq_min_hz,
+                                         cfg_.mob_freq_max_hz);
     last_ = w;
 
     const bool gait_like = w.periodicity > cfg_.mob_gait_periodicity &&
-                           w.mean_abs_dev > cfg_.abn_magnitude_g * 0.5f &&
-                           w.dom_freq_hz >= cfg_.gait_freq_min_hz &&
-                           w.dom_freq_hz <= cfg_.gait_freq_max_hz;
+                           w.mean_abs_dev > cfg_.mob_min_mad_g &&
+                           w.dom_freq_hz >= cfg_.mob_freq_min_hz &&
+                           w.dom_freq_hz <= cfg_.mob_freq_max_hz;
+    // Leaky evidence: a gait window adds a step, any other window removes
+    // part of one, so a pause to open a door does not start the count again.
+    const uint32_t leak = static_cast<uint32_t>(step * cfg_.mob_decay);
 
     if (gait_like) {
       gait_ms_ += step;
-    } else if (gait_ms_ > 0) {
-      gait_ms_ = gait_ms_ > step ? gait_ms_ - step : 0;
+    } else {
+      gait_ms_ = gait_ms_ > leak ? gait_ms_ - leak : 0;
     }
 
     switch (state_) {
@@ -92,12 +95,13 @@ class MobilityDetector {
         return {};
 
       case State::CANDIDATE: {
-        // Cheap second look before alerting.
+        // A second stretch of evidence before alerting, leaky like the first.
         if (gait_like) {
           confirm_ms_ += step;
+        } else if (confirm_ms_ > 0) {
+          confirm_ms_ = confirm_ms_ > leak ? confirm_ms_ - leak : 0;
         } else {
           state_ = State::RESTING;
-          confirm_ms_ = 0;
           return {};
         }
         if (confirm_ms_ >= cfg_.mob_confirm_ms) {

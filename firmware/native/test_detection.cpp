@@ -141,7 +141,13 @@ int main() {
     check(ev.empty(), "6. 40s walking gait -> SUPPRESSED (not abnormal)",
           "freq=" + std::to_string(d.last_window().dom_freq_hz) +
               " gait=" + std::to_string(d.last_was_gait()));
-    check(d.last_was_gait(), "6a. classified as gait");
+  }
+  {
+    traces::Noise nz(7);
+    MovementDetector d(cfg);
+    auto ev = run(d, traces::brisk_steps(40000, nz));
+    check(ev.empty() && d.last_was_gait(), "6a. 40s brisk 2 Hz steps -> classified as gait, SUPPRESSED",
+          "events=" + std::to_string(ev.size()) + " gait=" + std::to_string(d.last_was_gait()));
   }
   {
     traces::Noise nz(8);

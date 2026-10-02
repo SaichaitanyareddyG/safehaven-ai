@@ -1465,8 +1465,8 @@ workflow**, which is the part that is finished.
 | 5 Nurse alert queue, polling, notifications | ✅ — plus background-tab alerts (`8dcfa97`) | `c5c5967` |
 | 6 Device health, offline detection | ✅ | `b2021ff` |
 | 7 Real hardware bring-up | ✅ fall detected on a real wrist band, delivered over Wi-Fi to a nurse alert | `ee45895`, `9361207` |
-| 8 Abnormal movement | ⚠️ built (core + rules); **thresholds untuned on real motion** | — |
-| 9 Unexpected mobility | ⚠️ built and profile-gated; **untuned** | — |
+| 8 Abnormal movement | ⚠️ built; 0 false alerts in 136 min of real daily activity; **true positives untested** (no dataset) | — |
+| 9 Unexpected mobility | ⚠️ retuned for a wrist on WEDA-FALL: young walkers 14/14, **elderly 4/11**, 0 false | — |
 | 10 Dynamic QR | ✅ on-device QR, staff scan page, audited | `343c03d`, `f7cee6e` |
 | 11 Hardening | ⚠️ partial — edge-case review done (`53aede9`); HTTPS, NVS encryption and offline-queue soak not done | — |
 

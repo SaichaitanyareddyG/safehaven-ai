@@ -189,6 +189,14 @@ inline Trace repetitive(uint32_t ms, Noise& nz, float freq_hz = 4.0f,
 /// magnitude and variance gates — it must be rejected by the gait band, which
 /// is exactly what makes it a useful test.
 inline Trace walking(uint32_t ms, Noise& nz) {
+  // Wrist walking as measured on WEDA-FALL: arm swing ~0.95 Hz, |a| mean
+  // deviation ~0.14 g (a 0.22 g sine). Was a 2 Hz, 0.7 g hip-like guess.
+  Trace t; add_resting(t, 1000, nz); add_rhythmic(t, ms, nz, 0.95f, 0.22f);
+  return t;
+}
+/// Brisk step cadence (2 Hz, 0.7 g): the energetic, rhythmic gait the
+/// abnormal-movement detector's gait exclusion exists for.
+inline Trace brisk_steps(uint32_t ms, Noise& nz) {
   Trace t; add_resting(t, 1000, nz); add_rhythmic(t, ms, nz, 2.0f, 0.70f);
   return t;
 }

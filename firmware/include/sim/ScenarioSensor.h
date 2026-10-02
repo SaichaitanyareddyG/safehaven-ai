@@ -103,8 +103,8 @@ inline Script script_for(Scenario s) {
                                     {Shape::FLAT_IMPACT, 60},
                                     {Shape::NORMAL_MOVE, 5000}};
   static const Segment kAbnormal[] = {{Shape::REST, 1000, 0, 0, 1}, {Shape::RHYTHMIC, 35000, 4.0f, 0.60f}};
-  static const Segment kWalking[] = {{Shape::REST, 1000, 0, 0, 1}, {Shape::RHYTHMIC, 40000, 2.0f, 0.70f}};
-  static const Segment kMobility[] = {{Shape::REST, 1000, 0, 0, 1}, {Shape::RHYTHMIC, 80000, 2.0f, 0.70f}};
+  static const Segment kWalking[] = {{Shape::REST, 1000, 0, 0, 1}, {Shape::RHYTHMIC, 40000, 0.95f, 0.22f}};  // wrist arm swing
+  static const Segment kMobility[] = {{Shape::REST, 1000, 0, 0, 1}, {Shape::RHYTHMIC, 80000, 0.95f, 0.22f}};
 
   switch (s) {
     case Scenario::NORMAL:      return {kNormal, 2};

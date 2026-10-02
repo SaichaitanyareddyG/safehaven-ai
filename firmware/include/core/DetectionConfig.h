@@ -98,10 +98,22 @@ struct DetectionConfig {
   // ── Unexpected mobility (§15) ───────────────────────────────────────────
   // A wrist IMU cannot prove a patient left a bed. Sustained gait-like motion
   // is the one reasonably separable signal, and it is still inferential.
+  //
+  // On a WRIST, walking shows as the arm swing — one per stride, ~0.9 Hz —
+  // not the ~2 Hz step cadence a hip sensor sees, and it is gentle: |a| mean
+  // deviation ~0.12 g. Measured on WEDA-FALL (25 people, 21 min of walking);
+  // the first guess (1.3-2.5 Hz, > 0.175 g) recognised 8% of walking windows
+  // and never alerted. These values are separate from the gait band used to
+  // EXCLUDE walking from abnormal movement above, which is left unchanged.
   uint32_t mob_window_ms       = 4000;
-  uint32_t mob_sustain_ms      = 30000;  ///< sustained gait before candidate
-  uint32_t mob_confirm_ms      = 15000;  ///< cheap second look
-  float    mob_gait_periodicity= 0.35f;
+  float    mob_freq_min_hz     = 0.50f;  ///< elderly walkers swing ~0.8 Hz
+  float    mob_freq_max_hz     = 1.30f;
+  float    mob_min_mad_g       = 0.07f;
+  float    mob_gait_periodicity= 0.50f;  ///< clapping is rhythmic too; this keeps most of it out
+  uint32_t mob_sustain_ms      = 10000;  ///< gait evidence before candidate
+  uint32_t mob_confirm_ms      = 5000;   ///< further evidence before the alert
+  float    mob_decay           = 0.25f;  ///< a non-gait window removes this much of a step:
+                                         ///< walking pauses (doors, turns) do not reset it
   uint32_t mob_cooldown_ms     = 600000;
 
   // ── Device health (§17) ─────────────────────────────────────────────────

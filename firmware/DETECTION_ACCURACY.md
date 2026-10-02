@@ -49,12 +49,43 @@ Most remaining "Are you OK?" prompts: hitting a table (63%), gentle jumps
 | ≥ 8 hard peaks from 3 s before → ignore | Jogging prompts 42 → 4, clapping 40 → 12 |
 | Impact + ≥ 150° flip, then moving → ask | Caught 98% → 100% (WEDA), 95% → 98% (UMAFall) |
 
+## Movement detectors
+
+WEDA-FALL trials are 6–30 s, shorter than these detectors need (20 s of
+rhythm; ~15 s of walking evidence), so each person's trials of one activity
+are joined into one stream (`make eval-movement`): 136 minutes in all.
+
+**Abnormal repetitive movement:** **0 false alerts** in 136 minutes of
+daily activity, including 12.6 min of clapping and 12.8 min of jogging. Its
+true-positive rate is untested: no public wrist dataset of the target
+movement was found.
+
+**Unexpected mobility** (only for `RESTRICTED_MOBILITY` patients):
+
+| | Before | After |
+|---|---|---|
+| Walking, young (14 people) | 0 | **14** |
+| Walking, elderly (11 people) | 0 | **4** |
+| Stairs (22 people) | 0 | 7 |
+| False alerts (sitting, clapping, door, table, …) | 0 | **0** |
+
+The first settings looked for a 1.3–2.5 Hz step rhythm at > 0.175 g, which
+fits a hip sensor. On a wrist, walking is the arm swing (0.8–0.9 Hz) at about
+0.1 g, so the detector now looks at 0.5–1.3 Hz. Evidence leaks slowly
+instead of resetting, so a pause to open a door does not restart the count.
+
+**Gap: elderly walkers.** They swing their arms less and less regularly; on
+the dataset's 28–65 s walking streams, 7 of 11 were not recognised. Asking
+for less evidence caught one more but started alerting on clapping, so it
+was not done. A slow, shuffling walk recorded on our own band is needed.
+
 ## Run it
 
 ```bash
 cd firmware/native
 make eval-weda    WEDA=/path/to/WEDA-FALL          # github.com/joaojtmarques/WEDA-FALL
 make eval-umafall UMAFALL=/path/to/UMAFall         # figshare 4214283, CC BY 4.0
+make eval-movement WEDA=/path/to/WEDA-FALL         # movement detectors
 ```
 
 `DIAG=1` lists missed falls; `FEAT=1` (WEDA) prints each verdict's metrics;
