@@ -736,6 +736,11 @@ static void trackFall(const DetectedEvent &ev) {
 // Raw motion never leaves the device except by this explicit USB dump.
 static const char *REC_PATH = "/rec.bin";
 static const char *REC_MARK_PATH = "/rec_marks.csv";
+// Present while a recording is in progress, so it survives a restart. Bench
+// session 1 was lost: the band restarts when USB is plugged back in, and the
+// open file had never been flushed, so 22 minutes of data were never saved.
+static const char *REC_ON_PATH = "/rec.on";
+static const uint32_t REC_FLUSH_EVERY = 100;  // samples (2 s): worst-case loss on a restart
 static const size_t REC_MAX_BYTES = 25UL * 60 * 50 * 16;  // 25 min = 1.2 MB of the 1.5 MB flash FS
 static bool recording = false;
 static File recFile;
@@ -762,6 +767,36 @@ static void recordSample(const ImuSample &s) {
   RecSample r{(uint32_t)(s.t_ms - recStartMs), clamp16(s.ax * 1000), clamp16(s.ay * 1000), clamp16(s.az * 1000),
               clamp16(s.gx * 10),           clamp16(s.gy * 10),     clamp16(s.gz * 10)};
   recBytes += recFile.write((const uint8_t *)&r, sizeof(r));
+  if ((recBytes / sizeof(RecSample)) % REC_FLUSH_EVERY == 0) recFile.flush();
+}
+
+/// After a restart, carry on recording into the same file. Time continues 2 s
+/// after the last saved sample, and the gap is logged as a marker-less jump.
+static void recResumeIfActive() {
+  if (!fsOk || !LittleFS.exists(REC_ON_PATH)) return;
+  File f = LittleFS.open(REC_PATH, FILE_READ);
+  uint32_t lastT = 0;
+  size_t size = 0;
+  if (f) {
+    size = f.size();
+    if (size >= sizeof(RecSample)) {
+      RecSample r;
+      f.seek(size - sizeof(RecSample));
+      if (f.read((uint8_t *)&r, sizeof(r)) == sizeof(r)) lastT = r.t_ms;
+    }
+    f.close();
+  }
+  int marks = 0;
+  File m = LittleFS.open(REC_MARK_PATH, FILE_READ);
+  while (m && m.available()) marks += m.read() == '\n';
+  if (m) m.close();
+  recFile = LittleFS.open(REC_PATH, FILE_APPEND);
+  recording = (bool)recFile;
+  recBytes = size;
+  recMarker = marks;
+  recStartMs = clock_.millis() - (uint64_t)lastT - 2000;
+  Serial.printf("[REC] resumed after a restart: %lu samples kept, %d markers\r\n",
+                (unsigned long)(size / sizeof(RecSample)), marks);
 }
 
 static void recMark() {
@@ -786,11 +821,16 @@ static void recCommand(const char *arg) {
     recMarker = 0;
     recBytes = 0;
     recording = (bool)recFile;
+    if (recording) {
+      File on = LittleFS.open(REC_ON_PATH, FILE_WRITE);
+      if (on) on.close();
+    }
     Serial.println(recording ? "[REC] recording - side-button clicks on the TEST screen add markers"
                              : "[REC] could not open file");
   } else if (!strcmp(arg, "stop")) {
     if (recording) recFile.close();
     recording = false;
+    LittleFS.remove(REC_ON_PATH);
     Serial.printf("[REC] stopped: %lu samples, %d markers\r\n", (unsigned long)(recBytes / sizeof(RecSample)),
                   recMarker);
   } else if (!strcmp(arg, "dump")) {
@@ -1082,6 +1122,22 @@ void setup() {
   Serial.println();
   Serial.printf("SAFEHAVEN %s  firmware %s  CPU %lu MHz\r\n", DEVICE_ID, FIRMWARE_VERSION,
                 (unsigned long)getCpuFrequencyMhz());
+  {
+    // Why did we start? Plugging USB in was seen to restart the band; knowing
+    // whether that is a brownout, a power-on or a USB reset decides the fix.
+    const esp_reset_reason_t r = esp_reset_reason();
+    const char *why = r == ESP_RST_POWERON   ? "power-on"
+                      : r == ESP_RST_SW      ? "software restart"
+                      : r == ESP_RST_PANIC   ? "CRASH (panic)"
+                      : r == ESP_RST_INT_WDT ? "CRASH (interrupt watchdog)"
+                      : r == ESP_RST_TASK_WDT ? "CRASH (task watchdog)"
+                      : r == ESP_RST_WDT     ? "watchdog"
+                      : r == ESP_RST_BROWNOUT ? "BROWNOUT (supply dipped)"
+                      : r == ESP_RST_EXT     ? "external reset"
+                      : r == ESP_RST_DEEPSLEEP ? "wake from deep sleep"
+                                               : "other";
+    Serial.printf("Reset reason: %s (%d)\r\n", why, (int)r);
+  }
   const bool boardOk = M5.getBoard() == m5::board_t::board_M5StickS3;
   imuOk = imu.begin();
   Serial.printf("Board: %s\r\n", boardOk ? "M5StickS3 (auto-detected)" : "NOT detected as M5StickS3");
@@ -1103,6 +1159,9 @@ void setup() {
   }
 
   fsOk = LittleFS.begin(true);
+#ifdef SH_BENCH_TOOLS
+  recResumeIfActive();
+#endif
   Serial.printf("Battery log: %s\r\n", fsOk ? "flash /battery.csv (serial d = dump, c = clear)"
                                             : "UNAVAILABLE");
   if (!wifiConfigured()) Serial.println("WiFi: not configured in include/wifi_secrets.h - offline");
