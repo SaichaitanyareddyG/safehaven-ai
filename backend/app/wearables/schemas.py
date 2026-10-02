@@ -327,3 +327,35 @@ class DeviceHeartbeatResponse(BaseModel):
 
     server_time_ms: int
     assignment: DeviceAssignmentView | None = None
+
+
+class PairingStartRequest(BaseModel):
+    hardware_id: str = Field(min_length=3, max_length=64)
+
+
+class PairingStartResponse(BaseModel):
+    """`poll_token` is returned once; the band keeps it to collect the result."""
+
+    pairing_id: uuid.UUID
+    pairing_code: str
+    poll_token: str
+    expires_in_s: int
+
+
+class PairingPollRequest(BaseModel):
+    pairing_id: uuid.UUID
+    poll_token: str = Field(min_length=16, max_length=128)
+
+
+class PairingPollResponse(BaseModel):
+    """PENDING until a clinician approves; APPROVED once, carrying the
+    single-use enrolment code for /device-api/enroll; EXPIRED otherwise."""
+
+    status: Literal["PENDING", "APPROVED", "EXPIRED"]
+    enrollment_code: str | None = None
+
+
+class PairDeviceRequest(BaseModel):
+    pairing_code: str = Field(min_length=6, max_length=12)
+    # The label physically on the band, as for manual registration.
+    device_code: str = Field(min_length=3, max_length=32)

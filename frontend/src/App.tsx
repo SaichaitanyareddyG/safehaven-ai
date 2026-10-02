@@ -12,6 +12,7 @@ import { InstructionWorkflowPage } from '@/pages/InstructionWorkflowPage'
 import { MedicationVerificationPage } from '@/pages/MedicationVerificationPage'
 import { SafetyAlertsPage } from '@/pages/SafetyAlertsPage'
 import { ScanBandPage } from '@/pages/ScanBandPage'
+import { DevicesPage } from '@/pages/DevicesPage'
 import { PatientCarePage } from '@/pages/PatientCarePage'
 
 export default function App() {
@@ -60,6 +61,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <SafetyAlertsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/devices"
+              element={
+                <ProtectedRoute>
+                  <DevicesPage />
                 </ProtectedRoute>
               }
             />

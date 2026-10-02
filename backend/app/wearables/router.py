@@ -28,6 +28,7 @@ from app.wearables.models import AlertStatus
 from app.wearables.schemas import (
     DeviceAssignmentCreate,
     DeviceAssignmentRead,
+    PairDeviceRequest,
     PatientAssignmentResponse,
     QrResolveRequest,
     QrResolveResponse,
@@ -328,3 +329,32 @@ def resolve_wearable_qr(
         monitoring_profile=assignment.monitoring_profile,
         assigned_at=assignment.assigned_at,
     )
+
+
+@router.post(
+    "/wearable-devices/pair", response_model=WearableDeviceRead, status_code=status.HTTP_201_CREATED
+)
+def pair_device(
+    payload: PairDeviceRequest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> WearableDeviceRead:
+    """Add the band whose screen shows `pairing_code`, under the label on its case.
+
+    The band finishes enrolling by itself within a few seconds — no enrolment
+    code is shown to anyone, and no USB or terminal is involved.
+    """
+    try:
+        device = service.approve_pairing(
+            db, payload.pairing_code, payload.device_code, approved_by=uuid.UUID(current_user.id)
+        )
+    except service.PairingNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No band is showing that code. Codes change every 10 minutes - check the band's screen.",
+        ) from exc
+    except service.DuplicateDeviceCodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="A device with that label already exists"
+        ) from exc
+    return service.to_read(device)

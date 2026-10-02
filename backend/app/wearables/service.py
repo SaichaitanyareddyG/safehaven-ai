@@ -36,6 +36,7 @@ from app.wearables.models import (
     AlertStatus,
     AlertType,
     DeviceAssignment,
+    DevicePairingRequest,
     DeviceStatus,
     MonitoringProfile,
     SafetyAlert,
@@ -195,6 +196,97 @@ def register_device(
     db.commit()
     db.refresh(device)
     return device, raw_enrollment
+
+
+# ── device-initiated pairing ─────────────────────────────────────────────────
+# A new band shows a code; a clinician types it in. See DevicePairingRequest.
+
+PAIRING_TTL_MINUTES = 10
+
+
+class PairingNotFoundError(Exception):
+    """Unknown, expired, already used, or the wrong poll token — one error,
+    so neither side can probe which."""
+
+
+def start_pairing(db: Session, hardware_id: str) -> tuple[DevicePairingRequest, str]:
+    """A band asks to be added. Returns (request, raw_poll_token)."""
+    now = datetime.now(timezone.utc)
+    # Six digits; avoid colliding with another code that is still on screen.
+    for _ in range(20):
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        clash = (
+            db.query(DevicePairingRequest)
+            .filter(
+                DevicePairingRequest.pairing_code == code,
+                DevicePairingRequest.device_id.is_(None),
+                DevicePairingRequest.expires_at > now,
+            )
+            .first()
+        )
+        if clash is None:
+            break
+    raw_poll = secrets.token_urlsafe(SECRET_BYTES)
+    request = DevicePairingRequest(
+        pairing_code=code,
+        poll_token_hash=_hash(raw_poll),
+        hardware_id=hardware_id.strip(),
+        expires_at=now + timedelta(minutes=PAIRING_TTL_MINUTES),
+    )
+    db.add(request)
+    db.commit()
+    db.refresh(request)
+    return request, raw_poll
+
+
+def poll_pairing(db: Session, pairing_id: uuid.UUID, poll_token: str) -> tuple[str, str | None]:
+    """The band checks whether a clinician has approved it.
+
+    Returns (status, enrollment_code). The code is handed over exactly once and
+    then cleared; the band redeems it at /device-api/enroll.
+    """
+    request = db.get(DevicePairingRequest, pairing_id)
+    if request is None or not secrets.compare_digest(request.poll_token_hash, _hash(poll_token)):
+        raise PairingNotFoundError()
+    now = datetime.now(timezone.utc)
+    if request.enrollment_code and request.collected_at is None:
+        code = request.enrollment_code
+        request.enrollment_code = None
+        request.collected_at = now
+        db.commit()
+        return "APPROVED", code
+    if request.collected_at is not None or request.expires_at < now:
+        return "EXPIRED", None
+    return "PENDING", None
+
+
+def approve_pairing(
+    db: Session, pairing_code: str, device_code: str, approved_by: uuid.UUID
+) -> WearableDevice:
+    """A clinician adds the band showing `pairing_code` under the label
+    `device_code`. Registration goes through register_device, so it is
+    audited exactly as a manual registration is."""
+    now = datetime.now(timezone.utc)
+    request = (
+        db.query(DevicePairingRequest)
+        .filter(
+            DevicePairingRequest.pairing_code == pairing_code.strip().replace(" ", ""),
+            DevicePairingRequest.device_id.is_(None),
+            DevicePairingRequest.expires_at > now,
+        )
+        .order_by(DevicePairingRequest.created_at.desc())
+        .first()
+    )
+    if request is None:
+        raise PairingNotFoundError()
+    device, raw_enrollment = register_device(
+        db, WearableDeviceCreate(device_code=device_code), created_by=approved_by
+    )  # raises DuplicateDeviceCodeError
+    request.device_id = device.id
+    request.approved_by = approved_by
+    request.enrollment_code = raw_enrollment
+    db.commit()
+    return device
 
 
 def reissue_enrollment_code(

@@ -64,6 +64,8 @@ struct LinkStatus {
   uint32_t queueDepth = 0;
   char lastEventId[24] = "";
   Delivery lastDelivery = Delivery::NONE;
+  // Device-initiated pairing: shown on screen while not enrolled.
+  char pairingCode[8] = "";
 };
 
 class DeviceLink {
@@ -184,6 +186,7 @@ class DeviceLink {
   static constexpr uint32_t kHeartbeatMs = 30000;
   static constexpr uint32_t kRetryMs = 10000;
   static constexpr int kEnrollRetries = 6;
+  static constexpr uint32_t kPairingPollMs = 3000;
 
   struct QueuedEvent {
     uint32_t magic;
@@ -230,6 +233,8 @@ class DeviceLink {
             vTaskDelay(pdMS_TO_TICKS(5000));
           }
         }
+
+        if (!secret_[0] && !code[0]) servicePairing();
 
         if (secret_[0] && (firstHeartbeat || millis() - lastHeartbeat >= kHeartbeatMs)) {
           lastHeartbeat = millis();
@@ -376,6 +381,69 @@ class DeviceLink {
     }
   }
 
+  // ── device-initiated pairing ───────────────────────────────────────────────
+  // Not enrolled: ask for a code, show it, and poll until a clinician types it
+  // into Devices → Add device. Approval hands over a normal single-use
+  // enrolment code, redeemed through enroll() like a manually issued one.
+  void servicePairing() {
+    if (millis() - lastPairingPoll_ < kPairingPollMs && pairingId_[0]) return;
+    lastPairingPoll_ = millis();
+    char hw[20];
+    snprintf(hw, sizeof(hw), "%012llX", (unsigned long long)ESP.getEfuseMac());
+
+    if (!pairingId_[0]) {
+      JsonDocument req;
+      req["hardware_id"] = hw;
+      String body, resp;
+      serializeJson(req, body);
+      const int rc = post("/device-api/pairing", body, resp, false);
+      JsonDocument doc;
+      if (rc != 200 || deserializeJson(doc, resp)) return;
+      strlcpy(pairingId_, doc["pairing_id"] | "", sizeof(pairingId_));
+      strlcpy(pollToken_, doc["poll_token"] | "", sizeof(pollToken_));
+      xSemaphoreTake(lock_, portMAX_DELAY);
+      strlcpy(st_.pairingCode, doc["pairing_code"] | "", sizeof(st_.pairingCode));
+      xSemaphoreGive(lock_);
+      Serial.printf("[LINK] pairing code %s - staff: Devices > Add device\r\n", st_.pairingCode);
+      return;
+    }
+
+    JsonDocument req;
+    req["pairing_id"] = pairingId_;
+    req["poll_token"] = pollToken_;
+    String body, resp;
+    serializeJson(req, body);
+    const int rc = post("/device-api/pairing/poll", body, resp, false);
+    JsonDocument doc;
+    if (rc == 404) {
+      clearPairing();
+      return;
+    }
+    if (rc != 200 || deserializeJson(doc, resp)) return;
+    const char* status = doc["status"] | "PENDING";
+    if (!strcmp(status, "APPROVED")) {
+      char code[32];
+      strlcpy(code, doc["enrollment_code"] | "", sizeof(code));
+      Serial.println("[LINK] pairing approved by staff - enrolling");
+      clearPairing();
+      if (code[0] && !enroll(code)) {  // network blip: retry through the normal path
+        xSemaphoreTake(lock_, portMAX_DELAY);
+        strlcpy(pendingEnroll_, code, sizeof(pendingEnroll_));
+        xSemaphoreGive(lock_);
+      }
+    } else if (!strcmp(status, "EXPIRED")) {
+      clearPairing();  // a fresh code is requested on the next pass
+    }
+  }
+
+  void clearPairing() {
+    pairingId_[0] = 0;
+    pollToken_[0] = 0;
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    st_.pairingCode[0] = 0;
+    xSemaphoreGive(lock_);
+  }
+
   // ── persistent queue ───────────────────────────────────────────────────────
   void persist(const QueuedEvent& q) {
     char path[48];
@@ -487,6 +555,9 @@ class DeviceLink {
   char lastSubmitted_[24] = "";
   uint32_t seq_ = 0;
   int enrollRetries_ = 0;
+  char pairingId_[40] = "";
+  char pollToken_[64] = "";
+  uint32_t lastPairingPoll_ = 0;
   uint32_t bootId_ = 0;
   Health health_;
   LinkStatus st_;

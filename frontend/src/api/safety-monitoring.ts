@@ -8,6 +8,7 @@ import type {
   SafetyAlert,
   SafetyAlertListResponse,
   SensorEventListResponse,
+  WearableDevice,
   WearableDeviceListResponse,
 } from '@/types/safety-monitoring'
 
@@ -67,5 +68,16 @@ export function resolveWearableQr(token: string): Promise<QrResolveResult> {
   return apiRequest<QrResolveResult>('/wearable-assignments/resolve', {
     method: 'POST',
     body: { token },
+  })
+}
+
+/**
+ * Add the band whose screen shows `pairingCode`, under the label on its case.
+ * The band finishes enrolling by itself — no code is shown to anyone.
+ */
+export function pairWearable(pairingCode: string, deviceCode: string): Promise<WearableDevice> {
+  return apiRequest<WearableDevice>('/wearable-devices/pair', {
+    method: 'POST',
+    body: { pairing_code: pairingCode, device_code: deviceCode },
   })
 }

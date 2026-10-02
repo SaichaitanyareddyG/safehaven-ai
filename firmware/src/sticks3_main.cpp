@@ -544,6 +544,9 @@ static void buildHome(HomeModel &m) {
 
   m.settleLeftS = (uint8_t)settleLeftS();
   m.alertType = alertType;
+  const LinkStatus link = backendLink.status();
+  const bool needsPairing = link.configured && !link.enrolled;
+  strlcpy(m.pairingCode, link.pairingCode, sizeof(m.pairingCode));
   m.attention = alertActive && attentionActive;
   if (m.attention) {
     const unsigned long elapsed = now - attentionSinceMs;
@@ -578,6 +581,7 @@ static void buildHome(HomeModel &m) {
   // then low battery.
   if (alertActive) m.view = HomeView::ALERT;
   else if (!startupDone()) m.view = HomeView::STARTING;
+  else if (needsPairing) m.view = HomeView::ADD_BAND;
   else if (!assigned) m.view = HomeView::NOT_PAIRED;
   else if (m.settleLeftS > 0) m.view = HomeView::GETTING_READY;
   else if (now < chargingSplashUntilMs) m.view = HomeView::CHARGING;
@@ -622,7 +626,7 @@ static void buildTest(ui::TestModel &t) {
 
 /// Views that keep the screen on by themselves (setup, alerts, charging splash).
 static bool holdsScreenOn(const HomeModel &m) {
-  return m.view == HomeView::STARTING || m.view == HomeView::GETTING_READY ||
+  return m.view == HomeView::STARTING || m.view == HomeView::ADD_BAND || m.view == HomeView::GETTING_READY ||
          m.view == HomeView::ALERT || m.view == HomeView::CHARGING;
 }
 
@@ -871,7 +875,8 @@ static void takeScreenshots() {
     const char *name;
     HomeView view;
   };
-  const Shot shots[] = {{"01-starting", HomeView::STARTING},     {"02-not-paired", HomeView::NOT_PAIRED},
+  const Shot shots[] = {{"01-starting", HomeView::STARTING},     {"01b-add-band", HomeView::ADD_BAND},
+                        {"02-not-paired", HomeView::NOT_PAIRED},
                         {"03-getting-ready", HomeView::GETTING_READY}, {"04-monitoring", HomeView::MONITORING},
                         {"05-offline", HomeView::MONITORING},    {"08-low-battery", HomeView::LOW_BATTERY},
                         {"09-charging", HomeView::CHARGING}};
@@ -892,6 +897,7 @@ static void takeScreenshots() {
       m.wifiBars = 0;
     }
     if (s.view == HomeView::GETTING_READY) m.settleLeftS = 42;
+    if (s.view == HomeView::ADD_BAND && !m.pairingCode[0]) strlcpy(m.pairingCode, "482913", sizeof(m.pairingCode));
     if (!strcmp(s.name, "05-offline")) {
       m.wifiUp = false;
       m.wifiBars = 0;

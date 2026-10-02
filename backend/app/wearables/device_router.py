@@ -24,6 +24,10 @@ from app.wearables.schemas import (
     DeviceEnrollRequest,
     DeviceHeartbeatRequest,
     DeviceHeartbeatResponse,
+    PairingPollRequest,
+    PairingPollResponse,
+    PairingStartRequest,
+    PairingStartResponse,
     SensorEventAccepted,
     SensorEventSubmit,
 )
@@ -68,6 +72,50 @@ def enroll(
     return DeviceEnrollResponse(
         device_id=device.id, device_code=device.device_code, device_secret=raw_secret
     )
+
+
+# Pairing is unauthenticated (the band has no credential yet), so both routes
+# are IP-limited. Starting is rare; polling happens every few seconds while a
+# code is on screen.
+_PAIRING_START_RATE_LIMIT = "10/minute"
+_PAIRING_POLL_RATE_LIMIT = "60/minute"
+
+
+@router.post("/pairing", response_model=PairingStartResponse)
+@limiter.limit(_PAIRING_START_RATE_LIMIT)
+def start_pairing(
+    request: Request,
+    payload: PairingStartRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> PairingStartResponse:
+    """A new band asks for a code to show on its screen.
+
+    Nothing is trusted yet: the request only becomes a device once a clinician
+    who can see the band types the code into the dashboard.
+    """
+    pairing, raw_poll = service.start_pairing(db, payload.hardware_id)
+    return PairingStartResponse(
+        pairing_id=pairing.id,
+        pairing_code=pairing.pairing_code,
+        poll_token=raw_poll,
+        expires_in_s=service.PAIRING_TTL_MINUTES * 60,
+    )
+
+
+@router.post("/pairing/poll", response_model=PairingPollResponse)
+@limiter.limit(_PAIRING_POLL_RATE_LIMIT)
+def poll_pairing(
+    request: Request,
+    payload: PairingPollRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> PairingPollResponse:
+    """Has a clinician approved this band yet? On approval the single-use
+    enrolment code is returned once; the band then calls /device-api/enroll."""
+    try:
+        status_, code = service.poll_pairing(db, payload.pairing_id, payload.poll_token)
+    except service.PairingNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown pairing") from exc
+    return PairingPollResponse(status=status_, enrollment_code=code)
 
 
 @router.post("/heartbeat", response_model=DeviceHeartbeatResponse)

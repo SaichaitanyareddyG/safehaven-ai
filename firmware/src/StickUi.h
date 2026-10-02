@@ -89,7 +89,7 @@ struct SmoothFont {
 };
 
 enum class HomeView : uint8_t {
-  STARTING, NOT_PAIRED, GETTING_READY, MONITORING, LOW_BATTERY, CHARGING, ALERT
+  STARTING, ADD_BAND, NOT_PAIRED, GETTING_READY, MONITORING, LOW_BATTERY, CHARGING, ALERT
 };
 /// Which alert screen. BENCH is used while no backend is linked: it must say
 /// that nobody was notified. NOTIFIED is shown only once the backend has
@@ -115,6 +115,8 @@ struct HomeModel {
   char date[16];
   // starting
   Step sensorStep, wifiStep, clockStep;
+  // Device-initiated pairing code (6 digits) while not enrolled
+  char pairingCode[8];
   // QR payload ("SH:<token>"), empty when the backend has issued none
   char qr[48];
   // getting ready
@@ -179,6 +181,7 @@ class StickUi {
     switch (m.view) {
       case HomeView::STARTING: starting(m); break;
       case HomeView::NOT_PAIRED: notPaired(m); break;
+      case HomeView::ADD_BAND: addBand(m); break;
       case HomeView::GETTING_READY: gettingReady(m); break;
       case HomeView::MONITORING: monitoring(m); break;
       case HomeView::LOW_BATTERY: lowBattery(m); break;
@@ -562,6 +565,33 @@ class StickUi {
     c.fillRect(cx + 9, cy - 2, 2, 9, col);
     c.fillRect(cx - 15, cy + 7, 30, 2, col);
     c.fillCircle(cx, cy + 12, 3, col);
+  }
+
+  /// A band with no credential yet: show the code staff type into
+  /// Devices > Add device. Digits only, in two groups, as large as fits.
+  void addBand(const HomeModel& m) {
+    auto& c = canvas_;
+    barFor(m);
+    text(title_, "Add this band", CX, 52, TEXT, middle_center);
+    text(small_, "Staff: in SAFEHAVEN open", CX, 72, TEXT2, middle_center);
+    text(small_, "Devices > Add device", CX, 84, TEXT2, middle_center);
+
+    c.fillRoundRect(10, 100, 115, 64, 8, SURFACE);
+    if (m.pairingCode[0] && strlen(m.pairingCode) == 6) {
+      char a[4], b[4];
+      memcpy(a, m.pairingCode, 3);
+      a[3] = 0;
+      memcpy(b, m.pairingCode + 3, 3);
+      b[3] = 0;
+      text(number_, a, CX - 4, 124, TEAL, middle_right);
+      text(number_, b, CX + 4, 124, TEAL, middle_left);
+      text(small_, "and type this code", CX, 150, TEXT3, middle_center);
+    } else {
+      text(body_, m.wifiUp ? "Getting a code..." : "Connecting to Wi-Fi...", CX, 132, TEXT2, middle_center);
+    }
+    text(small_, "A new code appears every", CX, 186, TEXT3, middle_center);
+    text(small_, "10 minutes", CX, 198, TEXT3, middle_center);
+    text(small_, "SAFEHAVEN \xc2\xb7 new band", CX, 228, TEXT3, middle_center);
   }
 
   void notPaired(const HomeModel& m) {

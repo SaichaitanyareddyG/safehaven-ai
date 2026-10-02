@@ -380,3 +380,43 @@ class SafetyAlert(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DevicePairingRequest(Base):
+    """A new band asking to be added — the device-initiated half of pairing.
+
+    The band shows `pairing_code` on its screen; a clinician who can see it
+    types it into the dashboard, which registers the device and parks a normal
+    single-use enrolment code here. The band then collects that code (proving
+    it is the same band with `poll_token`) and enrols through the ordinary
+    /device-api/enroll path, so credentials are minted, hashed and audited in
+    exactly one place.
+
+    Nothing here is long-lived: requests expire in minutes, and the parked
+    enrolment code is cleared the moment the band collects it.
+    """
+
+    __tablename__ = "device_pairing_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Six digits, shown on a 135 px screen and typed by a person. Low entropy
+    # is acceptable because approving one needs a clinician session AND sight
+    # of the physical band, and it expires in minutes.
+    pairing_code: Mapped[str] = mapped_column(String(8), index=True, nullable=False)
+    # Only the band that asked can collect the result; stored hashed.
+    poll_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    hardware_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Set on approval.
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("wearable_devices.id"), nullable=True
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    # Raw single-use enrolment code, held only between approval and collection.
+    enrollment_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
