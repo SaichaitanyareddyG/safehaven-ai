@@ -1451,7 +1451,7 @@ workflow**, which is the part that is finished.
 
 ---
 
-## 36. Implementation status (2026-10-02)
+## 36. Implementation status (2026-10-02, updated end of day)
 
 ### By stage
 
@@ -1480,14 +1480,19 @@ workflow**, which is the part that is finished.
 | **Fall attention beacon** — red pulse + tone until a button press | Draws attention nearby; the press silences the band, never the nurse alert | `38572ee` |
 | **Staff-only test screen** — hold both buttons 3 s | A single press opened it; patients fiddle with buttons | `f7cee6e` |
 | **Battery display rules** — smoothed, 5 % steps, never rises on battery | Raw voltage sags under Wi-Fi load (bench: 71 → 60 → 71 %) | `ee45895` |
+| **No-response escalation** — an unanswered fall alarm is reported again as `NO_RESPONSE` after 60 s | A fall the wearer cannot answer is the most urgent case | `658f8b4` |
+| **"Are you OK?" check** — uncertain falls and faint-like collapses are put to the wearer for 30 s; unanswered → `NO_RESPONSE`, or `DEVICE_NOT_WORN` if the band lies still like an object | Cuts false nurse alerts without dropping a real fall | `3953901` |
+| **Accuracy against public datasets** — WEDA-FALL and UMAFall scored on the host | Real-fall evidence before our own recordings (`firmware/DETECTION_ACCURACY.md`) | `2bf69c7`…`ea00b91` |
+| **Spoken prompts** on the band ("Fall detected…", "A nurse is coming") and read-aloud alerts on the dashboard (room only, never the name) | Beeps alone did not tell the wearer or the nurse what happened | `bbe02e4` |
 
 ### Where the build departs from the plan
 
 - **§11 / §19 — QR token stored in plaintext.** Resolves the Stage 2 correction as it predicted: the
   device must receive the raw token to draw it. It is 96-bit random, resolves only with a clinician
   JWT, and is nulled the moment an assignment ends (`device_assignments.qr_token`).
-- **§19 — event types are now six, not five.** `HELP_REQUESTED` was added: an explicit request, not a
-  motion inference, so it is always HIGH and not profile-gated.
+- **§19 — event types are now seven, not five.** `HELP_REQUESTED` (an explicit request, always HIGH),
+  `NO_RESPONSE` (an absence of response, never a state of consciousness — HIGH) and
+  `DEVICE_NOT_WORN` (MEDIUM) were added.
 - **§5 / §12 — accelerometer range is ±8 g, not ±16 g.** M5Unified fixes the BMI270 at ±8 g.
   Detection is unaffected (impact threshold 2.5 g); a reported `peak_g` near 8 means "at least 8".
 - **No PlatformIO board definition exists** for the StickS3; `env:m5sticks3` follows M5Stack's
@@ -1503,6 +1508,10 @@ workflow**, which is the part that is finished.
    USB has not been done yet.
 3. **Before any real deployment:** HTTPS for the device link, NVS + flash encryption for the
    device secret, and WPA2-Enterprise onboarding (R2).
-4. **Speaker/microphone** — speaker used for the fall tone and chimes; the microphone is
-   deliberately disabled and stays so unless a clinical need and hospital approval exist.
+4. **Speaker/microphone** — speaker used for tones and spoken prompts; the microphone is
+   deliberately disabled and stays so unless a clinical need and hospital approval exist. The
+   spoken prompts use a macOS system voice: replace with licensed recordings before deployment.
+5. **Reboot mid-alarm** loses the beacon and escalation timer (edge-case review 2, #9).
+6. **Remove `SH_BENCH_TOOLS`** from `platformio.ini` before any deployment.
+7. **Module 3 freeze report**, as Modules 1 and 2 have, once the on-band sessions are done.
 
