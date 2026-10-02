@@ -89,6 +89,17 @@ _BAND_URGENT_PATTERNS = [
     ]
 ]
 
+# Dose questions the model must not answer at all: the spoken evaluation got
+# "No, please do not take two tablets" — kind, but still dose advice.
+_BAND_TREATMENT_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in [
+        r"\bmissed\s+(my\s+|a\s+|the\s+|this\s+|today'?s\s+)?(dose|tablet|pill|medicine|medication|injection)",
+        r"\btake\s+(two|2|another|an extra|extra|double)\b",
+        r"\bforgot\s+(to take\s+)?(my\s+)?(dose|tablet|pill|medicine|medication|injection)",
+    ]
+]
+
 _REQUEST_PATTERNS = [
     re.compile(p, re.IGNORECASE)
     for p in [
@@ -143,7 +154,7 @@ def fixed_rule(transcript: str) -> str | None:
     """'urgent' | 'treatment' | 'request' | None — checked before any model."""
     if any(p.search(transcript) for p in _EMERGENCY_PATTERNS + _BAND_URGENT_PATTERNS):
         return "urgent"
-    if any(p.search(transcript) for p in _TREATMENT_CHANGE_PATTERNS):
+    if any(p.search(transcript) for p in _TREATMENT_CHANGE_PATTERNS + _BAND_TREATMENT_PATTERNS):
         return "treatment"
     if any(p.search(transcript) for p in _REQUEST_PATTERNS):
         return "request"
@@ -269,6 +280,46 @@ class TalkResult:
     timings_ms: dict[str, int] = field(default_factory=dict)
 
 
+def mark_missing_reasons(care_plan: str) -> str:
+    """Say it in the data, not only in the prompt: a medicine line with no
+    documented reason gets "reason/purpose: NOT RECORDED". With a prompt rule
+    alone the 4B model answered "what is my tablet for?" from general
+    knowledge — and once claimed the care plan said so (spoken evaluation)."""
+    lines = []
+    for line in care_plan.splitlines():
+        if line.startswith("- ") and "reason/purpose" not in line:
+            line += " (reason/purpose: NOT RECORDED - do not state one)"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def decide(transcript: str, care_plan, history: list[dict[str, str]]) -> tuple[str | None, str, str]:
+    """(fixed rule, action, reply) for one transcript. `care_plan` is a
+    callable, so it is only read when the model is asked. Shared by talk() and
+    scripts/eval_band_talk.py, so what is evaluated is what runs."""
+    rule = fixed_rule(transcript)
+    if rule == "urgent":
+        return rule, "urgent", URGENT_REPLY
+    if rule == "treatment":
+        return rule, "none", TREATMENT_REPLY
+    try:
+        tag, reply = parse_reply(ask_model(mark_missing_reasons(care_plan()), transcript, history))
+        action = {"NURSE": "urgent", "REQUEST": "request"}.get(tag, "none")
+    except Exception as exc:
+        logger.warning("talk: model failed (%s)", type(exc).__name__)
+        reply, action = UNAVAILABLE_REPLY, "unavailable"
+    if rule == "request" and action in ("none", "unavailable"):
+        # The fixed rule heard a practical need the model missed (or the model
+        # is down): the nurse is still told.
+        reply = reply if action == "none" and "nurse" in reply.lower() else REQUEST_REPLY
+        action = "request"
+    if not reply:
+        reply = UNAVAILABLE_REPLY
+    if action == "urgent" and "nurse" not in reply.lower():
+        reply = URGENT_REPLY
+    return rule, action, reply
+
+
 def _raise_alert(db: Session, device: WearableDevice, assignment: DeviceAssignment, event_type: SensorEventType) -> None:
     """Through the same path as a band-submitted event: audit, rules, dedupe."""
     outcome, _ = service.ingest_event(
@@ -318,34 +369,11 @@ def talk(
         return TalkResult(transcript, NOT_HEARD_REPLY, "none", _voice(NOT_HEARD_REPLY, timings), timings)
     transcript = spoken
 
-    # 2. Fixed rules first.
-    rule = fixed_rule(transcript)
-    action = "none"
-    if rule == "urgent":
-        action, reply = "urgent", URGENT_REPLY
-    elif rule == "treatment":
-        reply = TREATMENT_REPLY
-    else:
-        # 3. The model, grounded in the approved care plan.
-        t0 = time.monotonic()
-        try:
-            tag, reply = parse_reply(
-                ask_model(_build_care_plan_summary(db, assignment.patient_id), transcript, history)
-            )
-            action = {"NURSE": "urgent", "REQUEST": "request"}.get(tag, "none")
-        except Exception as exc:
-            logger.warning("talk: model failed (%s)", type(exc).__name__)
-            tag, reply = "", UNAVAILABLE_REPLY
-            action = "unavailable"
+    # 2-3. Fixed rules first, then the model on the approved care plan.
+    t0 = time.monotonic()
+    rule, action, reply = decide(transcript, lambda: _build_care_plan_summary(db, assignment.patient_id), history)
+    if rule not in ("urgent", "treatment"):
         timings["llm"] = int((time.monotonic() - t0) * 1000)
-        if rule == "request" and action in ("none", "unavailable"):
-            # The fixed rule heard a practical need the model missed (or the
-            # model is down): the nurse is still told.
-            action, reply = "request", reply if action == "none" and "nurse" in reply.lower() else REQUEST_REPLY
-        if not reply:
-            reply = UNAVAILABLE_REPLY
-        if action == "urgent" and "nurse" not in reply.lower():
-            reply = URGENT_REPLY
 
     # 4. Tell the nurse — before the voice, so a slow voice never delays help.
     if action == "urgent":

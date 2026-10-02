@@ -316,6 +316,7 @@ static void stopAttention(const char *why);
 #ifdef SH_TALK
 static bool talkActive();
 static void talkEnd(const char *why);
+static unsigned long talkFrameMs();
 // A soft "collapse" while talking is usually the wrist raised to the mouth.
 // It is held, not dropped: the conversation itself answers "are you OK?" —
 // if the wearer keeps talking, they are; if they go quiet, the check runs.
@@ -1164,10 +1165,10 @@ static void serviceScreen() {
   }
   // The fall beacon animates (~15 fps); everything else redraws only on change.
   bool animating = attentionActive && alertActive;
+  unsigned long checkMs = animating ? 66 : HOME_CHECK_MS;
 #ifdef SH_TALK
-  animating = animating || talkActive();  // the avatar blinks, breathes and talks
+  if (!animating && talkActive()) checkMs = talkFrameMs();
 #endif
-  const unsigned long checkMs = animating ? 66 : HOME_CHECK_MS;
   if (now - lastHomeCheckMs < checkMs && !forceRedraw) return;
   lastHomeCheckMs = now;
 
@@ -1348,7 +1349,8 @@ static const unsigned long TALK_QUIET_END_MS = 1500;    // pause after speech = 
 static const unsigned long TALK_NO_SPEECH_MS = 7000;
 static const unsigned long TALK_FOLLOW_UP_MS = 6000;  // after an answer: listen this long for a reply
 static const uint8_t TALK_MAX_TURNS = 5;               // then the patient presses again
-static const unsigned long TALK_SHOW_MS = 20000;
+static const unsigned long TALK_SHOW_MS = 8000;     // the last answer stays readable this long
+static const unsigned long TALK_DARK_AFTER_MS = 3000; // then the screen goes dark this soon
 static const unsigned long TALK_ERROR_MS = 4000;
 static const unsigned long TALK_REPLY_TIMEOUT_MS = 35000;
 static uint8_t *talkBuf = nullptr;  // 44-byte WAV header + int16 samples (PSRAM)
@@ -1365,7 +1367,10 @@ static char talkTitle[32] = "", talkText[200] = "";
 static int16_t *talkPcm() { return (int16_t *)(talkBuf + 44); }
 static bool talkActive() { return talkPhase != TalkPhase::OFF; }
 
+static void talkBoost(bool on);
 static void talkSet(TalkPhase p, const char *title, const char *text = "") {
+  // Full speed only while recording, sending or receiving.
+  if (p == TalkPhase::SHOWING || p == TalkPhase::ERROR) talkBoost(false);
   talkPhase = p;
   talkPhaseMs = millis();
   strlcpy(talkTitle, title, sizeof(talkTitle));
@@ -1397,6 +1402,9 @@ static void talkEnd(const char *why) {
   talkPhase = TalkPhase::OFF;
   talkBoost(false);
   forceRedraw = true;
+  // Battery: dark a few seconds after a conversation, not the full timeout.
+  const unsigned long now = millis();
+  if (now > SCREEN_TIMEOUT_MS) lastActivityMs = now - (SCREEN_TIMEOUT_MS - TALK_DARK_AFTER_MS);
   Serial.printf("[TALK] closed (%s)\r\n", why);
   if (talkPendingCheck) {
     // The conversation ended without the wearer speaking again: ask now.
@@ -1603,6 +1611,7 @@ static void serviceTalk() {
         } else {
           talkPhaseMs = now;
           talkPhase = TalkPhase::SHOWING;  // keep the words on screen
+          talkBoost(false);
           forceRedraw = true;
         }
       }
@@ -1636,6 +1645,9 @@ static void talkButton(bool front, bool side) {
       break;
   }
 }
+
+/// The avatar: 15 fps only while its mouth follows the voice, 8 fps otherwise.
+static unsigned long talkFrameMs() { return talkPhase == TalkPhase::SPEAKING ? 66 : 125; }
 
 static void fillTalk(HomeModel &m) {
   const unsigned long now = millis();
@@ -2065,6 +2077,23 @@ static void runCommand(char *line) {
     recCommand(line + 4);
   } else if (!strncmp(line, "noise", 5)) {
     measureNoise(atoi(line + 5));
+#ifdef SH_TALK
+  } else if (!strncmp(line, "talk ", 5)) {
+    // Bench: a typed question through the band's real talk round trip
+    // (TLS, raw audio download, playback, avatar), no microphone needed.
+    if (!talkAllowed() || talkActive()) {
+      Serial.println("[TALK] not now (busy, alert, or not assigned/linked)");
+    } else {
+      M5.Speaker.stop(VOICE_CHANNEL);
+      backendLink.talkRelease();
+      screenWake("talk (serial)");
+      talkBoost(true);
+      talkFollowUp = false;
+      talkTurns = 1;
+      if (backendLink.talkStartText(line + 5, true)) talkSet(TalkPhase::THINKING, "Let me think...");
+      else talkError("Can't talk now", "No connection.");
+    }
+#endif
   } else if (!strcmp(line, "shot")) {  // the screen can show the patient QR
     takeScreenshots();
 #endif

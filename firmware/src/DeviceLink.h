@@ -248,6 +248,7 @@ class DeviceLink {
     if (!ready) return false;
     talkWav_ = wav;
     talkLen_ = len;
+    if (wav) talkText_[0] = 0;
     talkNew_ = newConversation;
     talkAbandoned_ = false;
     talkStatus_ = TalkStatus::BUSY;
@@ -256,6 +257,11 @@ class DeviceLink {
       return false;
     }
     return true;
+  }
+  /// Bench: the same round trip with typed text instead of a recording.
+  bool talkStartText(const char* text, bool newConversation) {
+    strlcpy(talkText_, text, sizeof(talkText_));
+    return talkStart(nullptr, 0, newConversation);
   }
   TalkStatus talkStatus() const { return talkStatus_.load(); }
   const TalkResult& talkResult() const { return talkRes_; }
@@ -331,7 +337,6 @@ class DeviceLink {
       if (begun) {
         http.setConnectTimeout(5000);
         http.setTimeout(25000);  // speech to text + model + voice on the server
-        http.addHeader("Content-Type", "audio/wav");
         http.addHeader("X-Talk-New", talkNew_ ? "1" : "0");
         http.addHeader("Authorization", String("Bearer ") + secret);
         // The answer comes back as raw audio in the body and the words in
@@ -340,7 +345,19 @@ class DeviceLink {
         const char* want[] = {"X-Talk-Action", "X-Talk-Reply", "X-Talk-Transcript", "X-Talk-Timings"};
         http.collectHeaders(want, 4);
         const unsigned long tPost = millis();
-        const int code = http.POST(const_cast<uint8_t*>(talkWav_), talkLen_);
+        int code;
+        if (talkWav_) {
+          http.addHeader("Content-Type", "audio/wav");
+          code = http.POST(const_cast<uint8_t*>(talkWav_), talkLen_);
+        } else {
+          JsonDocument req;
+          req["text"] = talkText_;
+          req["new_conversation"] = talkNew_;
+          String body;
+          serializeJson(req, body);
+          http.addHeader("Content-Type", "application/json");
+          code = http.POST(body);
+        }
         const unsigned long tHeaders = millis();
         if (code == 200) {
           urlDecode(http.header("X-Talk-Action"), res.action, sizeof(res.action));
@@ -381,9 +398,10 @@ class DeviceLink {
         http.end();
       }
     }
-    Serial.printf("[TALK] %u KB sent, %s in %lu ms, action %s, voice %u KB\r\n", (unsigned)(talkLen_ / 1024),
-                  outcome == TalkStatus::DONE ? "answer" : "FAILED", millis() - t0, res.action,
-                  (unsigned)(res.audioLen / 1024));
+    Serial.printf("[TALK] %u KB sent, %s in %lu ms, action %s, voice %u KB | free heap %u KB (min %u), psram %u KB\r\n",
+                  (unsigned)(talkLen_ / 1024), outcome == TalkStatus::DONE ? "answer" : "FAILED", millis() - t0,
+                  res.action, (unsigned)(res.audioLen / 1024), (unsigned)(ESP.getFreeHeap() / 1024),
+                  (unsigned)(ESP.getMinFreeHeap() / 1024), (unsigned)(ESP.getFreePsram() / 1024));
     if (talkAbandoned_) {
       if (res.audio) free(res.audio);
       talkRes_ = TalkResult{};
@@ -766,6 +784,7 @@ class DeviceLink {
   volatile bool talkAbandoned_ = false;
   const uint8_t* talkWav_ = nullptr;
   bool talkNew_ = true;
+  char talkText_[200] = "";
   size_t talkLen_ = 0;
   TalkResult talkRes_{};
   const char* fw_ = "";

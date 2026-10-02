@@ -306,6 +306,19 @@ def test_band_header_continues_a_conversation_and_reports_timings(client, servic
     ("I need help", "urgent"),
     ("I fell", "urgent"),
     ("Can I have some water?", "request"),
+    ("I missed my tablet this morning, should I take two now?", "treatment"),
+    ("I forgot to take my medicine", "treatment"),
+    ("Can I take another painkiller?", "treatment"),
+    ("When do I take my tablet?", None),
 ])
 def test_fixed_rules_tell_a_cry_for_help_from_a_question(words, expected):
     assert band_talk.fixed_rule(words) == expected
+
+
+def test_a_medicine_without_a_documented_reason_is_marked_for_the_model():
+    plan = "- Metoprolol: dose: 25 mg (reason/purpose: blood pressure)\n- Enoxaparin: dose: 40 mg"
+    marked = band_talk.mark_missing_reasons(plan).splitlines()
+    assert marked[0].endswith("(reason/purpose: blood pressure)")
+    assert "NOT RECORDED" in marked[1]
+    assert band_talk.mark_missing_reasons("This patient currently has no approved active instructions on file.") == (
+        "This patient currently has no approved active instructions on file.")
