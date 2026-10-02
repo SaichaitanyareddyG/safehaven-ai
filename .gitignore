@@ -20,3 +20,6 @@ demo-assets/playwright-videos/*.mp4
 # Firmware build artifacts
 firmware/native/build/
 firmware/.pio/
+
+# Real-device Wi-Fi credentials (copy from wifi_secrets.example.h)
+firmware/include/wifi_secrets.h

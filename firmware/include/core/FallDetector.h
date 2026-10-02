@@ -30,6 +30,15 @@ class FallDetector {
 
   State state() const { return state_; }
 
+  // Read-only view of the candidate in progress, for on-device diagnostics
+  // (the StickS3 test screen). Cleared when a candidate ends.
+  bool stage_freefall() const { return stage_freefall_; }
+  bool stage_impact() const { return stage_impact_; }
+  bool stage_orientation() const { return stage_orientation_; }
+  bool stage_inactivity() const { return stage_inactivity_; }
+  float peak_g() const { return peak_g_; }
+  float tilt_delta_deg() const { return tilt_delta_deg_; }
+
   void reset() {
     state_ = State::IDLE;
     hist_.clear();

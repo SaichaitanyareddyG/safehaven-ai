@@ -32,6 +32,8 @@ class MovementDetector {
   const WindowStats& last_window() const { return last_; }
   bool last_was_gait() const { return last_gait_; }
   bool last_was_handling() const { return last_handling_; }
+  /// How long the abnormal pattern has held so far (alerts at abn_sustain_ms).
+  uint32_t sustained_ms() const { return sustained_ms_; }
 
   void reset() {
     state_ = State::IDLE;

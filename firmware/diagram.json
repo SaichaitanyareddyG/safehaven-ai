@@ -3,11 +3,50 @@
   "author": "SAFEHAVEN",
   "editor": "wokwi",
   "parts": [
-    { "type": "board-esp32-s3-devkitc-1", "id": "esp", "top": 0, "left": 0, "attrs": {} }
+    { "type": "board-esp32-s3-devkitc-1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-ili9341", "id": "tft", "top": -60, "left": 230, "attrs": {} },
+    {
+      "type": "wokwi-mpu6050", "id": "imu", "top": 250, "left": -130,
+      "attrs": { "accelX": "0", "accelY": "0", "accelZ": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton", "id": "btnNormal", "top": 250, "left": 220,
+      "attrs": { "color": "green", "label": "NORMAL", "bounce": "0", "key": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton", "id": "btnFall", "top": 250, "left": 310,
+      "attrs": { "color": "red", "label": "FALL", "bounce": "0", "key": "2" }
+    },
+    {
+      "type": "wokwi-pushbutton", "id": "btnAbnormal", "top": 250, "left": 400,
+      "attrs": { "color": "yellow", "label": "ABNORMAL", "bounce": "0", "key": "3" }
+    }
   ],
   "connections": [
     [ "esp:TX", "$serialMonitor:RX", "", [] ],
-    [ "esp:RX", "$serialMonitor:TX", "", [] ]
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+
+    [ "tft:VCC", "esp:3V3.1", "red", [] ],
+    [ "tft:GND", "esp:GND.1", "black", [] ],
+    [ "tft:CS", "esp:10", "orange", [] ],
+    [ "tft:D/C", "esp:9", "violet", [] ],
+    [ "tft:RST", "esp:14", "gray", [] ],
+    [ "tft:MOSI", "esp:11", "blue", [] ],
+    [ "tft:SCK", "esp:12", "green", [] ],
+    [ "tft:MISO", "esp:13", "white", [] ],
+    [ "tft:LED", "esp:3V3.2", "red", [] ],
+
+    [ "imu:VCC", "esp:3V3.1", "red", [] ],
+    [ "imu:GND", "esp:GND.1", "black", [] ],
+    [ "imu:SDA", "esp:8", "blue", [] ],
+    [ "imu:SCL", "esp:18", "green", [] ],
+
+    [ "btnNormal:1.l", "esp:4", "green", [] ],
+    [ "btnNormal:2.l", "esp:GND.2", "black", [] ],
+    [ "btnFall:1.l", "esp:5", "red", [] ],
+    [ "btnFall:2.l", "esp:GND.3", "black", [] ],
+    [ "btnAbnormal:1.l", "esp:6", "yellow", [] ],
+    [ "btnAbnormal:2.l", "esp:GND.4", "black", [] ]
   ],
   "dependencies": {}
 }
