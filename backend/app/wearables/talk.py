@@ -81,7 +81,11 @@ _BAND_URGENT_PATTERNS = [
         r"\bcan.?t breathe\b",
         r"\bconfused\b",
         r"\bvery\s+(ill|unwell|sick)\b",
-        r"\bhelp me\b",
+        # A cry for help, not a question about what the band can do: "How can
+        # you help me?" raised an urgent alert on the bench.
+        r"^\W*(please\s+)?help\b(?!.*\?)",
+        r"\b(i\s+)?need\s+help\b(?!\s+with)",
+        r"\bplease\s+help\b",
     ]
 ]
 
@@ -166,11 +170,19 @@ def parse_reply(raw: str) -> tuple[str, str]:
 
 
 # ── The three local services (module-level so tests can replace them) ──────
+# Tells whisper what it is listening to: on the bench "nurse" was heard as
+# "nuts" and "notes" without it.
+STT_PROMPT = (
+    "A hospital patient talking to their wristband about the nurse, the doctor, their medicines, "
+    "tablets, injections, pain, feeling dizzy, a fall, water, the bathroom and their stay."
+)
+
+
 def transcribe(wav: bytes) -> str:
     r = httpx.post(
         f"{get_settings().band_talk_stt_url}/inference",
         files={"file": ("speech.wav", wav, "audio/wav")},
-        data={"response_format": "json", "temperature": "0"},
+        data={"response_format": "json", "temperature": "0", "prompt": STT_PROMPT},
         timeout=30,
     )
     r.raise_for_status()

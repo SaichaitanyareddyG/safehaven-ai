@@ -294,3 +294,18 @@ def test_band_header_continues_a_conversation_and_reports_timings(client, servic
                     headers=device)
     assert len(calls["history"][1]) == 2
     assert "total=" in r.headers["x-talk-timings"]
+
+
+@pytest.mark.parametrize("words,expected", [
+    ("How can you help me?", None),             # bench: this raised an urgent alert
+    ("What can you help me with?", None),
+    ("I need help with my tablets", None),
+    ("Help!", "urgent"),
+    ("Help me please", "urgent"),
+    ("Please help, I can't get up", "urgent"),
+    ("I need help", "urgent"),
+    ("I fell", "urgent"),
+    ("Can I have some water?", "request"),
+])
+def test_fixed_rules_tell_a_cry_for_help_from_a_question(words, expected):
+    assert band_talk.fixed_rule(words) == expected
