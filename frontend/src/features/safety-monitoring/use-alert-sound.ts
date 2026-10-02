@@ -12,6 +12,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * toggle doubles as the unlock: clicking "Sound on" is itself the gesture that
  * resumes the context. If audio never unlocks, the visual toast still fires —
  * sound is an enhancement, never the only channel for an alert.
+ *
+ * `speak` reads an alert aloud with the browser's built-in speech synthesis,
+ * after the beeps, under the same on/off preference. Text comes from the
+ * backend's alert message, so the spoken wording is the reviewed wording.
  */
 
 const STORAGE_KEY = 'safehaven.alert_sound_enabled'
@@ -77,6 +81,21 @@ export function useAlertSound() {
     }).catch(() => undefined)
   }, [enabled, getContext])
 
+  const speak = useCallback(
+    (lines: string[]) => {
+      if (!enabled || lines.length === 0 || !('speechSynthesis' in window)) return
+      // After the two beeps, not over them.
+      window.setTimeout(() => {
+        for (const line of lines) {
+          const utterance = new SpeechSynthesisUtterance(line)
+          utterance.rate = 0.95
+          window.speechSynthesis.speak(utterance)
+        }
+      }, 700)
+    },
+    [enabled],
+  )
+
   /** Toggle, using the click itself to unlock audio. */
   const toggle = useCallback(() => {
     setEnabled((previous) => {
@@ -89,5 +108,5 @@ export function useAlertSound() {
     })
   }, [getContext])
 
-  return { enabled, toggle, play }
+  return { enabled, toggle, play, speak }
 }

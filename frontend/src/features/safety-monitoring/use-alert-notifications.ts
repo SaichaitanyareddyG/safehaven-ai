@@ -28,7 +28,7 @@ const APP_TITLE = 'SAFEHAVEN'
 
 export function useAlertNotifications() {
   const { data } = useLiveSafetyAlerts()
-  const { play } = useAlertSound()
+  const { play, speak } = useAlertSound()
 
   // Priority is tracked per alert, not just the id. Tracking ids alone missed
   // ESCALATION: an ongoing episode promoted from MEDIUM to HIGH keeps the same
@@ -74,7 +74,19 @@ export function useAlertNotifications() {
     // One sound for the batch, however many arrived — a burst of chimes would
     // be its own kind of alarm fatigue.
     if (announceable.some((a) => a.priority === 'HIGH')) play()
-  }, [data, play])
+
+    // Then say what happened and where, e.g. "Possible fall detected, check
+    // patient. Room 12." Room only, never the name — a ward can hear it. At
+    // most two read in full; a burst is summarised, not recited.
+    const spoken = announceable.slice(0, 2).map(spokenLine)
+    if (announceable.length > 2) spoken.push(`And ${announceable.length - 2} more alerts.`)
+    speak(spoken)
+  }, [data, play, speak])
+}
+
+function spokenLine(alert: SafetyAlert): string {
+  const where = alert.room_number ? ` Room ${alert.room_number}.` : ''
+  return `${alert.message.replace(/\s*—\s*/g, ', ')}${where}`
 }
 
 function announce(alert: SafetyAlert) {
