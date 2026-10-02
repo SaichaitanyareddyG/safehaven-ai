@@ -28,7 +28,7 @@
 //
 // Buttons — a patient will press them, so no single press may do anything a
 // patient should not trigger:
-//   any single click   wakes the screen, or closes an alert
+//   any single click   wakes the screen, stops a fall alarm, or closes an alert
 //   hold BOTH for 3 s  staff only: enter / leave the TEST screen
 //   side click in TEST clears the test results
 // TEST returns to HOME by itself after 10 minutes without a button press.
@@ -156,6 +156,19 @@ static unsigned long lastTestButtonMs = 0;
 static bool alertActive = false;
 static EventType alertType = EventType::NONE;
 static unsigned long alertSinceMs = 0;
+
+// Fall attention: red pulsing + tone until a button is pressed. A press only
+// silences the device — it never cancels the nurse alert, which a confused or
+// injured patient must not be able to call off.
+static const unsigned long ATTENTION_PERIOD_MS = 1800;   // ~0.55 Hz, far under 3 Hz
+static const unsigned long ATTENTION_SLOW_PERIOD_MS = 4000;
+static const unsigned long ATTENTION_FAST_FOR_MS = 120000; // then slower, and silent
+static const uint8_t BRIGHTNESS_ATTENTION = 220;
+static const uint8_t SPEAKER_VOLUME = 150;                // of 255: clear, not painful
+static bool attentionActive = false;
+static unsigned long attentionSinceMs = 0;
+static unsigned long lastBeepCycle = UINT32_MAX;
+static bool chimedForAlert = false;
 static char alertEventId[24] = "";       // empty in bench mode
 static char alertSentAt[6] = "";         // filled once the backend accepts it
 
@@ -381,7 +394,52 @@ static void handleEvent(const DetectedEvent &ev) {
     alertActive = true;
     alertType = ev.type;
     alertSinceMs = millis();
+    chimedForAlert = false;
     screenWake("event");
+    if (ev.type == EventType::POSSIBLE_FALL) {  // the beacon is for falls only
+      attentionActive = true;
+      attentionSinceMs = millis();
+      lastBeepCycle = UINT32_MAX;
+      M5.Display.setBrightness(BRIGHTNESS_ATTENTION);
+      forceRedraw = true;
+    }
+  }
+}
+
+static void stopAttention(const char *why) {
+  if (!attentionActive) return;
+  attentionActive = false;
+  M5.Speaker.stop();
+  M5.Display.setBrightness(screen == Screen::TEST ? BRIGHTNESS_TEST : BRIGHTNESS_HOME);
+  forceRedraw = true;
+  Serial.printf("[ALERT] attention stopped (%s) - nurse alert unaffected\r\n", why);
+}
+
+/// Tone in step with the pulse; silent after the fast phase so a fall at
+/// night does not sound for an hour. A single calm chime once the backend
+/// confirms the nurse was notified.
+static void serviceSound() {
+  const unsigned long now = millis();
+  if (attentionActive) {
+    const unsigned long elapsed = now - attentionSinceMs;
+    if (elapsed < ATTENTION_FAST_FOR_MS) {
+      const unsigned long cycle = elapsed / ATTENTION_PERIOD_MS;
+      if (cycle != lastBeepCycle) {
+        lastBeepCycle = cycle;
+        M5.Speaker.tone(880, 140);
+      }
+    }
+  }
+  if (alertActive && !chimedForAlert && alertEventId[0] && !benchMode) {
+    const LinkStatus ls = backendLink.status();
+    if (!strcmp(ls.lastEventId, alertEventId) && ls.lastDelivery == Delivery::DELIVERED) {
+      chimedForAlert = true;
+      if (!attentionActive) {
+        M5.Speaker.tone(660, 120);
+        delay(140);
+        M5.Speaker.tone(990, 180);
+      }
+    }
   }
 }
 
@@ -486,6 +544,13 @@ static void buildHome(HomeModel &m) {
 
   m.settleLeftS = (uint8_t)settleLeftS();
   m.alertType = alertType;
+  m.attention = alertActive && attentionActive;
+  if (m.attention) {
+    const unsigned long elapsed = now - attentionSinceMs;
+    m.attentionSlow = elapsed >= ATTENTION_FAST_FOR_MS;
+    const unsigned long period = m.attentionSlow ? ATTENTION_SLOW_PERIOD_MS : ATTENTION_PERIOD_MS;
+    m.attentionPhase = (uint16_t)((elapsed % period) * 1000 / period);
+  }
   if (!benchMode && assigned) {
     const LinkStatus ls = backendLink.status();
     if (ls.assignment.present && ls.assignment.qrToken[0])
@@ -574,7 +639,9 @@ static void serviceScreen() {
     }
     return;
   }
-  if (now - lastHomeCheckMs < HOME_CHECK_MS && !forceRedraw) return;
+  // The fall beacon animates (~15 fps); everything else redraws only on change.
+  const unsigned long checkMs = attentionActive && alertActive ? 66 : HOME_CHECK_MS;
+  if (now - lastHomeCheckMs < checkMs && !forceRedraw) return;
   lastHomeCheckMs = now;
 
   HomeModel m;
@@ -635,7 +702,10 @@ void setup() {
 
   auto cfg = M5.config();
   cfg.serial_baudrate = 115200;
+  // Privacy: the microphone stays OFF. Nothing in this firmware listens.
+  cfg.internal_mic = false;
   M5.begin(cfg);
+  M5.Speaker.setVolume(SPEAKER_VOLUME);
   M5.Display.setRotation(0);  // portrait, 135 x 240
   M5.Display.setBrightness(BRIGHTNESS_HOME);
   setCpuFrequencyMhz(CPU_MHZ);
@@ -735,7 +805,11 @@ static void handleButtons() {
   lastActivityMs = now;
   if (screen == Screen::TEST) lastTestButtonMs = now;
 
-  if (alertActive) {  // either button closes the alert
+  if (alertActive && attentionActive) {  // first press: stop the beacon, keep the alert
+    stopAttention("button");
+    return;
+  }
+  if (alertActive) {  // next press closes the alert screen
     alertActive = false;
     forceRedraw = true;
     Serial.println("[BTN] alert closed");
@@ -855,6 +929,17 @@ static void takeScreenshots() {
     sendFrame(a.name);
   }
 
+  for (int phase : {150, 600}) {  // two moments of the pulse
+    HomeModel m = base;
+    m.view = HomeView::ALERT;
+    m.alertType = EventType::POSSIBLE_FALL;
+    m.alertKind = ui::AlertKind::SENDING;
+    m.attention = true;
+    m.attentionPhase = (uint16_t)phase;
+    stickUi.drawHome(m, false);
+    sendFrame(phase == 150 ? "06a-fall-attention-a" : "06b-fall-attention-b");
+  }
+
   ui::TestModel t;
   buildTest(t);
   t.stageFreefall = t.stageImpact = t.stageTilt = true;
@@ -931,10 +1016,13 @@ void loop() {
   handleSerial();
 
   const unsigned long now = millis();
-  if (alertActive && now - alertSinceMs > ALERT_SHOW_MS) {
+  // An unacknowledged fall beacon keeps the alert on screen; the calm screen
+  // that follows a press times out as before.
+  if (alertActive && !attentionActive && now - alertSinceMs > ALERT_SHOW_MS) {
     alertActive = false;
     forceRedraw = true;
   }
+  serviceSound();
   if (now - lastBatterySampleMs >= BATTERY_SAMPLE_MS) {
     lastBatterySampleMs = now;
     sampleBattery();

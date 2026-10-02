@@ -56,6 +56,23 @@ constexpr uint16_t BLUE_TEXT = rgb(0x8C, 0xC4, 0xFF);
 constexpr uint16_t BLUE_DARK = rgb(0x12, 0x23, 0x3A);
 constexpr uint16_t CORAL = rgb(0xFF, 0x7A, 0x66);
 constexpr uint16_t CORAL_TEXT = rgb(0xFF, 0x9C, 0x8C);
+// Fall attention mode (design board 11).
+constexpr uint16_t ALARM_DEEP = rgb(0x2A, 0x0A, 0x09);
+constexpr uint16_t ALARM_GLOW = rgb(0x4A, 0x0F, 0x0C);
+constexpr uint16_t ALARM_RED = rgb(0xE5, 0x48, 0x3C);
+constexpr uint16_t ALARM_RING = rgb(0xFF, 0x5A, 0x4E);
+constexpr uint16_t ALARM_PINK = rgb(0xFF, 0xB3, 0xAB);
+constexpr uint16_t ALARM_PINK_LT = rgb(0xFF, 0xD6, 0xD1);
+
+/// Linear blend of two RGB565 colours, f in [0, 1].
+inline uint16_t blend565(uint16_t a, uint16_t b, float f) {
+  if (f < 0) f = 0;
+  if (f > 1) f = 1;
+  const int ar = a >> 11, ag = (a >> 5) & 63, ab = a & 31;
+  const int br = b >> 11, bg = (b >> 5) & 63, bb = b & 31;
+  return (uint16_t)(((int)(ar + (br - ar) * f) << 11) | ((int)(ag + (bg - ag) * f) << 5) |
+                    (int)(ab + (bb - ab) * f));
+}
 
 constexpr int W = 135;
 constexpr int H = 240;
@@ -105,6 +122,10 @@ struct HomeModel {
   // alert
   EventType alertType;
   AlertKind alertKind;
+  // Fall attention: pulsing red until the patient presses a button.
+  bool attention;
+  uint16_t attentionPhase;  // 0..999 through the current pulse
+  bool attentionSlow;       // after 2 min unpressed: slower, quieter pulse
   bool alertWaitingForWifi;
   char alertSentAt[6];
 };
@@ -204,8 +225,8 @@ class StickUi {
     // Legend along the top edge, clear of the lines and the live trace.
     c.drawFastHLine(x0 + 4, y0 + 6, 6, CORAL);
     text(small_, "impact 2.5g", x0 + 12, y0 + 6, CORAL_TEXT, middle_left);
-    c.drawFastHLine(x0 + 58, y0 + 6, 6, BLUE);
-    text(small_, "free-fall 0.4g", x0 + 66, y0 + 6, BLUE_TEXT, middle_left);
+    c.drawFastHLine(x0 + 4, y0 + 15, 6, BLUE);
+    text(small_, "free-fall 0.4g", x0 + 12, y0 + 15, BLUE_TEXT, middle_left);
 
     chip(8, 110, "1 Free-fall", t.stageFreefall, BLUE);
     chip(70, 110, "2 Impact", t.stageImpact, CORAL);
@@ -562,8 +583,49 @@ class StickUi {
     text(small_, "SH-WEAR-001", CX, 228, TEXT3, middle_center);
   }
 
+  /// The red beacon (design board 11). Pulses at ~0.55 Hz — far below the
+  /// 3-flashes-per-second photosensitivity limit — with rings expanding out.
+  void fallAttention(const HomeModel& m) {
+    auto& c = canvas_;
+    const float t = m.attentionPhase / 1000.0f;
+    const float glow = 0.5f - 0.5f * cosf(2.0f * 3.14159265f * t);
+    const uint16_t bg = blend565(ALARM_DEEP, ALARM_GLOW, glow);
+    c.fillSprite(bg);
+
+    spaced(brandSm_, "SAFEHAVEN", 36, 8, 1, ALARM_PINK);
+    if (m.timeKnown) text(bodyBold_, m.hhmm, W - 10, 8, ALARM_PINK_LT, middle_right);
+
+    const int cx = CX, cy = 84;
+    for (int k = 0; k < 3; ++k) {
+      float p = t + k / 3.0f;
+      if (p >= 1.0f) p -= 1.0f;
+      const int r = (int)(16.5f + 40.5f * p);
+      const uint16_t col = blend565(ALARM_RING, bg, p);
+      c.fillArc(cx, cy, r - 2, r, 0, 360, col);
+    }
+    c.fillCircle(cx, cy, 26, ALARM_RED);
+    bell(cx, cy, rgb(0xFF, 0xFF, 0xFF));
+
+    text(title_, m.alertType == EventType::POSSIBLE_FALL ? "Possible fall" : "Movement alert", CX, 150,
+         rgb(0xFF, 0xFF, 0xFF), middle_center);
+    const char* sub = m.alertKind == AlertKind::NOTIFIED    ? "Your nurse is notified"
+                      : m.alertKind == AlertKind::SENDING    ? "Calling your nurse"
+                      : m.alertKind == AlertKind::NOT_DELIVERED ? "Use the call button"
+                                                                : "Bench: nurse not called";
+    text(body_, sub, CX, 168, ALARM_PINK_LT, middle_center);
+
+    c.drawRoundRect(10, 190, 115, 38, 7, ALARM_PINK);
+    c.drawRoundRect(11, 191, 113, 36, 6, ALARM_PINK);
+    text(bodyBold_, "Press a button", CX, 203, rgb(0xFF, 0xFF, 0xFF), middle_center);
+    text(small_, "to stop the flashing", CX, 217, ALARM_PINK_LT, middle_center);
+  }
+
   void alert(const HomeModel& m) {
     auto& c = canvas_;
+    if (m.attention) {
+      fallAttention(m);
+      return;
+    }
     barFor(m, m.timeKnown ? m.hhmm : "");
     const bool fall = m.alertType == EventType::POSSIBLE_FALL;
     const int cy = 72;
