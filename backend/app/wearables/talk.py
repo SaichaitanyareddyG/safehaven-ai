@@ -203,6 +203,9 @@ def ask_model(care_plan: str, question: str, history: list[dict[str, str]] | Non
             "options": {"temperature": 0},
             "think": False,
             "stream": False,
+            # Stay loaded between questions: a cold model added ~3 s to the
+            # first answer on the bench.
+            "keep_alive": "30m",
         },
         timeout=30,
     )

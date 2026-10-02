@@ -98,6 +98,32 @@ The screen sleeps after 15 s (the LCD backlight is the main UI power cost);
 setup, alerts and charging keep it on. Detection never pauses for the screen
 or Wi-Fi, and the **microphone is disabled** at boot — nothing listens.
 
+### Talk to SafeHaven (bench build only)
+
+A voice assistant on the band, built only into `env:m5sticks3-bench`
+(`-DSH_TALK`): the deployable build has no microphone until a hospital
+approves one.
+
+- **Side button, one click** (even with the screen off): the avatar listens,
+  red "Mic on" dot. Stop talking (1.5 s pause) or click side again to send.
+  Nothing heard → nothing sent.
+- The answer is **spoken** (the avatar's mouth follows the voice) and shown.
+  The band then listens again by itself ("Anything else?") for up to 5 turns.
+  **Front button** closes; **holding front** still calls a nurse.
+- A fall, an alert or the help button ends a conversation at once. A *soft*
+  faint-like movement while talking (the wrist raised to the mouth looks just
+  like one) is held: if the wearer keeps talking it is dropped, if they go
+  quiet the "Are you OK?" check runs.
+- Server: `POST /device-api/talk?format=pcm` → whisper.cpp → fixed urgent /
+  medicine / request rules → Qwen 3.5 4B (Ollama) on the approved care plan →
+  Piper voice. Urgent words raise `TALK_URGENT`, practical requests
+  `TALK_REQUEST`. All local (`backend/scripts/run_talk_services.sh`); nothing
+  said is stored; a conversation's last three exchanges live in memory only
+  (3 min). About 4 s per answer on the bench (server ~1.5-2 s).
+- English only. Telugu speech is understood by whisper's translate mode, but
+  small local models garble Telugu answers (a medicine name, "by mouth"), so
+  spoken Telugu answers are not enabled.
+
 ### Serial commands
 
 | Command | Does |
