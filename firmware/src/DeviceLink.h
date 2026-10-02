@@ -66,8 +66,11 @@ struct LinkStatus {
   int64_t serverOffsetMs = 0;      // server epoch - device monotonic
   bool serverTimeKnown = false;
   uint32_t queueDepth = 0;
-  char lastEventId[24] = "";
-  Delivery lastDelivery = Delivery::NONE;
+  // Delivery of the ONE event the alert screen is showing ("watched"), not
+  // simply the latest submitted: a low-battery or second event during a fall
+  // alarm must not make the screen lose track of whether the fall got through.
+  char watchedId[24] = "";
+  Delivery watchedDelivery = Delivery::NONE;
   // Device-initiated pairing: shown on screen while not enrolled.
   char pairingCode[8] = "";
   // Latest clinical alert as the backend sees it (from the heartbeat).
@@ -144,8 +147,10 @@ class DeviceLink {
   }
 
   /// Hand an event over for delivery. Assigns its permanent id (persisted
-  /// first, so it is never reused), returns that id.
-  const char* submit(const DetectedEvent& ev, uint64_t epochMs, uint8_t battery) {
+  /// first, so it is never reused), returns that id. `watch` makes it the
+  /// event whose delivery status() reports — set atomically here, so even an
+  /// instant delivery cannot be missed.
+  const char* submit(const DetectedEvent& ev, uint64_t epochMs, uint8_t battery, bool watch = false) {
     QueuedEvent q;
     memset(&q, 0, sizeof(q));
     q.magic = kMagic;
@@ -158,10 +163,19 @@ class DeviceLink {
     prefs_.putUInt("seq", seq_);
     snprintf(q.id, sizeof(q.id), "ev-%06lu", (unsigned long)seq_);
     strlcpy(q.assignmentId, st_.assignment.present ? st_.assignment.id : "", sizeof(q.assignmentId));
-    strlcpy(st_.lastEventId, q.id, sizeof(st_.lastEventId));
-    st_.lastDelivery = Delivery::QUEUED;
+    if (watch) {
+      strlcpy(st_.watchedId, q.id, sizeof(st_.watchedId));
+      st_.watchedDelivery = Delivery::QUEUED;
+    }
     xSemaphoreGive(lock_);
-    xQueueSend(inbox_, &q, pdMS_TO_TICKS(50));
+    // The hand-off to the network task holds a few events; while that task is
+    // stuck in a slow request it can fill. Never drop a safety event on the
+    // floor: write it to the flash queue from here instead (LittleFS is
+    // thread-safe), and the network task sends it with the rest.
+    if (xQueueSend(inbox_, &q, pdMS_TO_TICKS(50)) != pdTRUE) {
+      Serial.printf("[LINK] hand-off full - persisting %s directly\r\n", q.id);
+      persist(q);
+    }
     strlcpy(lastSubmitted_, q.id, sizeof(lastSubmitted_));
     return lastSubmitted_;
   }
@@ -554,7 +568,7 @@ class DeviceLink {
       Serial.printf("[LINK] %s %s (HTTP %d)\r\n", q.id,
                     d == Delivery::DELIVERED ? "DELIVERED" : "DISCARDED by backend (no assignment)", rc);
       xSemaphoreTake(lock_, portMAX_DELAY);
-      if (strcmp(st_.lastEventId, q.id) == 0) st_.lastDelivery = d;
+      if (strcmp(st_.watchedId, q.id) == 0) st_.watchedDelivery = d;
       st_.queueDepth = countQueue();
       xSemaphoreGive(lock_);
     }

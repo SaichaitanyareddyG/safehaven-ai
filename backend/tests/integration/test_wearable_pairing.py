@@ -114,6 +114,10 @@ def test_duplicate_label_is_409(client):
     headers = _login(client)
     first = _start(client, hw="HW-1")
     assert _pair(client, headers, first["pairing_code"], "SH-WEAR-020").status_code == 201
+    # The first band finishes enrolling, so the label now belongs to a live
+    # band. (An unfinished pairing may be retried under the same label.)
+    code = _poll(client, first).json()["enrollment_code"]
+    client.post("/device-api/enroll", json={"enrollment_code": code, "hardware_id": "HW-1"})
     second = _start(client, hw="HW-2")
     # register_device rolls the session back on the unique violation. In
     # production that is one request's session and the pairing request (an
@@ -127,3 +131,59 @@ def test_poll_token_is_stored_hashed(client, db_session):
     req = db_session.get(DevicePairingRequest, __import__("uuid").UUID(start["pairing_id"]))
     assert req.poll_token_hash != start["poll_token"]
     assert len(req.poll_token_hash) == 64
+
+
+# ── second edge-case review ─────────────────────────────────────────────────
+
+
+def _enroll(client, start, hw):
+    code = _poll(client, start).json()["enrollment_code"]
+    return client.post("/device-api/enroll", json={"enrollment_code": code, "hardware_id": hw}).json()["device_secret"]
+
+
+def test_a_revoked_band_can_be_added_back_under_its_own_label(client):
+    """Review #5: was 409, so the label on the case and the record drifted apart."""
+    headers = _login(client)
+    first = _start(client, hw="HW-A")
+    device = _pair(client, headers, first["pairing_code"], "SH-WEAR-050").json()
+    old_secret = _enroll(client, first, "HW-A")
+    client.post(f"/wearable-devices/{device['id']}/revoke", headers=headers)
+
+    again = _start(client, hw="HW-A")
+    resp = _pair(client, headers, again["pairing_code"], "SH-WEAR-050")
+    assert resp.status_code == 201 and resp.json()["id"] == device["id"]  # same record, not a new one
+    new_secret = _enroll(client, again, "HW-A")
+
+    hb = lambda s: client.post("/device-api/heartbeat", json={"battery_percent": 80, "firmware_version": "x"},
+                               headers={"Authorization": f"Bearer {s}"}).status_code
+    assert hb(new_secret) == 200
+    assert hb(old_secret) == 401  # the revoked credential stays dead
+
+
+def test_a_live_band_label_still_cannot_be_taken_over(client):
+    headers = _login(client)
+    first = _start(client, hw="HW-A")
+    _pair(client, headers, first["pairing_code"], "SH-WEAR-051")
+    _enroll(client, first, "HW-A")
+    other = _start(client, hw="HW-ATTACKER")
+    assert _pair(client, headers, other["pairing_code"], "SH-WEAR-051").status_code == 409
+
+
+def test_a_band_whose_first_pairing_never_finished_can_be_paired_again(client):
+    headers = _login(client)
+    first = _start(client, hw="HW-A")
+    device = _pair(client, headers, first["pairing_code"], "SH-WEAR-052").json()
+    # The band never collected its code (e.g. switched off). Try again.
+    again = _start(client, hw="HW-A")
+    resp = _pair(client, headers, again["pairing_code"], "SH-WEAR-052")
+    assert resp.status_code == 201 and resp.json()["id"] == device["id"]
+
+
+def test_long_expired_pairing_requests_are_purged(client, db_session):
+    for i in range(3):
+        _start(client, hw=f"HW-{i}")
+    for row in db_session.query(DevicePairingRequest).all():
+        row.expires_at = datetime.now(timezone.utc) - timedelta(days=2)
+    db_session.commit()
+    _start(client, hw="HW-new")
+    assert db_session.query(DevicePairingRequest).count() == 1

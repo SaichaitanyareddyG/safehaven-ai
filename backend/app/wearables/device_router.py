@@ -79,7 +79,10 @@ def enroll(
 # are IP-limited. Starting is rare; polling happens every few seconds while a
 # code is on screen.
 _PAIRING_START_RATE_LIMIT = "10/minute"
-_PAIRING_POLL_RATE_LIMIT = "60/minute"
+# Polls carry a 256-bit token, so this limit is not what stops guessing; it
+# only caps a broken loop. Several new bands on one network each poll every
+# 3 s, which 60/minute per IP could not accommodate.
+_PAIRING_POLL_RATE_LIMIT = "300/minute"
 
 
 @router.post("/pairing", response_model=PairingStartResponse)

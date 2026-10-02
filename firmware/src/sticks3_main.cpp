@@ -224,10 +224,20 @@ static void assign(MonitoringProfile profile, const char *source) {
                 to_string(profile));
 }
 
+static void stopAttention(const char *why);
+
 static void unassign() {
   core.set_assignment(false, MonitoringProfile::STANDARD, clock_.millis());
   settleUntilMs = 0;
   assigned = false;
+  // Review F3: a band taken off monitoring (unassigned, discharged) must not
+  // keep flashing for nobody, nor escalate "no response" for a patient who is
+  // no longer monitored. Anything already queued is still delivered.
+  if (alertActive) {
+    stopAttention("band unassigned");
+    noResponseSent = true;
+    alertActive = false;
+  }
   Serial.println("[ASSIGN] not assigned - detection idle, no patient events");
 }
 
@@ -397,18 +407,40 @@ static void handleEvent(const DetectedEvent &ev) {
 
   lastEvent = ev.type;
   lastEventMs = now;
-  alertEventId[0] = 0;
+
+  const bool alertEvent = ev.type == EventType::POSSIBLE_FALL ||
+                          ev.type == EventType::ABNORMAL_MOVEMENT ||
+                          ev.type == EventType::HELP_REQUESTED;
+  // Review F2: pressing for help during a fall alarm proves the wearer is
+  // responsive — stop the beacon and cancel the "no response" escalation.
+  if (ev.type == EventType::HELP_REQUESTED && attentionActive) {
+    stopAttention("wearer pressed help - responsive");
+    noResponseSent = true;
+  }
+  // Review F4: any other event during a fall alarm is still delivered, but it
+  // must not take over the alarm's screen or its nurse-response tracking.
+  const bool keepFallAlarm = attentionActive && ev.type != EventType::POSSIBLE_FALL;
+  const bool adopt = alertEvent && !keepFallAlarm;
+
+  if (!benchMode) {
+    const uint64_t epochMs = backendLink.toEpoch(ev.occurred_at_ms, epoch);
+    const char *id = backendLink.submit(ev, epochMs, battery.valid() ? (uint8_t)battery.shown_pct() : 0,
+                                        /*watch=*/adopt);
+    Serial.printf("  queued for delivery as %s\r\n", id);
+    if (adopt) {
+      strlcpy(alertEventId, id, sizeof(alertEventId));
+      alertEventEpochMs = epochMs;
+    }
+  } else if (adopt) {
+    alertEventId[0] = 0;  // bench: the alert screen says nobody was told
+  }
+  if (!adopt) {
+    if (keepFallAlarm && alertEvent) Serial.println("  fall alarm kept on screen; this event is delivered alongside");
+    return;
+  }
   alertSentAt[0] = 0;
   nurseComing = false;
-  if (!benchMode) {
-    alertEventEpochMs = backendLink.toEpoch(ev.occurred_at_ms, epoch);
-    const char *id = backendLink.submit(ev, alertEventEpochMs,
-                                 battery.valid() ? (uint8_t)battery.shown_pct() : 0);
-    strlcpy(alertEventId, id, sizeof(alertEventId));
-    Serial.printf("  queued for delivery as %s\r\n", id);
-  }
-  if (ev.type == EventType::POSSIBLE_FALL || ev.type == EventType::ABNORMAL_MOVEMENT ||
-      ev.type == EventType::HELP_REQUESTED) {
+  {
     alertActive = true;
     alertType = ev.type;
     alertSinceMs = millis();
@@ -464,7 +496,7 @@ static void serviceEscalation() {
   // to it ("A nurse is coming") reaches the wearer.
   alertEventEpochMs = backendLink.toEpoch(ev.occurred_at_ms, clock_.epoch_ms());
   const char *id = backendLink.submit(ev, alertEventEpochMs,
-                                      battery.valid() ? (uint8_t)battery.shown_pct() : 0);
+                                      battery.valid() ? (uint8_t)battery.shown_pct() : 0, /*watch=*/true);
   strlcpy(alertEventId, id, sizeof(alertEventId));
 }
 
@@ -513,7 +545,7 @@ static void serviceSound() {
   }
   if (alertActive && !chimedForAlert && alertEventId[0] && !benchMode) {
     const LinkStatus ls = backendLink.status();
-    if (!strcmp(ls.lastEventId, alertEventId) && ls.lastDelivery == Delivery::DELIVERED) {
+    if (!strcmp(ls.watchedId, alertEventId) && ls.watchedDelivery == Delivery::DELIVERED) {
       chimedForAlert = true;
       if (!attentionActive) {
         M5.Speaker.tone(1760, 140);
@@ -647,8 +679,8 @@ static void buildHome(HomeModel &m) {
     m.alertKind = ui::AlertKind::NURSE_COMING;
   } else {
     const LinkStatus ls = backendLink.status();
-    const bool mine = strcmp(ls.lastEventId, alertEventId) == 0;
-    const Delivery d = mine ? ls.lastDelivery : Delivery::QUEUED;
+    const bool mine = strcmp(ls.watchedId, alertEventId) == 0;
+    const Delivery d = mine ? ls.watchedDelivery : Delivery::QUEUED;
     if (d == Delivery::DELIVERED) {
       m.alertKind = ui::AlertKind::NOTIFIED;
       if (!alertSentAt[0] && m.timeKnown) strlcpy(alertSentAt, m.hhmm, sizeof(alertSentAt));
@@ -1063,6 +1095,45 @@ static void takeScreenshots() {
   Serial.println("SHOTS DONE");
 }
 
+#ifdef SH_BENCH_TOOLS
+// Bench only (platformio.ini: -DSH_BENCH_TOOLS). Creates an event exactly as
+// the detectors or buttons would, so alarm/escalation/nurse-response paths can
+// be exercised repeatably. Events are REAL to the backend. Remove the flag for
+// any deployment: anyone with a USB cable could otherwise fake an alarm.
+static void injectEvent(const char *what) {
+  DetectedEvent ev;
+  ev.occurred_at_ms = clock_.millis();
+  if (!strcmp(what, "fall")) {
+    ev.type = EventType::POSSIBLE_FALL;
+    ev.metrics.fall_score = 4;
+    ev.metrics.peak_g = 3.6f;
+    ev.metrics.tilt_delta_deg = 90.0f;
+    ev.metrics.stage_freefall = ev.metrics.stage_impact = true;
+    ev.metrics.stage_orientation = ev.metrics.stage_inactivity = true;
+  } else if (!strcmp(what, "help")) {
+    ev.type = EventType::HELP_REQUESTED;
+  } else if (!strcmp(what, "abnormal")) {
+    ev.type = EventType::ABNORMAL_MOVEMENT;
+    ev.metrics.duration_s = 20.0f;
+    ev.metrics.dom_freq_hz = 4.0f;
+  } else if (!strcmp(what, "burst")) {  // fill the hand-off: low-priority events only
+    for (int i = 0; i < 12; ++i) {
+      DetectedEvent b;
+      b.type = EventType::DEVICE_LOW_BATTERY;
+      b.occurred_at_ms = clock_.millis();
+      backendLink.submit(b, backendLink.toEpoch(b.occurred_at_ms, clock_.epoch_ms()), 15);
+    }
+    Serial.println("[INJECT] burst of 12 low-battery events submitted");
+    return;
+  } else {
+    Serial.println("inject fall|help|abnormal|burst");
+    return;
+  }
+  Serial.printf("[INJECT] %s\r\n", what);
+  handleEvent(ev);
+}
+#endif
+
 static void printStatus() {
   const LinkStatus ls = backendLink.status();
   Serial.printf("[STATUS] mode %s | backend %s | enrolled %s%s | heartbeat %s | assignment %s%s | "
@@ -1072,6 +1143,14 @@ static void printStatus() {
                 ls.heartbeatOk ? "ok" : "not yet", assigned ? "yes, " : "none",
                 assigned ? to_string(core.profile()) : "", (unsigned long)ls.queueDepth,
                 WiFi.status() == WL_CONNECTED ? "up" : "down");
+  Serial.printf("[STATUS] alert %s%s | beacon %s | escalated %s | nurse coming %s | watched %s %s\r\n",
+                alertActive ? "ON " : "off", alertActive ? to_string(alertType) : "",
+                attentionActive ? "on" : "off", noResponseSent ? "yes" : "no", nurseComing ? "yes" : "no",
+                ls.watchedId[0] ? ls.watchedId : "-",
+                ls.watchedDelivery == Delivery::DELIVERED   ? "DELIVERED"
+                : ls.watchedDelivery == Delivery::DISCARDED ? "DISCARDED"
+                : ls.watchedDelivery == Delivery::QUEUED    ? "QUEUED"
+                                                            : "-");
 }
 
 static void runCommand(char *line) {
@@ -1088,6 +1167,10 @@ static void runCommand(char *line) {
   } else if (!strcmp(line, "forget")) {
     backendLink.forget();
     Serial.println("[LINK] credential and assignment erased - back to BENCH mode");
+#ifdef SH_BENCH_TOOLS
+  } else if (!strncmp(line, "inject ", 7)) {
+    injectEvent(line + 7);
+#endif
   } else if (!strcmp(line, "shot")) {
     takeScreenshots();
   } else if (!strcmp(line, "status")) {

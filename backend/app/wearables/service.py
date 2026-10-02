@@ -212,6 +212,12 @@ class PairingNotFoundError(Exception):
 def start_pairing(db: Session, hardware_id: str) -> tuple[DevicePairingRequest, str]:
     """A band asks to be added. Returns (request, raw_poll_token)."""
     now = datetime.now(timezone.utc)
+    # Housekeeping: this route is unauthenticated, so without a purge every
+    # request ever made would stay in the table. A day's grace keeps recent
+    # history for debugging; nothing references these rows once expired.
+    db.query(DevicePairingRequest).filter(
+        DevicePairingRequest.expires_at < now - timedelta(days=1)
+    ).delete(synchronize_session=False)
     # Six digits; avoid colliding with another code that is still on screen.
     for _ in range(20):
         code = f"{secrets.randbelow(1_000_000):06d}"
@@ -279,9 +285,23 @@ def approve_pairing(
     )
     if request is None:
         raise PairingNotFoundError()
-    device, raw_enrollment = register_device(
-        db, WearableDeviceCreate(device_code=device_code), created_by=approved_by
-    )  # raises DuplicateDeviceCodeError
+
+    label = device_code.strip().upper()
+    existing = db.query(WearableDevice).filter(WearableDevice.device_code == label).first()
+    if existing is None:
+        device, raw_enrollment = register_device(
+            db, WearableDeviceCreate(device_code=label), created_by=approved_by
+        )
+    elif existing.credential_hash is None and existing.status is not DeviceStatus.RETIRED:
+        # The band printed with this label is coming back: it was revoked, or
+        # its first pairing never finished. Reissue rather than refuse, so the
+        # label on the case and the record keep matching.
+        device, raw_enrollment = reissue_enrollment_code(db, existing.id, actor_id=approved_by)
+    else:
+        # A live, credentialled band already holds this label. Pairing another
+        # band onto it would hand that identity — and its patient — to whoever
+        # holds the new band. Refuse; revoke the old one first if intended.
+        raise DuplicateDeviceCodeError(label)
     request.device_id = device.id
     request.approved_by = approved_by
     request.enrollment_code = raw_enrollment
