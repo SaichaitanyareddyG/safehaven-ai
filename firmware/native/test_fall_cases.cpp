@@ -193,6 +193,16 @@ int main() {
     for (const auto& e : r.events) any_fall |= e.type == EventType::POSSIBLE_FALL || e.type == EventType::FALL_CHECK;
     check(!any_fall, "vigorous arm waving -> no fall and no check", describe(r));
   }
+  {  // Jogging: a hard step and a big wrist swing, but the hard peaks go on.
+    // WEDA-FALL: every jogging trial asked "Are you OK?" before this rule.
+    Noise nz(14);
+    Trace t;
+    add_resting(t, 3000, nz);
+    add_impact(t, 80, nz, 4.2f, 0.5f, 1.0f);
+    add_rhythmic(t, 10000, nz, 2.8f, 1.8f);
+    const Result r = run(t);
+    check(r.events.empty(), "jogging (hard peaks keep coming) -> no fall and no check", describe(r));
+  }
   {  // Walking for a minute: the most common thing a patient does.
     Noise nz(10);
     const Result r = run(walking(60000, nz));

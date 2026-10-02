@@ -56,6 +56,8 @@ class FallDetector {
   void reset() {
     state_ = State::IDLE;
     hist_.clear();
+    peaks_n_ = 0;
+    above_busy_ = false;
     clear_stages();
   }
 
@@ -65,6 +67,7 @@ class FallDetector {
     hist_.push(s);
     const float mag = magnitude(s);
     const uint64_t now = s.t_ms;
+    note_peak(now, mag);
 
     // Trailing stillness measure, used by the inactivity stage.
     const bool still = trailing_still();
@@ -168,6 +171,32 @@ class FallDetector {
   }
 
  private:
+  /// Record the start of each hard peak (rising through busy_peak_g, with
+  /// hysteresis so one peak is counted once).
+  void note_peak(uint64_t now, float mag) {
+    if (!above_busy_ && mag >= cfg_.busy_peak_g) {
+      above_busy_ = true;
+      peaks_[peaks_n_ % kPeakRing] = now;
+      ++peaks_n_;
+    } else if (above_busy_ && mag < cfg_.busy_peak_g - 0.3f) {
+      above_busy_ = false;
+    }
+  }
+
+  /// Hard peaks around an event at `at`, leaving out the event itself
+  /// (200 ms before to 1 s after). Someone jogging or clapping makes them
+  /// before and after; a person who fell from walking or sitting does not.
+  uint8_t peaks_around(uint64_t at) const {
+    uint8_t n = 0;
+    const size_t have = peaks_n_ < kPeakRing ? peaks_n_ : kPeakRing;
+    for (size_t i = 0; i < have; ++i) {
+      const uint64_t t = peaks_[i];
+      const bool before = t + cfg_.busy_window_ms >= at && t + 200 < at;
+      if (before || t > at + 1000) ++n;
+    }
+    return n;
+  }
+
   void clear_stages() {
     stage_freefall_ = stage_impact_ = stage_orientation_ = stage_inactivity_ = false;
     peak_g_ = 0.0f;
@@ -204,6 +233,7 @@ class FallDetector {
   }
 
   DetectedEvent finish(uint64_t now) {
+    const uint8_t post = peaks_around(impact_ms_);
     const int score = (stage_freefall_ ? 1 : 0) + (stage_impact_ ? 1 : 0) +
                       (stage_orientation_ ? 1 : 0) + (stage_inactivity_ ? 1 : 0);
     const bool off_body = trailing_off_body();
@@ -220,6 +250,13 @@ class FallDetector {
       // (set-down shape), a drop followed by movement (toss-and-catch shape),
       // a faint onto a bed, and a hard fall whose stillness looks like a table.
       verdict = EventType::FALL_CHECK;
+    }
+    if (verdict == EventType::FALL_CHECK && !stage_inactivity_ &&
+        tilt_delta_deg_ < cfg_.check_moving_tilt_deg && peak_g_ < cfg_.check_moving_peak_g) {
+      verdict = EventType::NONE;  // moving on afterwards, small turn, modest hit
+    }
+    if (post >= cfg_.active_after_peaks) {
+      verdict = EventType::NONE;  // still jogging / clapping: not lying on the floor
     }
 
     if (verdict == EventType::NONE) {
@@ -242,6 +279,7 @@ class FallDetector {
     ev.metrics.stage_impact = stage_impact_;
     ev.metrics.stage_orientation = stage_orientation_;
     ev.metrics.stage_inactivity = stage_inactivity_;
+    ev.metrics.post_peaks = post;
 
     state_ = State::COOLDOWN;
     // A check is short-lived: the wearer may be about to fall for real.
@@ -311,6 +349,10 @@ class FallDetector {
 
   uint64_t freefall_start_ms_ = 0;
   uint64_t dip_start_ms_ = 0;       ///< start of the current continuous dip
+  static constexpr size_t kPeakRing = 32;
+  uint64_t peaks_[kPeakRing] = {};
+  size_t peaks_n_ = 0;
+  bool above_busy_ = false;
   uint64_t impact_ms_ = 0;
   uint64_t settled_ms_ = 0;
   uint64_t still_since_ms_ = 0;

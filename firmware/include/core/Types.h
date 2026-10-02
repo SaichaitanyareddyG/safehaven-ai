@@ -68,6 +68,7 @@ struct EventMetrics {
   bool  stage_impact      = false;
   bool  stage_orientation = false;
   bool  stage_inactivity  = false;
+  uint8_t post_peaks      = 0;  ///< hard peaks after the event settled (still active)
 
   // Movement / mobility evidence
   float duration_s   = 0.0f;

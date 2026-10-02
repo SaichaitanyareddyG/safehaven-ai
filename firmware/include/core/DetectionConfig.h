@@ -53,6 +53,16 @@ struct DetectionConfig {
   float    collapse_g          = 1.60f;
   float    collapse_orientation_deg = 60.0f;
   uint32_t check_cooldown_ms   = 5000;   ///< short: a real fall may follow a check
+  // Still active after: someone jogging or clapping keeps making hard peaks
+  // after the event; a fallen person does not. WEDA-FALL: jogging 8-16 peaks,
+  // clapping mostly 4-32, falls at most 7 (1 s after impact to the verdict).
+  float    busy_peak_g         = 2.0f;
+  uint32_t busy_window_ms      = 3000;  ///< how far back peaks count
+  uint8_t  active_after_peaks  = 8;     ///< this many or more => not a fall
+  // A check with no stillness after it needs a real turn or a real hit
+  // (WEDA-FALL: removed 24 activity prompts, no falls lost).
+  float    check_moving_tilt_deg = 120.0f;
+  float    check_moving_peak_g   = 4.0f;
 
   // ── Worn / not worn ─────────────────────────────────────────────────────
   // Measured on SH-WEAR-001: on a table |a| sd 0.001 g, gyro mean 0.37 dps;
