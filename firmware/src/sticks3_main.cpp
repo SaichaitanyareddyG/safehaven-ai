@@ -26,8 +26,12 @@
 // Serial commands (one per line): enroll <CODE> · forget · status · d (dump
 // battery log) · c (clear it).
 //
-// Buttons: front (A) switches HOME / TEST; side (B) clears TEST results or
-// closes an alert.
+// Buttons — a patient will press them, so no single press may do anything a
+// patient should not trigger:
+//   any single click   wakes the screen, or closes an alert
+//   hold BOTH for 3 s  staff only: enter / leave the TEST screen
+//   side click in TEST clears the test results
+// TEST returns to HOME by itself after 10 minutes without a button press.
 
 #include <LittleFS.h>
 #include <M5Unified.h>
@@ -64,7 +68,7 @@ static const char *FIRMWARE_VERSION = "0.4.0-link";
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
-static const uint8_t BRIGHTNESS_HOME = 90;          // of 255
+static const uint8_t BRIGHTNESS_HOME = 140;         // of 255 — a camera reads the QR off a backlit LCD
 static const uint8_t BRIGHTNESS_TEST = 130;
 static const unsigned long SCREEN_TIMEOUT_MS = 15000;
 static const unsigned long ALERT_SHOW_MS = 60000;
@@ -139,6 +143,14 @@ static unsigned long lastBatteryLogMs = 0;
 static bool fsOk = false;
 
 static unsigned long lastHeartbeatMs = 0;
+
+// Buttons
+static const unsigned long TEST_COMBO_MS = 3000;
+static const unsigned long TEST_IDLE_EXIT_MS = 600000;
+static unsigned long comboSinceMs = 0;
+static bool comboFired = false;
+static bool swallowClicks = false;  // after a wake or a combo, until both are released
+static unsigned long lastTestButtonMs = 0;
 
 // Alert currently on screen.
 static bool alertActive = false;
@@ -674,31 +686,60 @@ void setup() {
   wasCharging = battery.charging();  // no charging splash for the state we booted in
   startWifi();
   serviceAssignment();
-  Serial.println("Front button A: HOME/TEST.  Side button B: clear / close alert.  "
-                 "Screen sleeps after 15 s; any button wakes it.");
+  Serial.println("Buttons: any click wakes the screen or closes an alert.  Hold BOTH 3 s: staff "
+                 "TEST screen.  Screen sleeps after 15 s.");
   Serial.println("Serial: enroll <CODE> | forget | status | d (battery log) | c (clear log)");
 }
 
+static void setScreen(Screen s, const char *why) {
+  if (s == screen) return;
+  screen = s;
+  M5.Display.setBrightness(screen == Screen::TEST ? BRIGHTNESS_TEST : BRIGHTNESS_HOME);
+  forceRedraw = true;
+  lastTestButtonMs = millis();
+  Serial.printf("[BTN] %s screen (%s)\r\n", screen == Screen::HOME ? "HOME" : "TEST", why);
+}
+
 static void handleButtons() {
-  const bool a = M5.BtnA.wasPressed();
-  const bool b = M5.BtnB.wasPressed();
-  if (!a && !b) return;
-  if (!screenOn) {  // a press on a dark screen only wakes it
-    screenWake("button");
+  const unsigned long now = millis();
+
+  // Staff gesture: both buttons held. Checked first, and it swallows the
+  // clicks those same presses produce on release.
+  if (M5.BtnA.isPressed() && M5.BtnB.isPressed()) {
+    if (!comboSinceMs) comboSinceMs = now;
+    swallowClicks = true;
+    if (!comboFired && now - comboSinceMs >= TEST_COMBO_MS) {
+      comboFired = true;
+      screenWake("staff gesture");
+      setScreen(screen == Screen::HOME ? Screen::TEST : Screen::HOME, "held both buttons");
+    }
     return;
   }
-  lastActivityMs = millis();
+  comboSinceMs = 0;
+  comboFired = false;
+
+  // Wake on the press itself, so the screen feels instant; that press is then spent.
+  if (!screenOn && (M5.BtnA.wasPressed() || M5.BtnB.wasPressed())) {
+    screenWake("button");
+    swallowClicks = true;
+    return;
+  }
+  if (swallowClicks) {
+    if (!M5.BtnA.isPressed() && !M5.BtnB.isPressed()) swallowClicks = false;
+    return;
+  }
+
+  const bool a = M5.BtnA.wasClicked();
+  const bool b = M5.BtnB.wasClicked();
+  if (!a && !b) return;
+  lastActivityMs = now;
+  if (screen == Screen::TEST) lastTestButtonMs = now;
+
   if (alertActive) {  // either button closes the alert
     alertActive = false;
     forceRedraw = true;
     Serial.println("[BTN] alert closed");
     return;
-  }
-  if (a) {
-    screen = screen == Screen::HOME ? Screen::TEST : Screen::HOME;
-    M5.Display.setBrightness(screen == Screen::TEST ? BRIGHTNESS_TEST : BRIGHTNESS_HOME);
-    forceRedraw = true;
-    Serial.printf("[BTN] A -> %s screen\r\n", screen == Screen::HOME ? "HOME" : "TEST");
   }
   if (b && screen == Screen::TEST) {
     lastOutcome = 0;
@@ -706,6 +747,125 @@ static void handleButtons() {
     lastEvent = EventType::NONE;
     Serial.println("[BTN] B -> cleared test results");
   }
+  // A single front click on HOME deliberately does nothing beyond keeping the
+  // screen awake: it is the button a patient is most likely to fiddle with.
+}
+
+// ── screenshots ─────────────────────────────────────────────────────────────
+// "shot" captures every screen, drawn off-screen with sample data where the
+// live state would not show it (an alert, low battery...), and streams each as
+// base64 RGB565 so tools on the Mac can turn them into PNGs and compare them
+// with the design. Bench tooling only; nothing is shown on the panel.
+static void sendFrame(const char *name) {
+  static const char *B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const uint8_t *p = stickUi.frame();
+  const size_t n = (size_t)ui::W * ui::H * 2;
+  Serial.printf("SHOT %s %d %d\r\n", name, ui::W, ui::H);
+  char line[80];
+  size_t li = 0;
+  for (size_t i = 0; i < n; i += 3) {
+    const uint32_t v = (uint32_t)p[i] << 16 | (uint32_t)(i + 1 < n ? p[i + 1] : 0) << 8 | (i + 2 < n ? p[i + 2] : 0);
+    line[li++] = B64[(v >> 18) & 63];
+    line[li++] = B64[(v >> 12) & 63];
+    line[li++] = i + 1 < n ? B64[(v >> 6) & 63] : '=';
+    line[li++] = i + 2 < n ? B64[v & 63] : '=';
+    if (li >= 76) {
+      line[li] = 0;
+      Serial.println(line);
+      li = 0;
+    }
+  }
+  if (li) {
+    line[li] = 0;
+    Serial.println(line);
+  }
+  Serial.println("END");
+}
+
+static void takeScreenshots() {
+  HomeModel base;
+  buildHome(base);
+  if (!base.timeKnown) {  // samples read like the design
+    base.timeKnown = true;
+    strlcpy(base.hhmm, "10:42", sizeof(base.hhmm));
+    strlcpy(base.date, "Fri 2 Oct", sizeof(base.date));
+  }
+  if (!base.qr[0]) strlcpy(base.qr, "SH:SampleToken12345", sizeof(base.qr));
+  if (base.batteryPct < 0) base.batteryPct = 70;
+
+  struct Shot {
+    const char *name;
+    HomeView view;
+  };
+  const Shot shots[] = {{"01-starting", HomeView::STARTING},     {"02-not-paired", HomeView::NOT_PAIRED},
+                        {"03-getting-ready", HomeView::GETTING_READY}, {"04-monitoring", HomeView::MONITORING},
+                        {"05-offline", HomeView::MONITORING},    {"08-low-battery", HomeView::LOW_BATTERY},
+                        {"09-charging", HomeView::CHARGING}};
+  for (const Shot &s : shots) {
+    HomeModel m = base;
+    m.view = s.view;
+    m.wifiUp = true;
+    m.wifiConfigured = true;
+    m.wifiBars = 3;
+    m.batteryLow = false;
+    m.charging = false;
+    m.showBatteryNumber = false;
+    if (s.view == HomeView::STARTING) {
+      m.sensorStep = Step::DONE;
+      m.wifiStep = Step::BUSY;
+      m.clockStep = Step::PENDING;
+      m.wifiUp = false;
+      m.wifiBars = 0;
+    }
+    if (s.view == HomeView::GETTING_READY) m.settleLeftS = 42;
+    if (!strcmp(s.name, "05-offline")) {
+      m.wifiUp = false;
+      m.wifiBars = 0;
+    }
+    if (s.view == HomeView::LOW_BATTERY) {
+      m.batteryPct = 15;
+      m.batteryLow = true;
+      m.showBatteryNumber = true;
+    }
+    if (s.view == HomeView::CHARGING) {
+      m.batteryPct = 65;
+      m.charging = true;
+      m.showBatteryNumber = true;
+    }
+    stickUi.drawHome(m, false);
+    sendFrame(s.name);
+  }
+
+  const struct {
+    const char *name;
+    ui::AlertKind kind;
+  } alerts[] = {{"06-sending-alert", ui::AlertKind::SENDING},
+                {"07-nurse-notified", ui::AlertKind::NOTIFIED},
+                {"07b-not-delivered", ui::AlertKind::NOT_DELIVERED},
+                {"07c-bench-alert", ui::AlertKind::BENCH}};
+  for (const auto &a : alerts) {
+    HomeModel m = base;
+    m.view = HomeView::ALERT;
+    m.alertType = EventType::POSSIBLE_FALL;
+    m.alertKind = a.kind;
+    m.wifiUp = true;
+    m.wifiBars = 3;
+    strlcpy(m.alertSentAt, "10:42", sizeof(m.alertSentAt));
+    stickUi.drawHome(m, false);
+    sendFrame(a.name);
+  }
+
+  ui::TestModel t;
+  buildTest(t);
+  t.stageFreefall = t.stageImpact = t.stageTilt = true;
+  t.stageStill = false;
+  t.score = 3;
+  t.outcome = 1;
+  t.rhythmMs = 7000;
+  stickUi.drawTest(t, false);
+  sendFrame("10-test-mode");
+  forceRedraw = true;  // the panel itself was never touched; redraw normally
+  Serial.println("SHOTS DONE");
 }
 
 static void printStatus() {
@@ -733,6 +893,8 @@ static void runCommand(char *line) {
   } else if (!strcmp(line, "forget")) {
     backendLink.forget();
     Serial.println("[LINK] credential and assignment erased - back to BENCH mode");
+  } else if (!strcmp(line, "shot")) {
+    takeScreenshots();
   } else if (!strcmp(line, "status")) {
     printStatus();
   } else if (!strcmp(line, "d")) {
@@ -782,6 +944,9 @@ void loop() {
     logBattery();
   }
 
+  if (screen == Screen::TEST && now - lastTestButtonMs > TEST_IDLE_EXIT_MS) {
+    setScreen(Screen::HOME, "10 min without a button press");
+  }
   serviceScreen();
 
   if (now - lastHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {

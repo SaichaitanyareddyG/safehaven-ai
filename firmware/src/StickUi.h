@@ -149,7 +149,10 @@ class StickUi {
     small_.load(font_small, sizeof(font_small));
   }
 
-  void drawHome(const HomeModel& m) {
+  /// The off-screen frame (RGB565, as the panel expects it), for screenshots.
+  const uint8_t* frame() { return (const uint8_t*)canvas_.getBuffer(); }
+
+  void drawHome(const HomeModel& m, bool push = true) {
     auto& c = canvas_;
     c.fillSprite(BG);
     switch (m.view) {
@@ -161,10 +164,10 @@ class StickUi {
       case HomeView::CHARGING: chargingSplash(m); break;
       case HomeView::ALERT: alert(m); break;
     }
-    c.pushSprite(0, 0);
+    if (push) c.pushSprite(0, 0);
   }
 
-  void drawTest(const TestModel& t) {
+  void drawTest(const TestModel& t, bool push = true) {
     auto& c = canvas_;
     c.fillSprite(BG);
     statusBar(t.wifiBars, true, t.wifiBars > 0, t.batteryPct, false, t.charging, true, nullptr, true);
@@ -198,8 +201,11 @@ class StickUi {
       px = x;
       py = y;
     }
-    text(small_, "impact 2.5g", x0 + w - 4, yOf(t.impactG) - 6, CORAL_TEXT, middle_right);
-    text(small_, "free-fall 0.4g", x0 + w - 4, yOf(t.freefallG) - 6, BLUE_TEXT, middle_right);
+    // Legend along the top edge, clear of the lines and the live trace.
+    c.drawFastHLine(x0 + 4, y0 + 6, 6, CORAL);
+    text(small_, "impact 2.5g", x0 + 12, y0 + 6, CORAL_TEXT, middle_left);
+    c.drawFastHLine(x0 + 58, y0 + 6, 6, BLUE);
+    text(small_, "free-fall 0.4g", x0 + 66, y0 + 6, BLUE_TEXT, middle_left);
 
     chip(8, 110, "1 Free-fall", t.stageFreefall, BLUE);
     chip(70, 110, "2 Impact", t.stageImpact, CORAL);
@@ -249,9 +255,9 @@ class StickUi {
       snprintf(buf, sizeof(buf), "fall check resting %lus", (unsigned long)t.fallRestS);
       text(bodyBold_, buf, CX, 232, AMBER_TEXT, middle_center);
     } else {
-      text(small_, "A home  \xc2\xb7  B clear", CX, 232, TEXT3, middle_center);
+      text(small_, "Hold both: exit  \xc2\xb7  B: clear", CX, 232, TEXT3, middle_center);
     }
-    c.pushSprite(0, 0);
+    if (push) c.pushSprite(0, 0);
   }
 
  private:
@@ -293,7 +299,8 @@ class StickUi {
     if (configured && !up) c.drawLine(x, y, x + 12, y + 9, BLUE_TEXT);
   }
 
-  void batteryIcon(int rightX, int y, int pct, bool low, bool charging, bool number) {
+  /// Returns the x where the battery group (icon + optional number) begins.
+  int batteryIcon(int rightX, int y, int pct, bool low, bool charging, bool number) {
     auto& c = canvas_;
     const uint16_t col = charging ? TEAL : low ? AMBER_TEXT : TEXT2;
     const uint16_t fillCol = charging ? TEAL : low ? AMBER_TEXT : TEXT;
@@ -307,23 +314,34 @@ class StickUi {
     if (number && pct >= 0) {
       char buf[8];
       snprintf(buf, sizeof(buf), "%d%%", pct);
-      text(low && !charging ? bodyBold_ : small_, buf, x - 3, y + 4, col, middle_right);
+      SmoothFont& f = low && !charging ? bodyBold_ : small_;
+      text(f, buf, x - 3, y + 4, col, middle_right);
+      return x - 3 - textWidth(f, buf);
     }
+    return x;
   }
 
   /// center: nullptr → SAFEHAVEN wordmark; "" → nothing; else small time text.
   void statusBar(uint8_t bars, bool configured, bool up, int pct, bool low, bool charging,
                  bool number, const char* center, bool testPill = false) {
     wifiIcon(10, 3, bars, configured, up);
+    // Draw the battery first so the centre item can avoid it: with the number
+    // showing (low / charging) the bar is too narrow to centre the wordmark.
+    const int battLeft = batteryIcon(W - 9, 4, pct, low, charging, number);
+    const int freeLeft = 25, freeRight = battLeft - 4;
     if (testPill) {
       canvas_.fillRoundRect(CX - 15, 2, 30, 11, 5, AMBER);
       spaced(brandSm_, "TEST", CX, 8, 1, BG);
     } else if (center == nullptr) {
-      spaced(brandSm_, "SAFEHAVEN", CX, 8, 1, BRAND);
+      const int wordW = textWidth(brandSm_, "SAFEHAVEN") + 8;  // + letter-spacing
+      if (CX + wordW / 2 <= freeRight) {
+        spaced(brandSm_, "SAFEHAVEN", CX, 8, 1, BRAND);
+      } else if (freeRight - freeLeft >= wordW) {
+        spaced(brandSm_, "SAFEHAVEN", (freeLeft + freeRight) / 2, 8, 1, BRAND);
+      }  // else: no room — the battery warning matters more than the wordmark
     } else if (center[0]) {
       text(bodyBold_, center, CX, 8, TEXT2, middle_center);
     }
-    batteryIcon(W - 9, 4, pct, low, charging, number);
   }
 
   void barFor(const HomeModel& m, const char* center = nullptr) {
@@ -452,11 +470,16 @@ class StickUi {
     // scannable code.
     const int qx = 14, qy = 82, qs = 107, k = 12;
     if (m.qr[0]) {
-      // White tile with a 4-module quiet zone (margin=true) — what phone
-      // scanners need. Content is an opaque token, never patient identity.
-      c.fillRoundRect(qx, qy, qs, qs, 7, rgb(0xFF, 0xFF, 0xFF));
-      c.qrcode(m.qr, qx + 3, qy + 3, qs - 6, 1, true);
-      if (m.wifiUp) text(small_, "Staff: scan to confirm patient", CX, qy + qs + 11, TEXT3, middle_center);
+      // As large as the screen allows: "SH:" + 16 chars is a version-2 code
+      // (25 x 25 modules), drawn at 4 px per module = 100 px. The white tile
+      // around it is the quiet zone (10 px, 2.5 modules) — enough for phone
+      // and webcam scanners. M5GFX's own margin option is NOT used: inside a
+      // 107 px box it shrank modules to 2 px, which cameras could not read.
+      // Content is an opaque token, never patient identity.
+      const int tile = 120, tx = (W - tile) / 2, ty = 76, quiet = 10;
+      c.fillRoundRect(tx, ty, tile, tile, 6, rgb(0xFF, 0xFF, 0xFF));
+      c.qrcode(m.qr, tx + quiet, ty + quiet, tile - 2 * quiet, 1, false);
+      if (m.wifiUp) text(small_, "Staff: scan to confirm patient", CX, ty + tile + 12, TEXT3, middle_center);
     } else {
     c.fillRoundRect(qx, qy, qs, qs, 7, SURFACE);
     c.drawFastHLine(qx, qy, k, TEXT3);           c.drawFastVLine(qx, qy, k, TEXT3);
