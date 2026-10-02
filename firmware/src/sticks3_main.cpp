@@ -316,6 +316,11 @@ static void stopAttention(const char *why);
 #ifdef SH_TALK
 static bool talkActive();
 static void talkEnd(const char *why);
+// A soft "collapse" while talking is usually the wrist raised to the mouth.
+// It is held, not dropped: the conversation itself answers "are you OK?" —
+// if the wearer keeps talking, they are; if they go quiet, the check runs.
+static bool talkPendingCheck = false;
+static DetectedEvent talkPendingEv;
 #endif
 
 static void unassign() {
@@ -497,7 +502,18 @@ static void setScreen(Screen s, const char *why);
 
 static void startCheck(const DetectedEvent &ev) {
 #ifdef SH_TALK
-  if (talkActive()) talkEnd("possible fall - the check comes first");
+  if (talkActive()) {
+    const bool soft = ev.metrics.peak_g < config.impact_g;  // no real impact
+    if (soft) {
+      talkPendingCheck = true;
+      talkPendingEv = ev;
+      Serial.printf("[CHECK] soft collapse during a conversation (peak %.2f g, tilt %.0f deg) - held: "
+                    "if the wearer keeps talking they are fine, if they go quiet the check runs\r\n",
+                    ev.metrics.peak_g, ev.metrics.tilt_delta_deg);
+      return;
+    }
+    talkEnd("possible fall with an impact - the check comes first");
+  }
 #endif
   if (alertActive || checkActive) {
     Serial.println("[CHECK] uncertain event during an active alert/check - folded in, not re-asked");
@@ -519,7 +535,8 @@ static void startCheck(const DetectedEvent &ev) {
 
 static void handleEvent(const DetectedEvent &ev) {
 #ifdef SH_TALK
-  if (talkActive()) talkEnd("an event comes first");
+  // A check decides for itself (startCheck): a soft one waits for the conversation.
+  if (talkActive() && ev.type != EventType::FALL_CHECK) talkEnd("an event comes first");
 #endif
   if (ev.type == EventType::FALL_CHECK) {  // internal: never sent as-is
     startCheck(ev);
@@ -1365,14 +1382,28 @@ static void talkSpeakerOn() {
   talkSpeakerOff = false;
 }
 
+/// Full speed while talking: at the battery-saving 80 MHz with Wi-Fi modem
+/// sleep, sending ~200 KB over TLS took 5-6 s on the bench.
+static void talkBoost(bool on) {
+  setCpuFrequencyMhz(on ? 240 : CPU_MHZ);
+  WiFi.setSleep(!on);
+}
+
 static void talkEnd(const char *why) {
   if (!talkActive()) return;
   M5.Speaker.stop(VOICE_CHANNEL);
   talkSpeakerOn();
   backendLink.talkRelease();
   talkPhase = TalkPhase::OFF;
+  talkBoost(false);
   forceRedraw = true;
   Serial.printf("[TALK] closed (%s)\r\n", why);
+  if (talkPendingCheck) {
+    // The conversation ended without the wearer speaking again: ask now.
+    talkPendingCheck = false;
+    Serial.println("[CHECK] the held collapse check runs now - no speech since");
+    startCheck(talkPendingEv);
+  }
 }
 
 /// Can a conversation start now? (Assigned, linked, online, nothing urgent.)
@@ -1404,6 +1435,7 @@ static void talkBegin(bool followUp = false) {
     talkError("Can't talk now", "The microphone did not start.");
     return;
   }
+  talkBoost(true);
   talkQueued = talkVadPos = 0;
   talkHeard = false;
   talkUrgent = false;
@@ -1418,6 +1450,30 @@ static void talkBegin(bool followUp = false) {
 /// put a WAV header in front: what /device-api/talk expects.
 static size_t talkMakeWav(size_t n) {
   int16_t *pcm = talkPcm();
+  // Keep only the speech, plus 0.3 s either side: the pause that ended the
+  // recording and any silence before it are just time on the network.
+  {
+    const float thr = max(talkFloor * 3.0f, 60.0f);
+    size_t first = n, last = 0;
+    for (size_t c = 0; c + TALK_CHUNK <= n; c += TALK_CHUNK) {
+      int64_t sum = 0, sq = 0;
+      for (size_t i = 0; i < TALK_CHUNK; ++i) sum += pcm[c + i];
+      const int mean = (int)(sum / (int64_t)TALK_CHUNK);
+      for (size_t i = 0; i < TALK_CHUNK; ++i) sq += (int64_t)(pcm[c + i] - mean) * (pcm[c + i] - mean);
+      if (sqrtf((float)sq / TALK_CHUNK) > thr) {
+        if (first == n) first = c;
+        last = c + TALK_CHUNK;
+      }
+    }
+    if (first < last) {
+      const size_t pad = TALK_RATE * 3 / 10;
+      const size_t from = first > pad ? first - pad : 0;
+      const size_t to = min(n, last + pad);
+      memmove(pcm, pcm + from, (to - from) * sizeof(int16_t));
+      Serial.printf("[TALK] trimmed %.1f s of silence\r\n", (n - (to - from)) / (float)TALK_RATE);
+      n = to - from;
+    }
+  }
   int64_t sum = 0;
   for (size_t i = 0; i < n; ++i) sum += pcm[i];
   const int mean = n ? (int)(sum / (int64_t)n) : 0;
@@ -1489,12 +1545,20 @@ static void serviceTalk() {
         if (rms > max(talkFloor * 3.0f, 60.0f)) {
           talkHeard = true;
           talkLastLoudMs = now;
+          if (talkPendingCheck) {
+            talkPendingCheck = false;
+            Serial.println("[CHECK] held collapse check cleared - the wearer is talking");
+          }
         }
       }
       const bool full = talkQueued + TALK_CHUNK > TALK_MAX_SAMPLES;
       const bool paused = talkHeard && now - talkLastLoudMs > TALK_QUIET_END_MS;
       const bool silent =
           !talkHeard && now - talkPhaseMs > (talkFollowUp ? TALK_FOLLOW_UP_MS : TALK_NO_SPEECH_MS);
+      if (silent && talkPendingCheck) {
+        talkEnd("no speech after a possible collapse");
+        break;
+      }
       if (silent) {
         // Nobody spoke: nothing is sent anywhere.
         while (M5.Mic.isRecording()) delay(1);
@@ -1534,6 +1598,8 @@ static void serviceTalk() {
                           strcmp(backendLink.talkResult().action, "unavailable") != 0;
         if (more) {
           talkBegin(true);  // the conversation carries on: just reply
+        } else if (talkPendingCheck) {
+          talkEnd("answer finished, possible collapse to ask about");
         } else {
           talkPhaseMs = now;
           talkPhase = TalkPhase::SHOWING;  // keep the words on screen
