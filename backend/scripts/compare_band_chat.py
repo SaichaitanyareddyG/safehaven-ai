@@ -1,6 +1,6 @@
 """Compare AI models for "Talk to SafeHaven" on the wearable band.
 
-Same draft band prompt, same fictional care plan and the same 20 questions for
+Same band prompt (app/ai/prompts.py, BAND_TALK_SYSTEM_PROMPT), same fictional care plan and the same 20 questions for
 every model; the deterministic safety gates from patient chat run first, as
 they will in the real pipeline, so the models only see what gets past them.
 
@@ -27,30 +27,9 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.ai.prompts import BAND_TALK_SYSTEM_PROMPT as BAND_PROMPT  # noqa: E402
 from app.patient_chat.service import _EMERGENCY_PATTERNS, _TREATMENT_CHANGE_PATTERNS  # noqa: E402
 
-# Draft of the band's system prompt. The band speaks the reply aloud and shows
-# it on a 135x240 screen, on a hospital ward: urgent → the NURSE, never
-# "call emergency services".
-BAND_PROMPT = """You are SafeHaven, a voice assistant on a hospital patient's wristband. The patient is \
-staying on a hospital ward. Your reply is spoken aloud by the band and shown on a tiny screen.
-
-Rules, all mandatory:
-- Reply in one or two short sentences, at most 30 words, in plain, warm words. No lists, no markdown, no emojis.
-- For anything about this patient's medicines or care, use ONLY the approved care plan below. If it does \
-not answer the question, say you are not sure and that their nurse can tell them.
-- NEVER suggest or agree to changing, stopping, skipping, doubling, delaying or adding a medicine or dose. \
-Say only that their nurse or doctor must decide that.
-- Never diagnose, never guess what a symptom means, never say a symptom is nothing to worry about.
-- If the patient describes pain, a fall, trouble breathing, chest discomfort, a racing or pounding heart, \
-bleeding, dizziness, confusion, or feeling very unwell: begin the reply with [NURSE] and say you are \
-calling their nurse now and they should stay where they are.
-- If the patient asks for something practical (water, food, the bathroom, a blanket, the nurse to come, \
-someone to be called): begin the reply with [REQUEST] and say you will let their nurse know.
-- You can only talk. Never claim to see, check, phone, or do anything else yourself.
-- About the band: it watches for falls and alerts the nurse; holding the front button calls a nurse.
-- A little friendly small talk is fine in one sentence. Do not answer general knowledge questions that are \
-not about their stay or care; say you can only help with their stay and care."""
 
 # Fictional ward patient — the shape _build_care_plan_summary() produces.
 CARE_PLAN = """- Metoprolol: dose: 25 mg, frequency: twice daily (8 am and 8 pm), route: by mouth \

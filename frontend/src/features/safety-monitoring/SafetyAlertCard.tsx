@@ -8,6 +8,8 @@ import {
   CircleAlert,
   ClockAlert,
   Footprints,
+  MessageSquareMore,
+  MessageSquareWarning,
   PersonStanding,
   Watch,
   WifiOff,
@@ -31,6 +33,8 @@ const ALERT_ICONS: Record<AlertType, typeof Activity> = {
   HELP_REQUESTED: BellRing,
   NO_RESPONSE: CircleAlert,
   DEVICE_NOT_WORN: Watch,
+  TALK_URGENT: MessageSquareWarning,
+  TALK_REQUEST: MessageSquareMore,
 }
 
 // Left border only, so the card reads as urgent at a glance without a wall of

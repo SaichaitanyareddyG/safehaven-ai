@@ -371,3 +371,26 @@ class PairDeviceRequest(BaseModel):
     pairing_code: str = Field(min_length=6, max_length=12)
     # The label physically on the band, as for manual registration.
     device_code: str = Field(min_length=3, max_length=32)
+
+
+class TalkTextRequest(BaseModel):
+    """Typed instead of spoken — for bench testing and a future text input.
+    The band itself sends a WAV recording."""
+
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=500)
+
+
+class TalkReply(BaseModel):
+    """The band's answer. `audio_b64` is unsigned 8-bit mono PCM at 16 kHz,
+    already shaped for the band's speaker; None if the voice service failed,
+    in which case the band shows `reply` as text. `action` tells the band
+    which face to show: urgent (amber, calling the nurse), request,
+    unavailable (sleepy), or none."""
+
+    transcript: str
+    reply: str
+    action: str
+    audio_format: str = "pcm-u8-16000-mono"
+    audio_b64: str | None
+    timings_ms: dict[str, int]

@@ -11,14 +11,18 @@ import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.core.db import get_db
 from app.core.rate_limit import limiter
-from app.wearables import service
+from app.wearables import service, talk as band_talk
 from app.wearables.dependencies import get_current_device
 from app.wearables.models import WearableDevice
 from app.wearables.schemas import (
+    TalkReply,
+    TalkTextRequest,
     DeviceAlertView,
     DeviceAssignmentView,
     DeviceEnrollResponse,
@@ -47,6 +51,10 @@ _HEARTBEAT_RATE_LIMIT = "120/minute"
 # handled by alert-level dedupe, not by refusing the data. This limit only
 # exists to stop a device with a broken retry loop saturating the API.
 _EVENTS_RATE_LIMIT = "240/minute"
+# Each talk request runs speech-to-text, a model and a voice: a patient asks a
+# question every few seconds at most; this only stops a broken loop.
+_TALK_RATE_LIMIT = "20/minute"
+_TALK_MAX_AUDIO_BYTES = 1_600_000  # ~50 s of 16 kHz 16-bit mono
 
 
 @router.post("/enroll", response_model=DeviceEnrollResponse)
@@ -210,4 +218,47 @@ def submit_event(
         outcome=outcome,
         event_id=event.id if event else None,
         delayed=event.delayed if event else False,
+    )
+
+
+@router.post("/talk", response_model=TalkReply)
+@limiter.limit(_TALK_RATE_LIMIT)
+async def talk(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    device: Annotated[WearableDevice, Depends(get_current_device)],
+) -> TalkReply:
+    """"Talk to SafeHaven": one spoken question in, one spoken answer out.
+
+    Body: a WAV recording (Content-Type audio/wav), or for testing JSON
+    {"text": "..."}. Urgent words raise a TALK_URGENT alert and practical
+    requests a TALK_REQUEST alert, through the same path as band events.
+    Nothing the patient says is stored. 409 when the band is not assigned.
+    """
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    body = await request.body()
+    if content_type == "application/json":
+        try:
+            text = TalkTextRequest.model_validate_json(body).text
+        except ValidationError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Expected {\"text\": ...}") from exc
+        audio = None
+    elif content_type in ("audio/wav", "audio/x-wav", "audio/wave"):
+        if not body or len(body) > _TALK_MAX_AUDIO_BYTES:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Recording empty or too long")
+        text, audio = None, body
+    else:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Send audio/wav or application/json")
+
+    try:
+        # Blocking calls to three local services: off the event loop.
+        result = await run_in_threadpool(band_talk.talk, db, device, audio=audio, text=text)
+    except band_talk.NotAssignedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This band is not assigned to a patient") from exc
+    return TalkReply(
+        transcript=result.transcript,
+        reply=result.reply,
+        action=result.action,
+        audio_b64=result.audio_b64,
+        timings_ms=result.timings_ms,
     )

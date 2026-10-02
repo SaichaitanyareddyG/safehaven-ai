@@ -9,6 +9,8 @@ export type AlertType =
   | 'HELP_REQUESTED'
   | 'NO_RESPONSE'
   | 'DEVICE_NOT_WORN'
+  | 'TALK_URGENT'
+  | 'TALK_REQUEST'
 
 /**
  * Operational priority — how soon someone should look. Deliberately NOT a
@@ -108,6 +110,8 @@ export type SensorEventType =
   | 'HELP_REQUESTED'
   | 'NO_RESPONSE'
   | 'DEVICE_NOT_WORN'
+  | 'TALK_URGENT'
+  | 'TALK_REQUEST'
 
 export interface SensorEvent {
   id: string

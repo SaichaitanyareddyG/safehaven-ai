@@ -52,6 +52,8 @@ _EVENT_TO_ALERT = {
     SensorEventType.HELP_REQUESTED: AlertType.HELP_REQUESTED,
     SensorEventType.NO_RESPONSE: AlertType.NO_RESPONSE,
     SensorEventType.DEVICE_NOT_WORN: AlertType.DEVICE_NOT_WORN,
+    SensorEventType.TALK_URGENT: AlertType.TALK_URGENT,
+    SensorEventType.TALK_REQUEST: AlertType.TALK_REQUEST,
 }
 
 # Profiles under which a heightened-risk patient's abnormal movement is treated
@@ -111,6 +113,16 @@ def evaluate(
         # fold into the fall alert, so the nurse is told AGAIN (sound, toast,
         # desktop notification) rather than a counter quietly ticking up.
         return AlertDecision(True, AlertType.NO_RESPONSE, AlertPriority.HIGH)
+
+    if event_type is SensorEventType.TALK_URGENT:
+        # The patient SAID something urgent. Like the help button: a person
+        # asking, not an inference, so HIGH and never profile-gated.
+        return AlertDecision(True, AlertType.TALK_URGENT, AlertPriority.HIGH)
+
+    if event_type is SensorEventType.TALK_REQUEST:
+        # Water, the bathroom, a call to family: a nurse should come, but it is
+        # not an emergency. MEDIUM, so it never outranks a fall.
+        return AlertDecision(True, AlertType.TALK_REQUEST, AlertPriority.MEDIUM)
 
     if event_type is SensorEventType.DEVICE_NOT_WORN:
         # MEDIUM, above low battery: a band on a table is a patient without

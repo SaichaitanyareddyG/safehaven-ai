@@ -1484,6 +1484,7 @@ workflow**, which is the part that is finished.
 | **"Are you OK?" check** — uncertain falls and faint-like collapses are put to the wearer for 30 s; unanswered → `NO_RESPONSE`, or `DEVICE_NOT_WORN` if the band lies still like an object | Cuts false nurse alerts without dropping a real fall | `3953901` |
 | **Accuracy against public datasets** — WEDA-FALL and UMAFall scored on the host | Real-fall evidence before our own recordings (`firmware/DETECTION_ACCURACY.md`) | `2bf69c7`…`ea00b91` |
 | **Spoken prompts** on the band ("Fall detected…", "A nurse is coming") and read-aloud alerts on the dashboard (room only, never the name) | Beeps alone did not tell the wearer or the nurse what happened | `bbe02e4` |
+| **Talk to SafeHaven (server side)** — `/device-api/talk`: speech to text (whisper.cpp) → fixed urgent / medicine / request rules → Qwen 3.5 4B on the approved care plan → Piper voice; urgent → `TALK_URGENT` (HIGH), requests → `TALK_REQUEST` (MEDIUM). All three services local; nothing said is stored. ~2 s per answer on an M4 Pro. Band side (microphone, avatar) not built yet | A patient can ask about their care and be heard; model chosen by `scripts/compare_band_chat.py` | — |
 
 ### Where the build departs from the plan
 

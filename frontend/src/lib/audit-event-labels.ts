@@ -76,6 +76,8 @@ const SENSOR_EVENT_LABELS: Record<string, string> = {
   HELP_REQUESTED: 'Help requested',
   NO_RESPONSE: 'No response after possible fall',
   DEVICE_NOT_WORN: 'Band not worn',
+  TALK_URGENT: 'Said something urgent to the band',
+  TALK_REQUEST: 'Asked the band for assistance',
 }
 
 function sensorEventLabel(event: AuditEvent): string {

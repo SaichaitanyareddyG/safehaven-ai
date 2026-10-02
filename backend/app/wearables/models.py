@@ -214,6 +214,12 @@ class SensorEventType(str, enum.Enum):
     # off, or (rarely) a wearer so still it reads as a table. Either way the
     # patient may not be monitored, which is what the nurse needs to know.
     DEVICE_NOT_WORN = "DEVICE_NOT_WORN"
+    # "Talk to SafeHaven": raised by the BACKEND from what the patient said to
+    # the band's voice assistant (wearables/talk.py), never sent by a band.
+    # URGENT: words like "I fell" / "I'm dizzy", caught by a fixed rule or the
+    # model. REQUEST: practical needs (water, bathroom) for the nurse.
+    TALK_URGENT = "TALK_URGENT"
+    TALK_REQUEST = "TALK_REQUEST"
 
 
 class SensorEvent(Base):
@@ -295,6 +301,8 @@ class AlertType(str, enum.Enum):
     HELP_REQUESTED = "HELP_REQUESTED"
     NO_RESPONSE = "NO_RESPONSE"
     DEVICE_NOT_WORN = "DEVICE_NOT_WORN"
+    TALK_URGENT = "TALK_URGENT"
+    TALK_REQUEST = "TALK_REQUEST"
 
 
 class AlertPriority(str, enum.Enum):

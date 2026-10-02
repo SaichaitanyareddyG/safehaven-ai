@@ -1342,6 +1342,12 @@ _ALERT_MESSAGES = {
     AlertType.NO_RESPONSE: (
         "No response on the wearable after a possible fall — attend now."
     ),
+    AlertType.TALK_URGENT: (
+        "Patient told the band's voice assistant something that may be urgent — attend now."
+    ),
+    AlertType.TALK_REQUEST: (
+        "Patient asked for assistance through the band's voice assistant — please check in."
+    ),
     AlertType.DEVICE_NOT_WORN: (
         "Wearable appears not to be worn — the patient may not be monitored. Check the patient and the band."
     ),

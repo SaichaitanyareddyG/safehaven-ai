@@ -69,6 +69,16 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen3.5:9b"
     ollama_temperature: float = 0.0
+    # "Talk to SafeHaven" on the wearable band (wearables/talk.py). Three LOCAL
+    # services, each reached over HTTP like Ollama — no speech or voice library
+    # in this codebase, and nothing the patient says leaves the hospital:
+    # whisper.cpp's whisper-server (speech to text), Ollama (the answer) and
+    # Piper's HTTP server (the voice). Model chosen by
+    # scripts/compare_band_chat.py.
+    band_talk_stt_url: str = "http://127.0.0.1:8178"
+    band_talk_tts_url: str = "http://127.0.0.1:5005"
+    band_talk_llm_url: str = "http://localhost:11434"
+    band_talk_llm_model: str = "qwen3.5:4b"
     # Clinical text sent to/from the LLM may contain PHI — never persisted by default.
     store_raw_llm_data: bool = False
 
