@@ -5,13 +5,14 @@
 #
 #   make test     build and run the detection, scenario-sensor and battery tests
 #   make replay   run a trace through the core and print events
+#   make replay-rec REC=session.txt [LABELS=labels.txt]   replay a recorded bench session
 #   make clean
 
 CXX      ?= c++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Wpedantic -I../include -I.
 BUILD    := build
 
-.PHONY: test replay clean
+.PHONY: test replay replay-rec clean
 
 test: $(BUILD)/test_detection $(BUILD)/test_fall_cases $(BUILD)/test_scenarios $(BUILD)/test_battery
 	@$(BUILD)/test_detection
@@ -33,6 +34,12 @@ $(BUILD)/test_fall_cases: test_fall_cases.cpp Traces.h $(wildcard ../include/cor
 
 $(BUILD)/test_battery: test_battery.cpp ../include/power/BatteryEstimator.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ test_battery.cpp
+
+replay-rec: $(BUILD)/replay_recording
+	@$(BUILD)/replay_recording $(REC) $(LABELS)
+
+$(BUILD)/replay_recording: replay_recording.cpp $(wildcard ../include/core/*.h) | $(BUILD)
+	$(CXX) $(CXXFLAGS) -o $@ replay_recording.cpp
 
 $(BUILD)/replay: replay.cpp Traces.h $(wildcard ../include/core/*.h) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ replay.cpp

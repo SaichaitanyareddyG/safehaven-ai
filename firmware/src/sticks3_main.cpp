@@ -731,12 +731,12 @@ static void trackFall(const DetectedEvent &ev) {
 // ── tuning tools (bench) ────────────────────────────────────────────────────
 // Recording: raw 50 Hz IMU to flash for a labelled session, so detection can
 // be tuned on REAL wrist motion and measured (false alarms / falls caught).
-// 16 bytes a sample ≈ 0.8 KB/s; capped at 15 minutes. Side-button clicks on
+// 16 bytes a sample ≈ 0.8 KB/s; capped at 25 minutes. Side-button clicks on
 // the TEST screen drop numbered markers that label the activities.
 // Raw motion never leaves the device except by this explicit USB dump.
 static const char *REC_PATH = "/rec.bin";
 static const char *REC_MARK_PATH = "/rec_marks.csv";
-static const size_t REC_MAX_BYTES = 15UL * 60 * 50 * 16;
+static const size_t REC_MAX_BYTES = 25UL * 60 * 50 * 16;  // 25 min = 1.2 MB of the 1.5 MB flash FS
 static bool recording = false;
 static File recFile;
 static uint64_t recStartMs = 0;
@@ -756,7 +756,7 @@ static void recordSample(const ImuSample &s) {
   if (recBytes >= REC_MAX_BYTES) {
     recording = false;
     recFile.close();
-    Serial.println("[REC] stopped: 15-minute limit reached");
+    Serial.println("[REC] stopped: 25-minute limit reached");
     return;
   }
   RecSample r{(uint32_t)(s.t_ms - recStartMs), clamp16(s.ax * 1000), clamp16(s.ay * 1000), clamp16(s.az * 1000),
