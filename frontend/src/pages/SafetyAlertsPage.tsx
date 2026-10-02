@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { SafetyAlertCard } from '@/features/safety-monitoring/SafetyAlertCard'
 import { useAlertSound } from '@/features/safety-monitoring/use-alert-sound'
+import { useDesktopNotificationPermission } from '@/features/safety-monitoring/use-desktop-notifications'
 import {
   ALERT_POLL_INTERVAL_MS,
   useLiveSafetyAlerts,
@@ -24,6 +25,7 @@ import {
 export function SafetyAlertsPage() {
   const { data, isLoading, isError, error, dataUpdatedAt } = useLiveSafetyAlerts()
   const sound = useAlertSound()
+  const desktop = useDesktopNotificationPermission()
 
   // Recently resolved, shown separately and collapsed to the last few. Kept
   // off the main list on purpose: a queue that mixes live and closed alerts
@@ -47,6 +49,30 @@ export function SafetyAlertsPage() {
             {ALERT_POLL_INTERVAL_MS / 1000} seconds.
           </p>
         </div>
+        <div className="flex gap-2">
+        {desktop.permission !== 'unsupported' && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={desktop.request}
+            disabled={desktop.permission !== 'default'}
+            data-testid="enable-desktop-alerts"
+            title={
+              desktop.permission === 'granted'
+                ? 'Alerts also appear as desktop notifications while this tab is hidden'
+                : desktop.permission === 'denied'
+                  ? 'Blocked in browser settings — allow notifications for this site to enable'
+                  : 'Show alerts as desktop notifications while this tab is hidden'
+            }
+          >
+            <BellRing className="h-4 w-4" />
+            {desktop.permission === 'granted'
+              ? 'Desktop alerts on'
+              : desktop.permission === 'denied'
+                ? 'Desktop alerts blocked'
+                : 'Enable desktop alerts'}
+          </Button>
+        )}
         <Button
           variant="outline"
           size="sm"
@@ -61,6 +87,7 @@ export function SafetyAlertsPage() {
           {sound.enabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
           {sound.enabled ? 'Sound on' : 'Sound off'}
         </Button>
+        </div>
       </div>
 
       {isError && (

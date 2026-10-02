@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
 import { useAlertSound } from '@/features/safety-monitoring/use-alert-sound'
+import { showDesktopAlert } from '@/features/safety-monitoring/use-desktop-notifications'
 import { useLiveSafetyAlerts } from '@/features/safety-monitoring/use-safety-alerts'
 import type { SafetyAlert } from '@/types/safety-monitoring'
 
@@ -23,6 +24,8 @@ import type { SafetyAlert } from '@/types/safety-monitoring'
  *    queue, not interrupting a nurse mid-task. Announcing everything is how a
  *    channel gets muted, and then a real fall goes unheard.
  */
+const APP_TITLE = 'SAFEHAVEN'
+
 export function useAlertNotifications() {
   const { data } = useLiveSafetyAlerts()
   const { play } = useAlertSound()
@@ -32,6 +35,14 @@ export function useAlertNotifications() {
   // id, so it produced no toast and no sound — the alert silently became
   // urgent while nobody was told. See §3 of the edge-case review.
   const seen = useRef<Map<string, SafetyAlert['priority']> | null>(null)
+
+  // Open, non-LOW alerts in the tab title, so the count is visible from any
+  // other tab or window — the cheapest signal there is.
+  useEffect(() => {
+    const open = (data?.results ?? []).filter((a) => a.status === 'OPEN' && a.priority !== 'LOW')
+    document.title = open.length > 0 ? `(${open.length}) Alert · ${APP_TITLE}` : APP_TITLE
+  }, [data])
+  useEffect(() => () => void (document.title = APP_TITLE), [])
 
   useEffect(() => {
     if (!data) return
@@ -78,4 +89,8 @@ function announce(alert: SafetyAlert) {
   } else {
     toast.warning(alert.message, { description, duration: 8_000 })
   }
+
+  // Hidden tab: also an OS notification. Patient code and room only — see
+  // showDesktopAlert for why the name is left out.
+  showDesktopAlert(alert.id, alert.message, `${alert.patient_code} · ${where}`, alert.priority === 'HIGH')
 }

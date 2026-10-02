@@ -34,8 +34,12 @@ export function useLiveSafetyAlerts() {
     // Override the global 10s staleTime: for a safety queue, cached-and-stale
     // is the wrong default.
     staleTime: 0,
-    // Deliberately NOT refetchIntervalInBackground. A hidden tab polling every
-    // three seconds is pure waste, and react-query refetches on window focus
-    // anyway, so returning to the tab shows current data immediately.
+    // Keep polling while the tab is hidden. Bench-tested on real hardware: a
+    // fall raised while the nurse was in another tab stayed invisible until
+    // they happened to come back. For a safety queue that is the wrong
+    // trade. Browsers throttle hidden-tab timers (to about once a minute in
+    // Chrome after a while), which still beats never; the desktop
+    // notification in use-alert-notifications is what makes it heard.
+    refetchIntervalInBackground: true,
   })
 }
