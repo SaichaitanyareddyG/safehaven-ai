@@ -167,7 +167,10 @@ static const unsigned long ATTENTION_PERIOD_MS = 1800;   // ~0.55 Hz, far under 
 static const unsigned long ATTENTION_SLOW_PERIOD_MS = 4000;
 static const unsigned long ATTENTION_FAST_FOR_MS = 120000; // then slower, and silent
 static const uint8_t BRIGHTNESS_ATTENTION = 220;
-static const uint8_t SPEAKER_VOLUME = 150;                // of 255: clear, not painful
+static const uint8_t SPEAKER_VOLUME = 255;                // max: bench test found 150 too quiet
+// Small cavity speakers are loudest around 2-3 kHz; tones sit in that band.
+static const float TONE_ALARM_HZ = 2600;
+static const uint32_t TONE_ALARM_MS = 260;
 static bool attentionActive = false;
 static unsigned long attentionSinceMs = 0;
 static unsigned long lastBeepCycle = UINT32_MAX;
@@ -437,11 +440,11 @@ static void serviceNurseResponse() {
     stopAttention("nurse acknowledged");
     alertSinceMs = millis();  // show "A nurse is coming" for the full period
     screenWake("nurse acknowledged");
-    M5.Speaker.tone(523, 110);
-    delay(130);
-    M5.Speaker.tone(659, 110);
-    delay(130);
-    M5.Speaker.tone(784, 180);
+    M5.Speaker.tone(1568, 140);
+    delay(160);
+    M5.Speaker.tone(1976, 140);
+    delay(160);
+    M5.Speaker.tone(2349, 240);
     Serial.println("[ALERT] nurse acknowledged - showing 'A nurse is coming'");
   } else if (ls.nurseResponse == NurseResponse::RESOLVED) {
     stopAttention("nurse resolved");
@@ -462,7 +465,7 @@ static void serviceSound() {
       const unsigned long cycle = elapsed / ATTENTION_PERIOD_MS;
       if (cycle != lastBeepCycle) {
         lastBeepCycle = cycle;
-        M5.Speaker.tone(880, 140);
+        M5.Speaker.tone(TONE_ALARM_HZ, TONE_ALARM_MS);
       }
     }
   }
@@ -471,9 +474,9 @@ static void serviceSound() {
     if (!strcmp(ls.lastEventId, alertEventId) && ls.lastDelivery == Delivery::DELIVERED) {
       chimedForAlert = true;
       if (!attentionActive) {
-        M5.Speaker.tone(660, 120);
-        delay(140);
-        M5.Speaker.tone(990, 180);
+        M5.Speaker.tone(1760, 140);
+        delay(160);
+        M5.Speaker.tone(2640, 220);
       }
     }
   }
@@ -823,9 +826,9 @@ static void handleButtons() {
     helpFired = true;
     swallowClicks = true;  // the release must not also close the alert it opens
     screenWake("help button");
-    M5.Speaker.tone(988, 90);
-    delay(110);
-    M5.Speaker.tone(988, 90);
+    M5.Speaker.tone(2600, 150);
+    delay(200);
+    M5.Speaker.tone(2600, 150);
     DetectedEvent ev;
     ev.type = EventType::HELP_REQUESTED;
     ev.occurred_at_ms = clock_.millis();
