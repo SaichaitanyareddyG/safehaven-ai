@@ -98,6 +98,8 @@ struct HomeModel {
   char date[16];
   // starting
   Step sensorStep, wifiStep, clockStep;
+  // QR payload ("SH:<token>"), empty when the backend has issued none
+  char qr[48];
   // getting ready
   uint8_t settleLeftS;
   // alert
@@ -445,16 +447,25 @@ class StickUi {
       monitoringLine(50);
     }
 
-    // QR area. The assignment token (plan Stage 10) does not exist yet; until
-    // it does, a framed placeholder — never a fake, scannable code.
+    // QR area: the assignment's opaque token from the backend. Without one
+    // (bench mode, or an older backend), a framed placeholder — never a fake,
+    // scannable code.
     const int qx = 14, qy = 82, qs = 107, k = 12;
+    if (m.qr[0]) {
+      // White tile with a 4-module quiet zone (margin=true) — what phone
+      // scanners need. Content is an opaque token, never patient identity.
+      c.fillRoundRect(qx, qy, qs, qs, 7, rgb(0xFF, 0xFF, 0xFF));
+      c.qrcode(m.qr, qx + 3, qy + 3, qs - 6, 1, true);
+      if (m.wifiUp) text(small_, "Staff: scan to confirm patient", CX, qy + qs + 11, TEXT3, middle_center);
+    } else {
     c.fillRoundRect(qx, qy, qs, qs, 7, SURFACE);
     c.drawFastHLine(qx, qy, k, TEXT3);           c.drawFastVLine(qx, qy, k, TEXT3);
     c.drawFastHLine(qx + qs - k, qy, k, TEXT3);  c.drawFastVLine(qx + qs - 1, qy, k, TEXT3);
     c.drawFastHLine(qx, qy + qs - 1, k, TEXT3);  c.drawFastVLine(qx, qy + qs - k, k, TEXT3);
     c.drawFastHLine(qx + qs - k, qy + qs - 1, k, TEXT3); c.drawFastVLine(qx + qs - 1, qy + qs - k, k, TEXT3);
     text(body_, "Patient QR", CX, qy + qs / 2 - 7, TEXT2, middle_center);
-    text(small_, "coming soon", CX, qy + qs / 2 + 8, TEXT3, middle_center);
+    text(small_, "not issued yet", CX, qy + qs / 2 + 8, TEXT3, middle_center);
+    }
 
     if (!m.wifiUp) {
       c.fillRoundRect(10, 199, 115, 26, 5, BLUE_DARK);

@@ -184,6 +184,14 @@ class DeviceAssignment(Base):
     )
     unassigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # The opaque identifier the band shows as its QR code (plan §11, Stage 10).
+    # Stored in plaintext ON PURPOSE: the device has to receive the raw value
+    # to draw it, and a hash cannot be served back (the §19 correction). It
+    # resolves to a patient only for a caller holding a clinician JWT, so it is
+    # an identifier, not a credential. Nulled the moment the assignment ends —
+    # that is what makes an old QR stop working immediately.
+    qr_token: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
+
 
 class SensorEventType(str, enum.Enum):
     """What a device may report.

@@ -116,6 +116,21 @@ def _hash(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+# 96 bits from the OS CSPRNG, URL-safe base64 → 16 characters. Short enough for
+# a low-version QR on a 135 px screen, far too large to guess.
+QR_TOKEN_BYTES = 12
+QR_PREFIX = "SH:"
+
+
+def _new_qr_token() -> str:
+    return secrets.token_urlsafe(QR_TOKEN_BYTES)
+
+
+class QrTokenNotFoundError(Exception):
+    """Unknown, malformed, or belonging to an ended assignment — deliberately
+    indistinguishable, so a scan cannot be used to probe old tokens."""
+
+
 def _new_enrollment_code() -> str:
     return "".join(secrets.choice(_ENROLLMENT_ALPHABET) for _ in range(_ENROLLMENT_LENGTH))
 
@@ -362,6 +377,40 @@ def active_assignment_for_device(db: Session, device_id: uuid.UUID) -> DeviceAss
     )
 
 
+def resolve_qr_token(db: Session, scanned: str, resolved_by: uuid.UUID) -> tuple[DeviceAssignment, Patient, WearableDevice]:
+    """Turn a scanned band QR into the patient wearing it. Audited.
+
+    Only ACTIVE assignments carry a token (ending one nulls it), so an old or
+    reused band can never point a nurse at the previous patient.
+    """
+    token = scanned.strip()
+    if token.upper().startswith(QR_PREFIX):
+        token = token[len(QR_PREFIX):]
+    assignment = (
+        db.query(DeviceAssignment)
+        .filter(DeviceAssignment.qr_token == token, DeviceAssignment.unassigned_at.is_(None))
+        .first()
+        if token
+        else None
+    )
+    if assignment is None:
+        raise QrTokenNotFoundError()
+    patient = get_patient(db, assignment.patient_id)
+    device = get_device(db, assignment.device_id)
+    record_event(
+        db,
+        event_type=AuditEventType.WEARABLE_QR_RESOLVED,
+        actor_type=ActorType.CLINICIAN,
+        actor_id=resolved_by,
+        patient_id=patient.id,
+        entity_type="DeviceAssignment",
+        entity_id=assignment.id,
+        event_metadata={"device_code": device.device_code},
+    )
+    db.commit()
+    return assignment, patient, device
+
+
 def active_assignment_for_patient(db: Session, patient_id: uuid.UUID) -> DeviceAssignment | None:
     return (
         db.query(DeviceAssignment)
@@ -435,6 +484,7 @@ def assign_device(
         encounter_id=open_encounter.id if open_encounter else None,
         monitoring_profile=data.monitoring_profile,
         assigned_by=assigned_by,
+        qr_token=_new_qr_token(),
     )
     db.add(assignment)
     try:
@@ -525,6 +575,9 @@ def _end_assignment(
     device = get_device(db, assignment.device_id)
     assignment.unassigned_at = datetime.now(timezone.utc)
     assignment.unassigned_by = unassigned_by
+    # The old QR must stop resolving the moment monitoring ends — including
+    # through the discharge cascade, which calls this too.
+    assignment.qr_token = None
 
     record_event(
         db,

@@ -15,12 +15,13 @@ than inventing the first RBAC here, and it is recorded as a known gap
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
 from app.auth.provider import AuthenticatedUser
 from app.core.db import get_db
+from app.core.rate_limit import limiter
 from app.patients.service import PatientNotFoundError
 from app.wearables import service
 from app.wearables.models import AlertStatus
@@ -28,6 +29,8 @@ from app.wearables.schemas import (
     DeviceAssignmentCreate,
     DeviceAssignmentRead,
     PatientAssignmentResponse,
+    QrResolveRequest,
+    QrResolveResponse,
     SafetyAlertListResponse,
     SafetyAlertRead,
     SensorEventListResponse,
@@ -287,3 +290,41 @@ def resolve_safety_alert(
     except service.AlertNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found") from exc
     return service.alert_to_read(db, alert)
+
+
+# A scanner in a nurse's hand resolves one band at a time; this limit only
+# exists to stop anyone iterating the token space with a stolen session.
+_QR_RESOLVE_RATE_LIMIT = "30/minute"
+
+
+@router.post("/wearable-assignments/resolve", response_model=QrResolveResponse)
+@limiter.limit(_QR_RESOLVE_RATE_LIMIT)
+def resolve_wearable_qr(
+    request: Request,
+    payload: QrResolveRequest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> QrResolveResponse:
+    """Which patient wears the band whose QR was just scanned.
+
+    Clinician JWT only — the QR itself means nothing to anyone else. One
+    generic 404 covers unknown, malformed and ended tokens alike.
+    """
+    try:
+        assignment, patient, device = service.resolve_qr_token(
+            db, payload.token, resolved_by=uuid.UUID(current_user.id)
+        )
+    except service.QrTokenNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This band is not currently assigned to a patient",
+        ) from exc
+    return QrResolveResponse(
+        patient_id=patient.id,
+        patient_code=patient.patient_code,
+        patient_name=f"{patient.first_name} {patient.last_name}",
+        room_number=patient.room_number,
+        device_code=device.device_code,
+        monitoring_profile=assignment.monitoring_profile,
+        assigned_at=assignment.assigned_at,
+    )

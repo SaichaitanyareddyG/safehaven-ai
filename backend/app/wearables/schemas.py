@@ -97,6 +97,26 @@ class DeviceAssignmentRead(BaseModel):
         return self.unassigned_at is None
 
 
+class QrResolveRequest(BaseModel):
+    # Accepts the scanned text as-is: with or without the "SH:" prefix.
+    token: str = Field(min_length=8, max_length=64)
+
+
+class QrResolveResponse(BaseModel):
+    """Who wears the scanned band — shown to a logged-in clinician only.
+
+    An auxiliary identifier: the hospital wristband stays authoritative
+    (plan §11), so this is for finding a patient, not for clinical action."""
+
+    patient_id: uuid.UUID
+    patient_code: str
+    patient_name: str
+    room_number: str | None
+    device_code: str
+    monitoring_profile: MonitoringProfile
+    assigned_at: datetime
+
+
 class PatientAssignmentResponse(BaseModel):
     """`assignment` is null when the patient has no wearable — which is the
     normal case, not an error."""
@@ -219,6 +239,10 @@ class DeviceAssignmentView(BaseModel):
     # Echoed so the device can detect a reassignment it missed and reset its
     # detectors rather than carrying state across two different patients.
     assigned_at_ms: int
+    # What the band renders as its QR code (prefixed "SH:" on the device).
+    # Random — it carries nothing about the patient; only a clinician-JWT
+    # lookup (POST /wearable-assignments/resolve) turns it into one.
+    qr_token: str | None = None
 
 
 class SensorEventMetrics(BaseModel):

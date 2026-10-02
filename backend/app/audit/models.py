@@ -80,6 +80,9 @@ class AuditEventType(str, enum.Enum):
     # discharge cascade ended it, and CLINICIAN when staff did it deliberately.
     WEARABLE_DEVICE_ASSIGNED = "WEARABLE_DEVICE_ASSIGNED"
     WEARABLE_DEVICE_UNASSIGNED = "WEARABLE_DEVICE_UNASSIGNED"
+    # A clinician scanned a band's QR and was shown which patient wears it.
+    # Patient-scoped: who looked a patient up, and when, belongs on their trail.
+    WEARABLE_QR_RESOLVED = "WEARABLE_QR_RESOLVED"
     SAFETY_EVENT_RECEIVED = "SAFETY_EVENT_RECEIVED"
     SAFETY_ALERT_RAISED = "SAFETY_ALERT_RAISED"
     SAFETY_ALERT_ACKNOWLEDGED = "SAFETY_ALERT_ACKNOWLEDGED"

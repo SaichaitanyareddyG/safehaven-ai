@@ -100,6 +100,7 @@ def heartbeat(
             assignment_id=assignment.id,
             monitoring_profile=assignment.monitoring_profile,
             assigned_at_ms=int(assignment.assigned_at.timestamp() * 1000),
+            qr_token=assignment.qr_token,
         )
         if assignment is not None
         else None

@@ -120,3 +120,14 @@ export interface SensorEventListResponse {
   total: number
   results: SensorEvent[]
 }
+
+/** Who wears a scanned band. Auxiliary only — the wristband stays authoritative. */
+export interface QrResolveResult {
+  patient_id: string
+  patient_code: string
+  patient_name: string
+  room_number: string | null
+  device_code: string
+  monitoring_profile: MonitoringProfile
+  assigned_at: string
+}

@@ -163,6 +163,10 @@ def test_device_is_never_told_who_it_is_monitoring(client):
         "assignment_id",
         "monitoring_profile",
         "assigned_at_ms",
+        # Random, shown as the band's QR; resolves to a patient only through a
+        # clinician-JWT lookup (test_wearable_qr.py). The leak check below
+        # covers it like every other field.
+        "qr_token",
     }
 
     blob = str(body)

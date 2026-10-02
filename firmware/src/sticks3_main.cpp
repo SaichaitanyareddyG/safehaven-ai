@@ -474,6 +474,11 @@ static void buildHome(HomeModel &m) {
 
   m.settleLeftS = (uint8_t)settleLeftS();
   m.alertType = alertType;
+  if (!benchMode && assigned) {
+    const LinkStatus ls = backendLink.status();
+    if (ls.assignment.present && ls.assignment.qrToken[0])
+      snprintf(m.qr, sizeof(m.qr), "SH:%s", ls.assignment.qrToken);
+  }
   if (benchMode || !alertEventId[0]) {
     m.alertKind = ui::AlertKind::BENCH;
   } else {

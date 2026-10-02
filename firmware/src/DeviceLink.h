@@ -45,6 +45,7 @@ struct LinkAssignment {
   char id[40] = "";
   MonitoringProfile profile = MonitoringProfile::STANDARD;
   uint64_t assignedAtMs = 0;
+  char qrToken[40] = "";  // random; the band shows "SH:<token>" as its QR
 };
 
 /// Outcome of the most recent event delivery, for the alert screens.
@@ -94,6 +95,7 @@ class DeviceLink {
       if (prefs_.isKey("asg_id")) strlcpy(a.id, prefs_.getString("asg_id", "").c_str(), sizeof(a.id));
       a.profile = (MonitoringProfile)prefs_.getUChar("asg_prof", 0);
       a.assignedAtMs = prefs_.getULong64("asg_at", 0);
+      if (prefs_.isKey("asg_qr")) strlcpy(a.qrToken, prefs_.getString("asg_qr", "").c_str(), sizeof(a.qrToken));
     }
 
     LittleFS.mkdir("/q");
@@ -340,6 +342,7 @@ class DeviceLink {
                   : strcmp(p, "RESTRICTED_MOBILITY") == 0 ? MonitoringProfile::RESTRICTED_MOBILITY
                                                           : MonitoringProfile::STANDARD;
       a.assignedAtMs = av["assigned_at_ms"] | (uint64_t)0;
+      strlcpy(a.qrToken, av["qr_token"] | "", sizeof(a.qrToken));
     }
 
     xSemaphoreTake(lock_, portMAX_DELAY);
@@ -358,6 +361,12 @@ class DeviceLink {
       st_.assignment = a;
       st_.assignmentVersion++;
       saveAssignment(a);
+    } else if (strcmp(a.qrToken, st_.assignment.qrToken) != 0) {
+      // Same assignment, new QR token (e.g. issued to an assignment that
+      // predates QR support). Update the display only — the detectors keep
+      // running; this is not a new patient.
+      strlcpy(st_.assignment.qrToken, a.qrToken, sizeof(st_.assignment.qrToken));
+      saveAssignment(st_.assignment);
     }
     st_.assignmentKnown = true;
     xSemaphoreGive(lock_);
@@ -464,6 +473,7 @@ class DeviceLink {
     prefs_.putString("asg_id", a.id);
     prefs_.putUChar("asg_prof", (uint8_t)a.profile);
     prefs_.putULong64("asg_at", a.assignedAtMs);
+    prefs_.putString("asg_qr", a.qrToken);
   }
 
   const char* baseUrl_ = nullptr;

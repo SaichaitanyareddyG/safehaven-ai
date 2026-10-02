@@ -247,6 +247,8 @@ export function auditEventDescription(event: AuditEvent): string {
       return event.event_metadata['reason'] === 'patient_discharged'
         ? `Safety monitoring auto-stopped (discharge)${deviceSuffix(event)}`
         : `Safety monitoring stopped${deviceSuffix(event)}`
+    case 'WEARABLE_QR_RESOLVED':
+      return `Wearable QR scanned by clinician${deviceSuffix(event)}`
     case 'SAFETY_EVENT_RECEIVED':
       return `${sensorEventLabel(event)} reported by wearable${deviceSuffix(event)}${delayedSuffix(event)}`
     case 'SAFETY_ALERT_RAISED':

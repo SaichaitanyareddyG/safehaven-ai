@@ -4,6 +4,7 @@ import type {
   DeviceAssignment,
   MonitoringProfile,
   PatientAssignmentResponse,
+  QrResolveResult,
   SafetyAlert,
   SafetyAlertListResponse,
   SensorEventListResponse,
@@ -59,4 +60,12 @@ export function unassignWearable(patientId: string): Promise<DeviceAssignment> {
 
 export function listPatientSafetyEvents(patientId: string): Promise<SensorEventListResponse> {
   return apiRequest<SensorEventListResponse>(`/patients/${patientId}/safety-events`)
+}
+
+/** Resolve a scanned band QR ("SH:<token>") to the patient wearing it. Audited. */
+export function resolveWearableQr(token: string): Promise<QrResolveResult> {
+  return apiRequest<QrResolveResult>('/wearable-assignments/resolve', {
+    method: 'POST',
+    body: { token },
+  })
 }

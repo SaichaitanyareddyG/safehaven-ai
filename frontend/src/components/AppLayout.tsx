@@ -1,4 +1,4 @@
-import { HeartPulse, LogOut, ScanLine, ShieldAlert } from 'lucide-react'
+import { HeartPulse, LogOut, QrCode, ScanLine, ShieldAlert } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
@@ -28,6 +28,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
           {user && (
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <SafetyMonitoringNavItem />
+              <Link to="/scan-band">
+                <Button variant="ghost" size="sm" data-testid="scan-band-nav">
+                  <QrCode className="h-4 w-4" />
+                  Scan band
+                </Button>
+              </Link>
               <Link to="/medication-verification">
                 <Button variant="ghost" size="sm">
                   <ScanLine className="h-4 w-4" />
