@@ -89,8 +89,10 @@ struct SmoothFont {
 };
 
 enum class HomeView : uint8_t {
-  STARTING, ADD_BAND, NOT_PAIRED, GETTING_READY, MONITORING, LOW_BATTERY, CHARGING, ALERT, CHECK
+  STARTING, ADD_BAND, NOT_PAIRED, GETTING_READY, MONITORING, LOW_BATTERY, CHARGING, ALERT, CHECK, TALK
 };
+/// "Talk to SafeHaven": the avatar's face for each moment.
+enum class Mood : uint8_t { READY, LISTENING, THINKING, SPEAKING, CONCERNED, SLEEPY };
 /// Which alert screen. BENCH is used while no backend is linked: it must say
 /// that nobody was notified. NOTIFIED is shown only once the backend has
 /// accepted the event — never before.
@@ -132,6 +134,15 @@ struct HomeModel {
   uint8_t checkLeftS;
   bool alertWaitingForWifi;
   char alertSentAt[6];
+  // Talk to SafeHaven
+  Mood talkMood;
+  uint8_t talkMouth;   // 0..8: how open, from the loudness of the voice playing
+  bool talkBlink;
+  int8_t talkGaze;     // eyes look left/right while waiting, -3..3 px
+  uint8_t talkPhase;   // 0..7: rings / thinking dots
+  uint8_t talkSecs;    // listening time
+  char talkTitle[32];
+  char talkText[200];
 };
 
 /// What the TEST screen shows. Redrawn at a fixed rate, not on change.
@@ -192,6 +203,7 @@ class StickUi {
       case HomeView::CHARGING: chargingSplash(m); break;
       case HomeView::ALERT: alert(m); break;
       case HomeView::CHECK: areYouOk(m); break;
+      case HomeView::TALK: talk(m); break;
     }
     if (push) c.pushSprite(0, 0);
   }
@@ -625,6 +637,106 @@ class StickUi {
     c.drawRoundRect(10, 190, 115, 32, 7, AMBER);
     text(small_, "If not, your nurse", CX, 200, AMBER_TEXT, middle_center);
     text(small_, "will be called.", CX, 212, AMBER_TEXT, middle_center);
+  }
+
+  // ── Talk to SafeHaven ──────────────────────────────────────────────────────
+  /// The avatar: an abstract orb with eyes and a mouth — not a human face,
+  /// so nobody mistakes it for a person. Circles and lines only.
+  void avatar(const HomeModel& m, int cx, int cy, int r) {
+    auto& c = canvas_;
+    uint16_t fill = TEAL_DARK, stroke = TEAL, face = TEXT;
+    if (m.talkMood == Mood::CONCERNED) fill = AMBER_DARK, stroke = AMBER;
+    if (m.talkMood == Mood::SLEEPY) fill = SURFACE, stroke = TEXT3, face = TEXT2;
+    // Rings: flowing in while listening, out while speaking.
+    if (m.talkMood == Mood::LISTENING || m.talkMood == Mood::SPEAKING) {
+      const int k = m.talkPhase % 4;
+      const int step = m.talkMood == Mood::LISTENING ? 3 - k : k;
+      const int rr = r + 4 + step * 3;
+      c.drawCircle(cx, cy, rr, blend565(TEAL, BG, 0.25f + 0.2f * step));
+      c.drawCircle(cx, cy, rr + 1, blend565(TEAL, BG, 0.35f + 0.2f * step));
+    }
+    c.fillCircle(cx, cy, r, fill);
+    c.fillArc(cx, cy, r - 2, r, 0, 360, stroke);
+    const int ex = r * 3 / 10, ew = r / 4 + 1, eh = r * 2 / 5;
+    const int g = m.talkGaze + (m.talkMood == Mood::THINKING ? 3 : 0);
+    const int ey = cy - r / 4 - (m.talkMood == Mood::THINKING ? 3 : 0);
+    if (m.talkMood == Mood::SLEEPY) {
+      c.fillArc(cx - ex, ey, ew - 1, ew + 1, 20, 160, face);
+      c.fillArc(cx + ex, ey, ew - 1, ew + 1, 20, 160, face);
+      c.fillRect(cx - 5, cy + r / 3, 10, 2, face);
+      text(small_, "z", cx + r - 2, cy - r - 2, TEXT3, middle_center);
+      text(small_, "z", cx + r + 6, cy - r - 10, TEXT3, middle_center);
+      return;
+    }
+    const int h = m.talkBlink ? 2 : (m.talkMood == Mood::LISTENING ? eh + 2 : eh);
+    c.fillRoundRect(cx - ex - ew / 2 + g, ey - h / 2, ew, h, ew / 2, face);
+    c.fillRoundRect(cx + ex - ew / 2 + g, ey - h / 2, ew, h, ew / 2, face);
+    const int my = cy + r / 3;
+    switch (m.talkMood) {
+      case Mood::READY: c.fillArc(cx, my - 6, 8, 10, 30, 150, face); break;
+      case Mood::LISTENING: c.fillCircle(cx, my, 3, face); break;
+      case Mood::THINKING: c.fillRect(cx - 6, my, 12, 3, face); break;
+      case Mood::SPEAKING: c.fillEllipse(cx, my, 7, 1 + m.talkMouth, face); break;
+      case Mood::CONCERNED:
+        c.drawWideLine(cx - ex - 6, ey - eh / 2 - 6, cx - ex + 4, ey - eh / 2 - 3, 2, face);
+        c.drawWideLine(cx + ex + 6, ey - eh / 2 - 6, cx + ex - 4, ey - eh / 2 - 3, 2, face);
+        c.fillArc(cx, my + 8, 8, 10, 210, 330, face);
+        break;
+      default: break;
+    }
+    if (m.talkMood == Mood::THINKING) {
+      for (int i = 0; i < 3; ++i) {
+        const bool lit = (m.talkPhase / 2) % 3 == i;
+        c.fillCircle(cx + r - 2 + i * 7, cy - r + 2 - i * 5, 3 - i / 2, lit ? TEAL : TEAL_RING);
+      }
+    }
+  }
+
+  /// Word-wrapped text, centred, at most maxLines (the last one ends in "...").
+  void wrapped(SmoothFont& f, const char* s, int cy, int lineH, int maxLines, uint16_t color) {
+    canvas_.setFont(&f.font);
+    const int maxW = W - 12;
+    char line[64];
+    int lines = 0;
+    const char* p = s;
+    while (*p && lines < maxLines) {
+      while (*p == ' ') ++p;
+      size_t len = 0, lastSpace = 0;
+      while (p[len] && len < sizeof(line) - 4) {
+        memcpy(line, p, len + 1);
+        line[len + 1] = 0;
+        if (canvas_.textWidth(line) > maxW) break;
+        if (p[len] == ' ') lastSpace = len;
+        ++len;
+      }
+      size_t take = len;
+      if (p[len] && lastSpace > 0) take = lastSpace;
+      memcpy(line, p, take);
+      line[take] = 0;
+      if (lines == maxLines - 1 && p[take]) {
+        while (take > 0 && canvas_.textWidth(line) + canvas_.textWidth("...") > maxW) line[--take] = 0;
+        strlcat(line, "...", sizeof(line));
+      }
+      text(f, line, CX, cy + lines * lineH, color, middle_center);
+      p += take;
+      ++lines;
+    }
+  }
+
+  void talk(const HomeModel& m) {
+    barFor(m, m.timeKnown ? m.hhmm : "");
+    avatar(m, CX, 74, 34);
+    text(title_, m.talkTitle, CX, 132, m.talkMood == Mood::CONCERNED ? AMBER_TEXT : TEXT, middle_center);
+    if (m.talkMood == Mood::LISTENING) {
+      canvas_.fillCircle(CX - 30, 156, 3, CORAL);
+      char secs[24];
+      snprintf(secs, sizeof(secs), "Mic on  0:%02u", m.talkSecs);
+      text(small_, secs, CX + 4, 156, TEXT2, middle_center);
+      text(small_, "Side: send", CX, 178, TEXT2, middle_center);
+    } else {
+      wrapped(small_, m.talkText, 152, 13, 5, TEXT2);
+    }
+    text(small_, "Hold front: nurse", CX, 228, AMBER_TEXT, middle_center);
   }
 
   void notPaired(const HomeModel& m) {

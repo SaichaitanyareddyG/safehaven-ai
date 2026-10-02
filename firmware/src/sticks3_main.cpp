@@ -313,6 +313,10 @@ static void assign(MonitoringProfile profile, const char *source) {
 }
 
 static void stopAttention(const char *why);
+#ifdef SH_TALK
+static bool talkActive();
+static void talkEnd(const char *why);
+#endif
 
 static void unassign() {
   core.set_assignment(false, MonitoringProfile::STANDARD, clock_.millis());
@@ -492,6 +496,9 @@ static void dumpBatteryLog() {
 static void setScreen(Screen s, const char *why);
 
 static void startCheck(const DetectedEvent &ev) {
+#ifdef SH_TALK
+  if (talkActive()) talkEnd("possible fall - the check comes first");
+#endif
   if (alertActive || checkActive) {
     Serial.println("[CHECK] uncertain event during an active alert/check - folded in, not re-asked");
     return;
@@ -511,6 +518,9 @@ static void startCheck(const DetectedEvent &ev) {
 }
 
 static void handleEvent(const DetectedEvent &ev) {
+#ifdef SH_TALK
+  if (talkActive()) talkEnd("an event comes first");
+#endif
   if (ev.type == EventType::FALL_CHECK) {  // internal: never sent as-is
     startCheck(ev);
     return;
@@ -992,6 +1002,9 @@ static bool startupDone() {
   return millis() - bootMs > STARTING_MAX_MS;
 }
 
+#ifdef SH_TALK
+static void fillTalk(HomeModel &m);
+#endif
 static void buildHome(HomeModel &m) {
   memset(&m, 0, sizeof(m));
   const unsigned long now = millis();
@@ -1061,6 +1074,9 @@ static void buildHome(HomeModel &m) {
   if (checkActive) m.checkLeftS = (uint8_t)((CHECK_WINDOW_MS - (now - checkSinceMs) + 999) / 1000);
   if (alertActive) m.view = HomeView::ALERT;
   else if (checkActive) m.view = HomeView::CHECK;
+#ifdef SH_TALK
+  else if (talkActive()) fillTalk(m);
+#endif
   else if (!startupDone()) m.view = HomeView::STARTING;
   else if (needsPairing) m.view = HomeView::ADD_BAND;
   else if (!assigned) m.view = HomeView::NOT_PAIRED;
@@ -1112,7 +1128,8 @@ static void buildTest(ui::TestModel &t) {
 /// Views that keep the screen on by themselves (setup, alerts, charging splash).
 static bool holdsScreenOn(const HomeModel &m) {
   return m.view == HomeView::STARTING || m.view == HomeView::ADD_BAND || m.view == HomeView::GETTING_READY ||
-         m.view == HomeView::ALERT || m.view == HomeView::CHARGING || m.view == HomeView::CHECK;
+         m.view == HomeView::ALERT || m.view == HomeView::CHARGING || m.view == HomeView::CHECK ||
+         m.view == HomeView::TALK;
 }
 
 static void serviceScreen() {
@@ -1129,7 +1146,11 @@ static void serviceScreen() {
     return;
   }
   // The fall beacon animates (~15 fps); everything else redraws only on change.
-  const unsigned long checkMs = attentionActive && alertActive ? 66 : HOME_CHECK_MS;
+  bool animating = attentionActive && alertActive;
+#ifdef SH_TALK
+  animating = animating || talkActive();  // the avatar blinks, breathes and talks
+#endif
+  const unsigned long checkMs = animating ? 66 : HOME_CHECK_MS;
   if (now - lastHomeCheckMs < checkMs && !forceRedraw) return;
   lastHomeCheckMs = now;
 
@@ -1191,8 +1212,14 @@ void setup() {
 
   auto cfg = M5.config();
   cfg.serial_baudrate = 115200;
-  // Privacy: the microphone stays OFF. Nothing in this firmware listens.
+  // Privacy: the microphone stays OFF in the deployable build. Bench builds
+  // with SH_TALK enable push-to-talk ("Talk to SafeHaven"): the mic runs only
+  // while the patient holds a conversation open, with a red dot on screen.
+#ifdef SH_TALK
+  cfg.internal_mic = true;
+#else
   cfg.internal_mic = false;
+#endif
   M5.begin(cfg);
   M5.Speaker.setVolume(SPEAKER_VOLUME);
   M5.Speaker.setChannelVolume(TONE_CHANNEL, TONE_CHANNEL_VOLUME);
@@ -1285,6 +1312,297 @@ static void setScreen(Screen s, const char *why) {
   Serial.printf("[BTN] %s screen (%s)\r\n", screen == Screen::HOME ? "HOME" : "TEST", why);
 }
 
+#ifdef SH_TALK
+// ── Talk to SafeHaven (bench builds only: -DSH_TALK) ────────────────────────
+// One click on the side button: the band listens (mic on, red dot), the
+// patient speaks, side again (or a pause) sends it to /device-api/talk, and
+// the answer is spoken with the avatar's mouth following the voice.
+// The microphone and the speaker share one audio chip (ES8311): the speaker
+// is switched off while listening and back on to answer.
+// Anything safety-related ends a conversation at once: a fall, a check, an
+// alert, the help button. Fall detection keeps running throughout.
+enum class TalkPhase : uint8_t { OFF, LISTENING, FINISHING, THINKING, SPEAKING, SHOWING, ERROR };
+static TalkPhase talkPhase = TalkPhase::OFF;
+static unsigned long talkPhaseMs = 0;
+static const uint32_t TALK_RATE = 16000;
+static const size_t TALK_MAX_SAMPLES = TALK_RATE * 12;  // 12 s per question
+static const size_t TALK_CHUNK = 800;                   // 50 ms
+static const unsigned long TALK_QUIET_END_MS = 1500;    // pause after speech = done
+static const unsigned long TALK_NO_SPEECH_MS = 7000;
+static const unsigned long TALK_FOLLOW_UP_MS = 6000;  // after an answer: listen this long for a reply
+static const uint8_t TALK_MAX_TURNS = 5;               // then the patient presses again
+static const unsigned long TALK_SHOW_MS = 20000;
+static const unsigned long TALK_ERROR_MS = 4000;
+static const unsigned long TALK_REPLY_TIMEOUT_MS = 35000;
+static uint8_t *talkBuf = nullptr;  // 44-byte WAV header + int16 samples (PSRAM)
+static size_t talkQueued = 0, talkVadPos = 0;
+static bool talkHeard = false, talkSpeakerOff = false, talkUrgent = false;
+static bool talkFollowUp = false;  // this listen follows an answer
+static uint8_t talkTurns = 0;
+static unsigned long talkLastLoudMs = 0, talkPlayMs = 0;
+static float talkFloor = 1e9f;
+static uint8_t talkEnv[600];  // loudness of the reply per 50 ms → mouth
+static size_t talkEnvN = 0;
+static char talkTitle[32] = "", talkText[200] = "";
+
+static int16_t *talkPcm() { return (int16_t *)(talkBuf + 44); }
+static bool talkActive() { return talkPhase != TalkPhase::OFF; }
+
+static void talkSet(TalkPhase p, const char *title, const char *text = "") {
+  talkPhase = p;
+  talkPhaseMs = millis();
+  strlcpy(talkTitle, title, sizeof(talkTitle));
+  strlcpy(talkText, text, sizeof(talkText));
+  forceRedraw = true;
+}
+
+static void talkSpeakerOn() {
+  if (!talkSpeakerOff) return;
+  M5.Mic.end();
+  M5.Speaker.begin();
+  M5.Speaker.setVolume(SPEAKER_VOLUME);
+  M5.Speaker.setChannelVolume(TONE_CHANNEL, TONE_CHANNEL_VOLUME);
+  talkSpeakerOff = false;
+}
+
+static void talkEnd(const char *why) {
+  if (!talkActive()) return;
+  M5.Speaker.stop(VOICE_CHANNEL);
+  talkSpeakerOn();
+  backendLink.talkRelease();
+  talkPhase = TalkPhase::OFF;
+  forceRedraw = true;
+  Serial.printf("[TALK] closed (%s)\r\n", why);
+}
+
+/// Can a conversation start now? (Assigned, linked, online, nothing urgent.)
+static bool talkAllowed() {
+  return screen == Screen::HOME && assigned && !benchMode && !alertActive && !checkActive && startupDone();
+}
+
+static void talkError(const char *title, const char *text) {
+  talkSpeakerOn();
+  backendLink.talkRelease();
+  talkSet(TalkPhase::ERROR, title, text);
+}
+
+/// Listen. A press starts a new conversation; after an answer the band
+/// listens again by itself (followUp) so the patient can simply reply.
+static void talkBegin(bool followUp = false) {
+  M5.Speaker.stop(VOICE_CHANNEL);
+  backendLink.talkRelease();
+  talkFollowUp = followUp;
+  if (!followUp) talkTurns = 0;
+  if (WiFi.status() != WL_CONNECTED) {
+    talkError("Can't talk now", "No connection. Fall alerts still work.");
+    return;
+  }
+  if (!talkBuf) talkBuf = (uint8_t *)ps_malloc(44 + TALK_MAX_SAMPLES * sizeof(int16_t));
+  M5.Speaker.end();
+  talkSpeakerOff = true;
+  if (!talkBuf || !M5.Mic.begin()) {
+    talkError("Can't talk now", "The microphone did not start.");
+    return;
+  }
+  talkQueued = talkVadPos = 0;
+  talkHeard = false;
+  talkUrgent = false;
+  talkFloor = 1e9f;
+  talkLastLoudMs = millis();
+  screenWake("talk");
+  talkSet(TalkPhase::LISTENING, followUp ? "Anything else?" : "I'm listening");
+  Serial.printf("[TALK] listening (mic on)%s\r\n", followUp ? " - follow-up" : "");
+}
+
+/// Remove the DC offset, bring the loudest part to ~80% of full scale, and
+/// put a WAV header in front: what /device-api/talk expects.
+static size_t talkMakeWav(size_t n) {
+  int16_t *pcm = talkPcm();
+  int64_t sum = 0;
+  for (size_t i = 0; i < n; ++i) sum += pcm[i];
+  const int mean = n ? (int)(sum / (int64_t)n) : 0;
+  int peak = 1;
+  for (size_t i = 0; i < n; ++i) peak = max(peak, abs(pcm[i] - mean));
+  const float gain = min(20.0f, 26000.0f / peak);
+  for (size_t i = 0; i < n; ++i) {
+    const float v = (pcm[i] - mean) * gain;
+    pcm[i] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+  }
+  auto put32 = [](uint8_t *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; };
+  auto put16 = [](uint8_t *p, uint16_t v) { p[0] = v; p[1] = v >> 8; };
+  uint8_t *h = talkBuf;
+  const uint32_t bytes = n * 2;
+  memcpy(h, "RIFF", 4); put32(h + 4, 36 + bytes); memcpy(h + 8, "WAVEfmt ", 8);
+  put32(h + 16, 16); put16(h + 20, 1); put16(h + 22, 1); put32(h + 24, TALK_RATE);
+  put32(h + 28, TALK_RATE * 2); put16(h + 32, 2); put16(h + 34, 16);
+  memcpy(h + 36, "data", 4); put32(h + 40, bytes);
+  Serial.printf("[TALK] %.1f s recorded, gain x%.1f\r\n", n / (float)TALK_RATE, gain);
+  return 44 + bytes;
+}
+
+static void talkStartAnswer() {
+  const TalkResult &r = backendLink.talkResult();
+  Serial.printf("[TALK] heard \"%s\" -> %s: \"%s\"\r\n", r.transcript, r.action, r.reply);
+  talkUrgent = !strcmp(r.action, "urgent");
+  const char *title = talkUrgent ? "Calling your nurse" : !strcmp(r.action, "request") ? "I'll tell your nurse"
+                      : !strcmp(r.action, "unavailable") ? "Can't answer now" : "";
+  // Loudness envelope of the reply, one value per 50 ms, for the mouth.
+  talkEnvN = 0;
+  for (size_t i = 0; i + TALK_CHUNK <= r.audioLen && talkEnvN < sizeof(talkEnv); i += TALK_CHUNK) {
+    uint32_t acc = 0;
+    for (size_t j = 0; j < TALK_CHUNK; j += 4) acc += abs((int)r.audio[i + j] - 128);
+    talkEnv[talkEnvN++] = (uint8_t)min<uint32_t>(255, acc * 4 / TALK_CHUNK * 4);
+  }
+  if (r.audio && r.audioLen) {
+    M5.Speaker.playRaw(r.audio, r.audioLen, TALK_RATE, false, 1, VOICE_CHANNEL, true);
+    talkPlayMs = millis();
+    talkSet(TalkPhase::SPEAKING, title, r.reply);
+  } else {
+    talkSet(TalkPhase::SHOWING, title, r.reply);  // voice failed: text only
+  }
+}
+
+static void serviceTalk() {
+  if (!talkActive()) {
+    // A result nobody is waiting for any more: free it.
+    const TalkStatus st = backendLink.talkStatus();
+    if (st == TalkStatus::DONE || st == TalkStatus::FAILED) backendLink.talkRelease();
+    return;
+  }
+  const unsigned long now = millis();
+  switch (talkPhase) {
+    case TalkPhase::LISTENING: {
+      while (M5.Mic.isRecording() < 2 && talkQueued + TALK_CHUNK <= TALK_MAX_SAMPLES) {
+        M5.Mic.record(talkPcm() + talkQueued, TALK_CHUNK, TALK_RATE);
+        talkQueued += TALK_CHUNK;
+      }
+      // Simple voice-activity check on the chunks the mic has finished.
+      const size_t done = talkQueued - min(talkQueued, (size_t)M5.Mic.isRecording() * TALK_CHUNK);
+      for (; talkVadPos + TALK_CHUNK <= done; talkVadPos += TALK_CHUNK) {
+        const int16_t *c = talkPcm() + talkVadPos;
+        int64_t sum = 0, sq = 0;
+        for (size_t i = 0; i < TALK_CHUNK; ++i) sum += c[i];
+        const int mean = (int)(sum / (int64_t)TALK_CHUNK);
+        for (size_t i = 0; i < TALK_CHUNK; ++i) sq += (int64_t)(c[i] - mean) * (c[i] - mean);
+        const float rms = sqrtf((float)sq / TALK_CHUNK);
+        if (talkVadPos >= TALK_CHUNK * 2) talkFloor = min(talkFloor, rms);  // skip the start-up click
+        if (rms > max(talkFloor * 3.0f, 60.0f)) {
+          talkHeard = true;
+          talkLastLoudMs = now;
+        }
+      }
+      const bool full = talkQueued + TALK_CHUNK > TALK_MAX_SAMPLES;
+      const bool paused = talkHeard && now - talkLastLoudMs > TALK_QUIET_END_MS;
+      const bool silent =
+          !talkHeard && now - talkPhaseMs > (talkFollowUp ? TALK_FOLLOW_UP_MS : TALK_NO_SPEECH_MS);
+      if (silent) {
+        // Nobody spoke: nothing is sent anywhere.
+        while (M5.Mic.isRecording()) delay(1);
+        talkSpeakerOn();
+        talkSet(TalkPhase::SHOWING, talkFollowUp ? "" : "I didn't hear you",
+                talkFollowUp ? "Side: ask again" : "Press the side button and speak.");
+        if (talkFollowUp) strlcpy(talkTitle, "", sizeof(talkTitle));
+        Serial.println("[TALK] nothing heard - not sent");
+        break;
+      }
+      if (full || paused) talkSet(TalkPhase::FINISHING, "Let me think...");
+      break;
+    }
+    case TalkPhase::FINISHING:
+      if (M5.Mic.isRecording()) break;  // the last chunks are still being filled
+      {
+        const size_t wavLen = talkMakeWav(talkQueued);
+        talkSpeakerOn();
+        if (!backendLink.talkStart(talkBuf, wavLen, !talkFollowUp && talkTurns == 0)) {
+          talkError("Can't talk now", "No connection. Fall alerts still work.");
+          break;
+        }
+        ++talkTurns;
+        talkSet(TalkPhase::THINKING, "Let me think...");
+      }
+      break;
+    case TalkPhase::THINKING: {
+      const TalkStatus st = backendLink.talkStatus();
+      if (st == TalkStatus::DONE) talkStartAnswer();
+      else if (st == TalkStatus::FAILED || now - talkPhaseMs > TALK_REPLY_TIMEOUT_MS)
+        talkError("Can't talk now", "Please try again later. For a nurse, hold the front button.");
+      break;
+    }
+    case TalkPhase::SPEAKING:
+      if (now - talkPlayMs > 300 && !M5.Speaker.isPlaying(VOICE_CHANNEL)) {
+        const bool more = !talkUrgent && talkTurns < TALK_MAX_TURNS &&
+                          strcmp(backendLink.talkResult().action, "unavailable") != 0;
+        if (more) {
+          talkBegin(true);  // the conversation carries on: just reply
+        } else {
+          talkPhaseMs = now;
+          talkPhase = TalkPhase::SHOWING;  // keep the words on screen
+          forceRedraw = true;
+        }
+      }
+      break;
+    case TalkPhase::SHOWING:
+      if (now - talkPhaseMs > TALK_SHOW_MS) talkEnd("finished");
+      break;
+    case TalkPhase::ERROR:
+      if (now - talkPhaseMs > TALK_ERROR_MS) talkEnd("error shown");
+      break;
+    case TalkPhase::OFF:
+      break;
+  }
+}
+
+/// Buttons while talking. Holding the front button for help is handled
+/// before this and always works.
+static void talkButton(bool front, bool side) {
+  switch (talkPhase) {
+    case TalkPhase::LISTENING:
+      if (side) talkSet(TalkPhase::FINISHING, "Let me think...");
+      else if (front) talkEnd("cancelled");
+      break;
+    case TalkPhase::SPEAKING:
+    case TalkPhase::SHOWING:
+      if (side) talkBegin();  // ask again
+      else if (front) talkEnd("closed");
+      break;
+    default:
+      if (front) talkEnd("closed");
+      break;
+  }
+}
+
+static void fillTalk(HomeModel &m) {
+  const unsigned long now = millis();
+  m.view = HomeView::TALK;
+  ui::Mood mood = ui::Mood::READY;
+  switch (talkPhase) {
+    case TalkPhase::LISTENING: mood = ui::Mood::LISTENING; break;
+    case TalkPhase::FINISHING:
+    case TalkPhase::THINKING: mood = ui::Mood::THINKING; break;
+    case TalkPhase::SPEAKING: mood = talkUrgent ? ui::Mood::CONCERNED : ui::Mood::SPEAKING; break;
+    case TalkPhase::SHOWING: mood = talkUrgent ? ui::Mood::CONCERNED : ui::Mood::READY; break;
+    case TalkPhase::ERROR: mood = ui::Mood::SLEEPY; break;
+    default: break;
+  }
+  m.talkMood = mood;
+  m.talkPhase = (uint8_t)((now / 150) % 8);
+  m.talkBlink = (now % 4200) < 140 && mood != ui::Mood::SLEEPY;
+  if (mood == ui::Mood::READY) {
+    static const int8_t gaze[4] = {0, -3, 0, 3};
+    m.talkGaze = gaze[(now / 1600) % 4];
+  }
+  if (talkPhase == TalkPhase::SPEAKING) {
+    const size_t i = (now - talkPlayMs) / 50;
+    // Concerned keeps its own mouth; the envelope drives the speaking one.
+    m.talkMouth = i < talkEnvN ? (uint8_t)min(8, talkEnv[i] / 24) : 0;
+  }
+  if (talkPhase == TalkPhase::LISTENING) m.talkSecs = (uint8_t)((now - talkPhaseMs) / 1000);
+  strlcpy(m.talkTitle, talkTitle, sizeof(m.talkTitle));
+  if (talkPhase == TalkPhase::SHOWING && !talkText[0]) strlcpy(m.talkText, "Side: ask again", sizeof(m.talkText));
+  else strlcpy(m.talkText, talkText, sizeof(m.talkText));
+}
+#endif  // SH_TALK
+
 static void handleButtons() {
   const unsigned long now = millis();
 
@@ -1296,6 +1614,9 @@ static void handleButtons() {
     helpFired = true;
     swallowClicks = true;  // the release must not also close the alert it opens
     screenWake("help button");
+#ifdef SH_TALK
+    if (talkActive()) talkEnd("help button");
+#endif
     beep(2600, 150);
     DetectedEvent ev;
     ev.type = EventType::HELP_REQUESTED;
@@ -1327,6 +1648,10 @@ static void handleButtons() {
   if (!screenOn && (M5.BtnA.wasPressed() || M5.BtnB.wasPressed())) {
     screenWake("button");
     swallowClicks = true;
+#ifdef SH_TALK
+    // One click on the side button starts talking, even from a dark screen.
+    if (M5.BtnB.wasPressed() && !M5.BtnA.isPressed() && talkAllowed()) talkBegin();
+#endif
     return;
   }
   if (swallowClicks) {
@@ -1340,6 +1665,16 @@ static void handleButtons() {
   lastActivityMs = now;
   if (screen == Screen::TEST) lastTestButtonMs = now;
 
+#ifdef SH_TALK
+  if (talkActive()) {
+    talkButton(a, b);
+    return;
+  }
+  if (b && !a && talkAllowed()) {
+    talkBegin();
+    return;
+  }
+#endif
   if (checkActive) {  // the wearer answered "Are you OK?"
     checkActive = false;
     M5.Display.setBrightness(screen == Screen::TEST ? BRIGHTNESS_TEST : BRIGHTNESS_HOME);
@@ -1710,6 +2045,9 @@ void loop() {
     forceRedraw = true;
   }
   serviceSound();
+#ifdef SH_TALK
+  serviceTalk();
+#endif
   serviceCheck();
   serviceWear();
   serviceEscalation();

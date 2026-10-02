@@ -66,8 +66,9 @@ def services(monkeypatch):
             raise state["stt_error"]
         return state["stt_text"]
 
-    def ask_model(care_plan, question):
+    def ask_model(care_plan, question, history=None):
         calls["model"].append(question)
+        calls.setdefault("history", []).append(list(history or []))
         if state["model_error"]:
             raise state["model_error"]
         return state["model_reply"]
@@ -245,3 +246,51 @@ def test_band_audio_is_16k_unsigned_8bit():
     audio = band_talk.to_band_audio(_wav(seconds=1.0, rate=22050))
     assert abs(len(audio) - 16000) <= 2
     assert min(audio) >= 0 and max(audio) <= 255
+
+
+def test_band_format_sends_raw_audio_and_words_in_headers(client, services):
+    from urllib.parse import unquote
+
+    _, device = _band(client)
+    r = client.post("/device-api/talk?format=pcm", json={"text": "What does this band do?"}, headers=device)
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/octet-stream"
+    assert r.headers["x-talk-action"] == "none"
+    assert unquote(r.headers["x-talk-reply"]) == "Your band watches for falls."
+    assert len(r.content) > 1000 and min(r.content) >= 0
+
+
+def test_follow_up_questions_remember_the_conversation_only_in_memory(client, services):
+    calls, _ = services
+    _, device = _band(client)
+    client.post("/device-api/talk", json={"text": "What is my tablet for?"}, headers=device)
+    client.post("/device-api/talk", json={"text": "When do I take it?", "new_conversation": False}, headers=device)
+    assert calls["history"][0] == []
+    assert [t["content"] for t in calls["history"][1]] == ["What is my tablet for?", "Your band watches for falls."]
+
+
+def test_a_new_conversation_starts_with_no_memory(client, services):
+    calls, _ = services
+    _, device = _band(client)
+    client.post("/device-api/talk", json={"text": "What is my tablet for?"}, headers=device)
+    client.post("/device-api/talk", json={"text": "Hello again"}, headers=device)  # new_conversation defaults to true
+    assert calls["history"][1] == []
+
+
+def test_conversation_memory_expires(client, services, monkeypatch):
+    calls, _ = services
+    _, device = _band(client)
+    client.post("/device-api/talk", json={"text": "What is my tablet for?"}, headers=device)
+    monkeypatch.setattr(band_talk, "CONVERSATION_TTL_S", -1)
+    client.post("/device-api/talk", json={"text": "When do I take it?", "new_conversation": False}, headers=device)
+    assert calls["history"][1] == []
+
+
+def test_band_header_continues_a_conversation_and_reports_timings(client, services):
+    calls, _ = services
+    _, device = _band(client)
+    client.post("/device-api/talk?format=pcm", json={"text": "What is my tablet for?"}, headers=device)
+    r = client.post("/device-api/talk?format=pcm", json={"text": "When do I take it?", "new_conversation": False},
+                    headers=device)
+    assert len(calls["history"][1]) == 2
+    assert "total=" in r.headers["x-talk-timings"]

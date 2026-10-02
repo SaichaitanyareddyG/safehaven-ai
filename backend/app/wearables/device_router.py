@@ -7,7 +7,9 @@ returns patient data: a device never learns who it is monitoring
 (MODULE_3_IMPLEMENTATION_PLAN.md §9, §20).
 """
 
+import base64
 import time
+from urllib.parse import quote
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -221,25 +223,30 @@ def submit_event(
     )
 
 
-@router.post("/talk", response_model=TalkReply)
+@router.post("/talk", response_model=None)
 @limiter.limit(_TALK_RATE_LIMIT)
 async def talk(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
     device: Annotated[WearableDevice, Depends(get_current_device)],
-) -> TalkReply:
+) -> TalkReply | Response:
     """"Talk to SafeHaven": one spoken question in, one spoken answer out.
 
     Body: a WAV recording (Content-Type audio/wav), or for testing JSON
-    {"text": "..."}. Urgent words raise a TALK_URGENT alert and practical
+    {"text": "..."}. With ?format=pcm the answer is the raw band audio
+    (u8, 16 kHz mono) as the body, and the words in X-Talk-* headers
+    (percent-encoded): a band cannot hold the base64 JSON in memory. Urgent words raise a TALK_URGENT alert and practical
     requests a TALK_REQUEST alert, through the same path as band events.
     Nothing the patient says is stored. 409 when the band is not assigned.
     """
     content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
     body = await request.body()
+    # A band marks the first question of a conversation; follow-ups carry on.
+    new_conversation = request.headers.get("x-talk-new", "1") != "0"
     if content_type == "application/json":
         try:
-            text = TalkTextRequest.model_validate_json(body).text
+            parsed = TalkTextRequest.model_validate_json(body)
+            text, new_conversation = parsed.text, parsed.new_conversation
         except ValidationError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Expected {\"text\": ...}") from exc
         audio = None
@@ -252,9 +259,24 @@ async def talk(
 
     try:
         # Blocking calls to three local services: off the event loop.
-        result = await run_in_threadpool(band_talk.talk, db, device, audio=audio, text=text)
+        result = await run_in_threadpool(
+            band_talk.talk, db, device, audio=audio, text=text, new_conversation=new_conversation
+        )
     except band_talk.NotAssignedError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This band is not assigned to a patient") from exc
+    if request.query_params.get("format") == "pcm":
+        audio_bytes = base64.b64decode(result.audio_b64) if result.audio_b64 else b""
+        return Response(
+            content=audio_bytes,
+            media_type="application/octet-stream",
+            headers={
+                "X-Talk-Action": result.action,
+                "X-Talk-Reply": quote(result.reply, safe=""),
+                "X-Talk-Transcript": quote(result.transcript[:300], safe=""),
+                "X-Talk-Audio-Format": "pcm-u8-16000-mono",
+                "X-Talk-Timings": ",".join(f"{k}={v}" for k, v in result.timings_ms.items()),
+            },
+        )
     return TalkReply(
         transcript=result.transcript,
         reply=result.reply,

@@ -30,6 +30,9 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp_random.h>
+#include <mbedtls/base64.h>
+
+#include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
@@ -55,6 +58,16 @@ enum class NurseResponse : uint8_t { NONE, OPEN, ACKNOWLEDGED, RESOLVED };
 
 /// Outcome of the most recent event delivery, for the alert screens.
 enum class Delivery : uint8_t { NONE, QUEUED, DELIVERED, DISCARDED };
+
+/// "Talk to SafeHaven": one question in flight at a time.
+enum class TalkStatus : uint8_t { IDLE, BUSY, DONE, FAILED };
+struct TalkResult {
+  char transcript[160];
+  char reply[256];
+  char action[16];        // none | urgent | request | unavailable
+  uint8_t* audio;         // u8 PCM, 16 kHz mono, in PSRAM; freed by talkRelease()
+  size_t audioLen;
+};
 
 struct LinkStatus {
   bool configured = false;      // a backend URL is set
@@ -222,6 +235,42 @@ class DeviceLink {
     xSemaphoreGive(lock_);
   }
 
+  // ── Talk to SafeHaven ──────────────────────────────────────────────────────
+  /// Send one recording (a complete WAV, kept alive by the caller until the
+  /// status leaves BUSY). Runs on its own short-lived task with its own TLS
+  /// connection, so heartbeats and safety events never wait behind it.
+  bool talkStart(const uint8_t* wav, size_t len, bool newConversation) {
+    if (talkStatus_.load() != TalkStatus::IDLE || !baseUrl_) return false;
+    if (WiFi.status() != WL_CONNECTED) return false;
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    const bool ready = st_.configured && st_.enrolled && secret_[0];
+    xSemaphoreGive(lock_);
+    if (!ready) return false;
+    talkWav_ = wav;
+    talkLen_ = len;
+    talkNew_ = newConversation;
+    talkAbandoned_ = false;
+    talkStatus_ = TalkStatus::BUSY;
+    if (xTaskCreatePinnedToCore(&DeviceLink::talkEntry, "talk", 16384, this, 1, nullptr, 0) != pdPASS) {
+      talkStatus_ = TalkStatus::IDLE;
+      return false;
+    }
+    return true;
+  }
+  TalkStatus talkStatus() const { return talkStatus_.load(); }
+  const TalkResult& talkResult() const { return talkRes_; }
+  /// Done with the result (or not interested any more): free it. A request
+  /// still in flight is abandoned and cleaned up when it returns.
+  void talkRelease() {
+    if (talkStatus_.load() == TalkStatus::BUSY) {
+      talkAbandoned_ = true;
+      return;
+    }
+    if (talkRes_.audio) free(talkRes_.audio);
+    talkRes_ = TalkResult{};
+    talkStatus_ = TalkStatus::IDLE;
+  }
+
  private:
   static constexpr uint32_t kMagic = 0x5AFE0E01;
   static constexpr uint32_t kHeartbeatMs = 30000;
@@ -241,6 +290,110 @@ class DeviceLink {
   };
 
   static void taskEntry(void* self) { static_cast<DeviceLink*>(self)->run(); }
+  /// Percent-decoding for the X-Talk-* headers.
+  static void urlDecode(const String& in, char* out, size_t n) {
+    size_t o = 0;
+    for (size_t i = 0; i < in.length() && o + 1 < n; ++i) {
+      char ch = in[i];
+      if (ch == '%' && i + 2 < in.length()) {
+        char hex[3] = {in[i + 1], in[i + 2], 0};
+        ch = (char)strtol(hex, nullptr, 16);
+        i += 2;
+      }
+      out[o++] = ch;
+    }
+    out[o] = 0;
+  }
+  static void talkEntry(void* self) {
+    static_cast<DeviceLink*>(self)->runTalk();
+    vTaskDelete(nullptr);
+  }
+
+  void runTalk() {
+    char secret[sizeof(secret_)];
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    strlcpy(secret, secret_, sizeof(secret));
+    xSemaphoreGive(lock_);
+    TalkResult res{};
+    TalkStatus outcome = TalkStatus::FAILED;
+    const unsigned long t0 = millis();
+    {
+      HTTPClient http;
+      WiFiClientSecure tls;
+      const String url = String(baseUrl_) + "/device-api/talk?format=pcm";
+      bool begun;
+      if (tls_) {
+        tls.setCACert(caPem_);
+        begun = http.begin(tls, url);
+      } else {
+        begun = http.begin(url);
+      }
+      if (begun) {
+        http.setConnectTimeout(5000);
+        http.setTimeout(25000);  // speech to text + model + voice on the server
+        http.addHeader("Content-Type", "audio/wav");
+        http.addHeader("X-Talk-New", talkNew_ ? "1" : "0");
+        http.addHeader("Authorization", String("Bearer ") + secret);
+        // The answer comes back as raw audio in the body and the words in
+        // headers (?format=pcm): base64 JSON of that size did not fit in the
+        // band's working memory ("NoMemory" on the bench).
+        const char* want[] = {"X-Talk-Action", "X-Talk-Reply", "X-Talk-Transcript", "X-Talk-Timings"};
+        http.collectHeaders(want, 4);
+        const unsigned long tPost = millis();
+        const int code = http.POST(const_cast<uint8_t*>(talkWav_), talkLen_);
+        const unsigned long tHeaders = millis();
+        if (code == 200) {
+          urlDecode(http.header("X-Talk-Action"), res.action, sizeof(res.action));
+          urlDecode(http.header("X-Talk-Reply"), res.reply, sizeof(res.reply));
+          urlDecode(http.header("X-Talk-Transcript"), res.transcript, sizeof(res.transcript));
+          if (!res.action[0]) strlcpy(res.action, "none", sizeof(res.action));
+          const int size = http.getSize();
+          if (size > 0 && size < 2 * 1024 * 1024) {
+            uint8_t* buf = (uint8_t*)ps_malloc(size);
+            WiFiClient* in = http.getStreamPtr();
+            size_t got = 0;
+            const unsigned long deadline = millis() + 15000;
+            while (buf && in && got < (size_t)size && millis() < deadline) {
+              const int avail = in->available();
+              if (avail > 0) {
+                got += in->readBytes(buf + got, min((size_t)avail, (size_t)size - got));
+              } else if (!in->connected()) {
+                break;
+              } else {
+                vTaskDelay(pdMS_TO_TICKS(5));
+              }
+            }
+            Serial.printf("[TALK] timing: send+server %lu ms (server %s), voice download %lu ms\r\n",
+                          tHeaders - tPost, http.header("X-Talk-Timings").c_str(), millis() - tHeaders);
+            if (buf && got == (size_t)size) {
+              res.audio = buf;
+              res.audioLen = got;
+            } else {
+              if (buf) free(buf);
+              Serial.printf("[TALK] voice incomplete (%u of %d bytes) - showing the words only\r\n",
+                            (unsigned)got, size);
+            }
+          }
+          outcome = TalkStatus::DONE;
+        } else {
+          Serial.printf("[TALK] server answered HTTP %d\r\n", code);
+        }
+        http.end();
+      }
+    }
+    Serial.printf("[TALK] %u KB sent, %s in %lu ms, action %s, voice %u KB\r\n", (unsigned)(talkLen_ / 1024),
+                  outcome == TalkStatus::DONE ? "answer" : "FAILED", millis() - t0, res.action,
+                  (unsigned)(res.audioLen / 1024));
+    if (talkAbandoned_) {
+      if (res.audio) free(res.audio);
+      talkRes_ = TalkResult{};
+      talkAbandoned_ = false;
+      talkStatus_ = TalkStatus::IDLE;
+      return;
+    }
+    talkRes_ = res;
+    talkStatus_ = outcome;
+  }
 
   void run() {
     uint32_t lastHeartbeat = 0;
@@ -609,6 +762,12 @@ class DeviceLink {
   const char* caPem_ = nullptr;
   bool tls_ = false;
   WiFiClientSecure tlsClient_;  // used only from the network task
+  std::atomic<TalkStatus> talkStatus_{TalkStatus::IDLE};
+  volatile bool talkAbandoned_ = false;
+  const uint8_t* talkWav_ = nullptr;
+  bool talkNew_ = true;
+  size_t talkLen_ = 0;
+  TalkResult talkRes_{};
   const char* fw_ = "";
   uint64_t (*monoMs_)() = nullptr;
   SemaphoreHandle_t lock_ = nullptr;

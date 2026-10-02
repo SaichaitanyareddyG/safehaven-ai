@@ -1,8 +1,10 @@
 """Module 3 — "Talk to SafeHaven": the wearable band's voice assistant.
 
 The patient presses the band's side button and speaks; the band sends the
-recording here and plays back the answer. One request, one answer, no memory
-between questions.
+recording here and plays back the answer, then listens for a follow-up. A
+conversation keeps its last few exchanges IN MEMORY ONLY (never stored),
+forgotten after CONVERSATION_TTL_S or when the band starts a new one, so
+"and when do I take it?" can follow "what is my metoprolol for?".
 
     recording ─► speech to text ─► FIXED RULES ─► model ─► voice ─► band
                  (whisper.cpp)      urgent?        (Ollama)  (Piper)
@@ -32,6 +34,7 @@ import io
 import logging
 import math
 import re
+import threading
 import time
 import uuid
 import wave
@@ -102,6 +105,35 @@ NOT_HEARD_REPLY = "Sorry, I didn't catch that. Press the side button and try aga
 
 MAX_REPLY_WORDS = 45  # the prompt asks for 30; a hard cap for a tiny screen
 
+# Conversation memory: per band, in this process only, never in the database.
+CONVERSATION_TTL_S = 180
+MAX_REMEMBERED_TURNS = 6  # three questions and their answers
+_conversations: dict[uuid.UUID, tuple[float, list[dict[str, str]]]] = {}
+_conversations_lock = threading.Lock()
+
+
+def _history(device_id: uuid.UUID, new_conversation: bool) -> list[dict[str, str]]:
+    now = time.monotonic()
+    with _conversations_lock:
+        for key in [k for k, (t, _) in _conversations.items() if now - t > CONVERSATION_TTL_S]:
+            del _conversations[key]  # forget anything idle, whoever it belonged to
+        if new_conversation:
+            _conversations.pop(device_id, None)
+            return []
+        return list(_conversations.get(device_id, (now, []))[1])
+
+
+def _remember(device_id: uuid.UUID, question: str, reply: str) -> None:
+    with _conversations_lock:
+        turns = _conversations.get(device_id, (0.0, []))[1]
+        turns = (turns + [{"role": "user", "content": question}, {"role": "assistant", "content": reply}])
+        _conversations[device_id] = (time.monotonic(), turns[-MAX_REMEMBERED_TURNS:])
+
+
+def forget_conversation(device_id: uuid.UUID) -> None:
+    with _conversations_lock:
+        _conversations.pop(device_id, None)
+
 
 def fixed_rule(transcript: str) -> str | None:
     """'urgent' | 'treatment' | 'request' | None — checked before any model."""
@@ -145,7 +177,7 @@ def transcribe(wav: bytes) -> str:
     return str(r.json().get("text", "")).strip()
 
 
-def ask_model(care_plan: str, question: str) -> str:
+def ask_model(care_plan: str, question: str, history: list[dict[str, str]] | None = None) -> str:
     settings = get_settings()
     r = httpx.post(
         f"{settings.band_talk_llm_url}/api/chat",
@@ -153,6 +185,7 @@ def ask_model(care_plan: str, question: str) -> str:
             "model": settings.band_talk_llm_model,
             "messages": [
                 {"role": "system", "content": f"{BAND_TALK_SYSTEM_PROMPT}\n\nPatient's approved care plan:\n{care_plan}"},
+                *(history or []),
                 {"role": "user", "content": question},
             ],
             "options": {"temperature": 0},
@@ -237,10 +270,19 @@ def _raise_alert(db: Session, device: WearableDevice, assignment: DeviceAssignme
         raise RuntimeError(f"talk alert not stored: {outcome}")
 
 
-def talk(db: Session, device: WearableDevice, *, audio: bytes | None = None, text: str | None = None) -> TalkResult:
+def talk(
+    db: Session,
+    device: WearableDevice,
+    *,
+    audio: bytes | None = None,
+    text: str | None = None,
+    new_conversation: bool = True,
+) -> TalkResult:
     assignment = service.active_assignment_for_device(db, device.id)
     if assignment is None:
+        forget_conversation(device.id)
         raise NotAssignedError()
+    history = _history(device.id, new_conversation)
 
     timings: dict[str, int] = {}
     started = time.monotonic()
@@ -272,7 +314,9 @@ def talk(db: Session, device: WearableDevice, *, audio: bytes | None = None, tex
         # 3. The model, grounded in the approved care plan.
         t0 = time.monotonic()
         try:
-            tag, reply = parse_reply(ask_model(_build_care_plan_summary(db, assignment.patient_id), transcript))
+            tag, reply = parse_reply(
+                ask_model(_build_care_plan_summary(db, assignment.patient_id), transcript, history)
+            )
             action = {"NURSE": "urgent", "REQUEST": "request"}.get(tag, "none")
         except Exception as exc:
             logger.warning("talk: model failed (%s)", type(exc).__name__)
@@ -294,6 +338,7 @@ def talk(db: Session, device: WearableDevice, *, audio: bytes | None = None, tex
     elif action == "request":
         _raise_alert(db, device, assignment, SensorEventType.TALK_REQUEST)
 
+    _remember(device.id, transcript, reply)
     audio_b64 = _voice(reply, timings)
     timings["total"] = int((time.monotonic() - started) * 1000)
     logger.info(
