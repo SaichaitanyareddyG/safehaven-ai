@@ -11,3 +11,11 @@
 
 #define SH_WIFI_SSID "your-2.4GHz-network-name"
 #define SH_WIFI_PASSWORD "your-wifi-password"
+
+// SAFEHAVEN backend the device reports to — your Mac's LAN address, NOT
+// localhost (localhost would be the device itself). Find it with:
+//   ipconfig getifaddr en0
+// and start the backend with --host 0.0.0.0 so it accepts LAN connections.
+// Leave empty for BENCH mode (nothing is sent anywhere).
+// Plain HTTP is for a trusted bench LAN only.
+#define SH_BACKEND_URL ""

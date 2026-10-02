@@ -38,6 +38,8 @@ class FallDetector {
   bool stage_inactivity() const { return stage_inactivity_; }
   float peak_g() const { return peak_g_; }
   float tilt_delta_deg() const { return tilt_delta_deg_; }
+  /// When the current COOLDOWN began (meaningful only in COOLDOWN).
+  uint64_t cooldown_since_ms() const { return cooldown_until_base_; }
 
   void reset() {
     state_ = State::IDLE;

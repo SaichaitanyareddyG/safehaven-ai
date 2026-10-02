@@ -34,6 +34,8 @@ class MovementDetector {
   bool last_was_handling() const { return last_handling_; }
   /// How long the abnormal pattern has held so far (alerts at abn_sustain_ms).
   uint32_t sustained_ms() const { return sustained_ms_; }
+  /// When the current COOLDOWN began (meaningful only in COOLDOWN).
+  uint64_t cooldown_since_ms() const { return cooldown_base_ms_; }
 
   void reset() {
     state_ = State::IDLE;

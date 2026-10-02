@@ -71,7 +71,13 @@ struct SmoothFont {
   }
 };
 
-enum class HomeView : uint8_t { STARTING, GETTING_READY, MONITORING, LOW_BATTERY, CHARGING, ALERT };
+enum class HomeView : uint8_t {
+  STARTING, NOT_PAIRED, GETTING_READY, MONITORING, LOW_BATTERY, CHARGING, ALERT
+};
+/// Which alert screen. BENCH is used while no backend is linked: it must say
+/// that nobody was notified. NOTIFIED is shown only once the backend has
+/// accepted the event — never before.
+enum class AlertKind : uint8_t { BENCH, SENDING, NOTIFIED, NOT_DELIVERED };
 enum class Step : uint8_t { PENDING, BUSY, DONE, FAILED, SKIPPED };
 
 /// Everything a HOME screen depends on. Filled from zero each time, so two
@@ -96,6 +102,9 @@ struct HomeModel {
   uint8_t settleLeftS;
   // alert
   EventType alertType;
+  AlertKind alertKind;
+  bool alertWaitingForWifi;
+  char alertSentAt[6];
 };
 
 /// What the TEST screen shows. Redrawn at a fixed rate, not on change.
@@ -116,6 +125,8 @@ struct TestModel {
   EventType lastEvent;
   uint32_t lastEventAgeS;
   uint32_t settleLeftS;
+  uint32_t fallRestS;      // fall detector resting after a fall (0 = armed)
+  uint32_t movementRestS;  // abnormal-movement detector resting (0 = armed)
 };
 
 class StickUi {
@@ -141,6 +152,7 @@ class StickUi {
     c.fillSprite(BG);
     switch (m.view) {
       case HomeView::STARTING: starting(m); break;
+      case HomeView::NOT_PAIRED: notPaired(m); break;
       case HomeView::GETTING_READY: gettingReady(m); break;
       case HomeView::MONITORING: monitoring(m); break;
       case HomeView::LOW_BATTERY: lowBattery(m); break;
@@ -206,10 +218,15 @@ class StickUi {
       text(body_, what, 8, 160, col, middle_left);
     }
 
-    snprintf(buf, sizeof(buf), "%lu / %lu s", (unsigned long)(t.rhythmMs / 1000),
-             (unsigned long)(t.rhythmTargetMs / 1000));
+    if (t.movementRestS > 0) {
+      snprintf(buf, sizeof(buf), "resting %lu:%02lu", (unsigned long)(t.movementRestS / 60),
+               (unsigned long)(t.movementRestS % 60));
+    } else {
+      snprintf(buf, sizeof(buf), "%lu / %lu s", (unsigned long)(t.rhythmMs / 1000),
+               (unsigned long)(t.rhythmTargetMs / 1000));
+    }
     text(small_, "Rhythm", 8, 178, TEXT2, middle_left);
-    text(small_, buf, 127, 178, TEXT2, middle_right);
+    text(small_, buf, 127, 178, t.movementRestS > 0 ? AMBER_TEXT : TEXT2, middle_right);
     c.fillRoundRect(8, 185, 119, 4, 2, SURFACE);
     const int fill = t.rhythmMs >= t.rhythmTargetMs ? 119 : (int)(119ULL * t.rhythmMs / t.rhythmTargetMs);
     if (fill > 0) c.fillRoundRect(8, 185, fill, 4, 2, AMBER);
@@ -225,7 +242,13 @@ class StickUi {
       snprintf(buf, sizeof(buf), "alerts muted %lus", (unsigned long)t.settleLeftS);
       text(small_, buf, 8, 208, AMBER_TEXT, middle_left);
     }
-    text(small_, "A home  \xc2\xb7  B clear", CX, 232, TEXT3, middle_center);
+    if (t.fallRestS > 0) {
+      // After a fall the detector rests so one fall cannot raise several alerts.
+      snprintf(buf, sizeof(buf), "fall check resting %lus", (unsigned long)t.fallRestS);
+      text(bodyBold_, buf, CX, 232, AMBER_TEXT, middle_center);
+    } else {
+      text(small_, "A home  \xc2\xb7  B clear", CX, 232, TEXT3, middle_center);
+    }
     c.pushSprite(0, 0);
   }
 
@@ -422,8 +445,8 @@ class StickUi {
       monitoringLine(50);
     }
 
-    // QR area. The assignment token arrives with pairing (Stage 10); until then
-    // a framed placeholder — never a fake, scannable code.
+    // QR area. The assignment token (plan Stage 10) does not exist yet; until
+    // it does, a framed placeholder — never a fake, scannable code.
     const int qx = 14, qy = 82, qs = 107, k = 12;
     c.fillRoundRect(qx, qy, qs, qs, 7, SURFACE);
     c.drawFastHLine(qx, qy, k, TEXT3);           c.drawFastVLine(qx, qy, k, TEXT3);
@@ -431,7 +454,7 @@ class StickUi {
     c.drawFastHLine(qx, qy + qs - 1, k, TEXT3);  c.drawFastVLine(qx, qy + qs - k, k, TEXT3);
     c.drawFastHLine(qx + qs - k, qy + qs - 1, k, TEXT3); c.drawFastVLine(qx + qs - 1, qy + qs - k, k, TEXT3);
     text(body_, "Patient QR", CX, qy + qs / 2 - 7, TEXT2, middle_center);
-    text(small_, "shown after pairing", CX, qy + qs / 2 + 8, TEXT3, middle_center);
+    text(small_, "coming soon", CX, qy + qs / 2 + 8, TEXT3, middle_center);
 
     if (!m.wifiUp) {
       c.fillRoundRect(10, 199, 115, 26, 5, BLUE_DARK);
@@ -477,27 +500,94 @@ class StickUi {
     text(small_, "SAFEHAVEN \xc2\xb7 SH-WEAR-001", CX, 228, TEXT3, middle_center);
   }
 
-  /// Bench build: detection works, but NOTHING is sent to a nurse yet, so this
-  /// screen must not say "your nurse has been notified". When the backend link
-  /// lands it becomes the designed Sending alert / Nurse notified pair.
+  void bell(int cx, int cy, uint16_t col) {
+    auto& c = canvas_;
+    c.fillArc(cx, cy - 2, 9, 11, 180, 360, col);
+    c.fillRect(cx - 11, cy - 2, 2, 9, col);
+    c.fillRect(cx + 9, cy - 2, 2, 9, col);
+    c.fillRect(cx - 15, cy + 7, 30, 2, col);
+    c.fillCircle(cx, cy + 12, 3, col);
+  }
+
+  void notPaired(const HomeModel& m) {
+    auto& c = canvas_;
+    barFor(m);
+    if (m.timeKnown) {
+      clockOr(m, 50);
+      text(body_, m.date, CX, 75, TEXT2, middle_center);
+    }
+    const int y = m.timeKnown ? 104 : 70;
+    c.fillRoundRect(10, y, 115, 84, 8, SURFACE);
+    // Broken-link glyph.
+    c.drawLine(CX - 4, y + 22, CX + 4, y + 14, TEXT2);
+    c.drawRoundRect(CX - 13, y + 17, 11, 7, 3, TEXT2);
+    c.drawRoundRect(CX + 2, y + 12, 11, 7, 3, TEXT2);
+    text(title_, "Not paired yet", CX, y + 40, TEXT, middle_center);
+    text(small_, "Staff: pair this band in", CX, y + 57, TEXT2, middle_center);
+    text(small_, "the SAFEHAVEN app", CX, y + 69, TEXT2, middle_center);
+    text(small_, "SH-WEAR-001", CX, 228, TEXT3, middle_center);
+  }
+
   void alert(const HomeModel& m) {
     auto& c = canvas_;
     barFor(m, m.timeKnown ? m.hhmm : "");
-    const int cx = CX, cy = 72;
-    c.fillCircle(cx, cy, 32, AMBER_DARK);
-    // Bell.
-    c.fillArc(cx, cy - 2, 9, 11, 180, 360, AMBER);
-    c.fillRect(cx - 11, cy - 2, 2, 9, AMBER);
-    c.fillRect(cx + 9, cy - 2, 2, 9, AMBER);
-    c.fillRect(cx - 15, cy + 7, 30, 2, AMBER);
-    c.fillCircle(cx, cy + 12, 3, AMBER);
     const bool fall = m.alertType == EventType::POSSIBLE_FALL;
-    text(title_, fall ? "Possible fall" : "Movement alert", CX, 124, TEXT, middle_center);
-    text(title_, "detected", CX, 141, TEXT, middle_center);
-    text(body_, "Bench build: nurse", CX, 164, TEXT2, middle_center);
-    text(body_, "alerts are not", CX, 177, TEXT2, middle_center);
-    text(body_, "connected yet.", CX, 190, TEXT2, middle_center);
-    text(small_, "Press a button to close", CX, 228, TEXT3, middle_center);
+    const int cy = 72;
+    char foot[40];
+
+    switch (m.alertKind) {
+      case AlertKind::SENDING: {
+        c.fillCircle(CX, cy, 32, TEAL_DARK);
+        c.fillArc(CX, cy, 29, 32, 0, 360, TEAL_RING);
+        c.fillArc(CX, cy, 29, 32, 270, 360, TEAL);
+        bell(CX, cy, TEAL);
+        text(title_, "Notifying your", CX, 124, TEXT, middle_center);
+        text(title_, "nurse", CX, 141, TEXT, middle_center);
+        text(body_, "If you are hurt, try", CX, 164, TEXT2, middle_center);
+        text(body_, "to stay still.", CX, 177, TEXT2, middle_center);
+        text(small_, m.alertWaitingForWifi ? "Will send when Wi-Fi is back" : "SAFEHAVEN \xc2\xb7 Sending...",
+             CX, 228, TEXT3, middle_center);
+        break;
+      }
+      case AlertKind::NOTIFIED: {
+        c.fillCircle(CX, cy, 32, TEAL_DARK);
+        bell(CX, cy, TEAL);
+        text(title_, "Your nurse has", CX, 124, TEXT, middle_center);
+        text(title_, "been notified", CX, 141, TEXT, middle_center);
+        text(body_, "If you are hurt, try to", CX, 164, TEXT2, middle_center);
+        text(body_, "stay still. A nurse will", CX, 177, TEXT2, middle_center);
+        text(body_, "check on you.", CX, 190, TEXT2, middle_center);
+        snprintf(foot, sizeof(foot), m.alertSentAt[0] ? "SAFEHAVEN \xc2\xb7 Alert sent at %s" : "SAFEHAVEN \xc2\xb7 Alert sent",
+                 m.alertSentAt);
+        text(small_, foot, CX, 228, TEXT3, middle_center);
+        break;
+      }
+      case AlertKind::NOT_DELIVERED: {
+        // The backend could not attribute the event (no active assignment).
+        // Silence here would be the worst outcome: tell the patient to get help another way.
+        c.fillCircle(CX, cy, 32, AMBER_DARK);
+        bell(CX, cy, AMBER);
+        text(title_, "Alert not", CX, 124, AMBER_TEXT, middle_center);
+        text(title_, "delivered", CX, 141, AMBER_TEXT, middle_center);
+        text(body_, "Please use the call", CX, 164, TEXT, middle_center);
+        text(body_, "button or call out", CX, 177, TEXT, middle_center);
+        text(body_, "for a nurse.", CX, 190, TEXT, middle_center);
+        text(small_, "Press a button to close", CX, 228, TEXT3, middle_center);
+        break;
+      }
+      case AlertKind::BENCH: {
+        // No backend linked: detection works, but nobody was told. Say so.
+        c.fillCircle(CX, cy, 32, AMBER_DARK);
+        bell(CX, cy, AMBER);
+        text(title_, fall ? "Possible fall" : "Movement alert", CX, 124, TEXT, middle_center);
+        text(title_, "detected", CX, 141, TEXT, middle_center);
+        text(body_, "Bench build: nurse", CX, 164, TEXT2, middle_center);
+        text(body_, "alerts are not", CX, 177, TEXT2, middle_center);
+        text(body_, "connected yet.", CX, 190, TEXT2, middle_center);
+        text(small_, "Press a button to close", CX, 228, TEXT3, middle_center);
+        break;
+      }
+    }
   }
 
   M5Canvas canvas_;

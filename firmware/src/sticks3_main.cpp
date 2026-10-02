@@ -14,11 +14,20 @@
 //
 // Battery: shown level is smoothed (include/power/BatteryEstimator.h), and a
 // minute-by-minute log is kept in flash so real battery life can be measured
-// off USB. Serial 'd' dumps it, 'c' clears it.
+// off USB.
+//
+// Backend (src/DeviceLink.h): with SH_BACKEND_URL set and the device enrolled
+// (serial: enroll <CODE>), the assignment comes from the backend's heartbeat
+// and events are delivered to it — the alert screen then goes Sending →
+// Nurse notified only once the backend has accepted the event. Without a
+// backend the device runs in BENCH mode: a simulated FALL_RISK assignment, and
+// an alert screen that says plainly nobody was notified.
+//
+// Serial commands (one per line): enroll <CODE> · forget · status · d (dump
+// battery log) · c (clear it).
 //
 // Buttons: front (A) switches HOME / TEST; side (B) clears TEST results or
-// closes an alert. The assignment is SIMULATED (FALL_RISK at boot, 60 s
-// settle). No patient, no token, no QR yet.
+// closes an alert.
 
 #include <LittleFS.h>
 #include <M5Unified.h>
@@ -28,6 +37,7 @@
 #include <time.h>
 
 #include "Bmi270Sensor.h"
+#include "DeviceLink.h"
 #include "StickUi.h"
 #include "core/DetectionCore.h"
 #include "core/EventJson.h"
@@ -40,6 +50,9 @@
 #define SH_WIFI_SSID ""
 #define SH_WIFI_PASSWORD ""
 #endif
+#ifndef SH_BACKEND_URL
+#define SH_BACKEND_URL ""
+#endif
 
 using namespace safehaven;
 using ui::HomeModel;
@@ -47,7 +60,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.3.0-bench";
+static const char *FIRMWARE_VERSION = "0.4.0-link";
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -85,6 +98,13 @@ static DetectionConfig config;
 static DetectionCore core(config);
 static ui::StickUi stickUi(&M5.Display);
 static BatteryEstimator battery(BATTERY_SAMPLE_MS / 1000.0f, 180.0f, 20);
+static DeviceLink backendLink;
+static uint64_t monoNow() { return clock_.millis(); }
+
+// Which assignment the detection core is running, and where it came from.
+static bool benchMode = true;            // no backend link: simulated assignment
+static uint32_t appliedAssignment = UINT32_MAX;
+static bool assigned = false;
 
 enum class Screen { HOME, TEST };
 static Screen screen = Screen::HOME;
@@ -124,6 +144,8 @@ static unsigned long lastHeartbeatMs = 0;
 static bool alertActive = false;
 static EventType alertType = EventType::NONE;
 static unsigned long alertSinceMs = 0;
+static char alertEventId[24] = "";       // empty in bench mode
+static char alertSentAt[6] = "";         // filled once the backend accepts it
 
 // TEST screen data: |a| history (2.4 s at 50 Hz) and the fall-candidate mirror.
 static const int GRAPH_N = 120;
@@ -153,12 +175,44 @@ static uint32_t settleLeftS() {
   return now >= settleUntilMs ? 0 : (uint32_t)((settleUntilMs - now + 999) / 1000);
 }
 
-static void assign(MonitoringProfile profile) {
+static void assign(MonitoringProfile profile, const char *source) {
   const uint64_t now = clock_.millis();
   core.set_assignment(true, profile, now);
   settleUntilMs = now + kAssignmentSettleMs;
-  Serial.printf("[ASSIGN] simulated assignment, profile %s - alerts muted for 60 s\r\n",
+  assigned = true;
+  Serial.printf("[ASSIGN] %s assignment, profile %s - alerts muted for 60 s\r\n", source,
                 to_string(profile));
+}
+
+static void unassign() {
+  core.set_assignment(false, MonitoringProfile::STANDARD, clock_.millis());
+  settleUntilMs = 0;
+  assigned = false;
+  Serial.println("[ASSIGN] not assigned - detection idle, no patient events");
+}
+
+/// Follow the backend's assignment once linked; fall back to the simulated
+/// bench assignment when not. A change of assignment restarts the settle
+/// window — putting the band on a new patient looks like violent movement.
+static void serviceAssignment() {
+  const LinkStatus ls = backendLink.status();
+  const bool linked = ls.configured && ls.enrolled;
+  if (!linked) {
+    if (!benchMode || appliedAssignment == UINT32_MAX) {
+      benchMode = true;
+      appliedAssignment = 0;
+      assign(MonitoringProfile::FALL_RISK, "SIMULATED (bench mode, no backend link)");
+    }
+    return;
+  }
+  if (benchMode) {
+    benchMode = false;
+    appliedAssignment = UINT32_MAX;  // force applying the backend's view
+  }
+  if (!ls.assignmentKnown || ls.assignmentVersion == appliedAssignment) return;
+  appliedAssignment = ls.assignmentVersion;
+  if (ls.assignment.present) assign(ls.assignment.profile, "BACKEND");
+  else unassign();
 }
 
 static bool localTime(struct tm &out) {
@@ -242,8 +296,20 @@ static void sampleBattery() {
   if (battery.low() && !wasLow) {
     Serial.printf("[BATT] LOW: %d%%\r\n", battery.shown_pct());
     screenWake("battery low");
+    if (!benchMode && assigned) {  // edge-triggered, once per crossing (plan §17)
+      DetectedEvent ev;
+      ev.type = EventType::DEVICE_LOW_BATTERY;
+      ev.occurred_at_ms = clock_.millis();
+      backendLink.submit(ev, backendLink.toEpoch(ev.occurred_at_ms, clock_.epoch_ms()), (uint8_t)battery.shown_pct());
+    }
   }
   wasLow = battery.low();
+
+  DeviceLink::Health h;
+  h.batteryPct = battery.valid() ? battery.shown_pct() : 0;
+  h.rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
+  h.sensorOk = imuOk;
+  backendLink.setHealth(h);
 }
 
 static void logBattery() {
@@ -284,12 +350,21 @@ static void handleEvent(const DetectedEvent &ev) {
   char json[768];
   const int n = serialise_event(json, sizeof(json), ev, id, occurred,
                                 battery.valid() ? (uint8_t)battery.shown_pct() : 0, FIRMWARE_VERSION);
-  Serial.printf("\r\n[EVENT] %s\r\n  would POST /device-api/events (not sent yet):\r\n  %s\r\n",
-                to_string(ev.type), n > 0 ? json : "[serialise overflow]");
+  Serial.printf("\r\n[EVENT] %s\r\n  %s\r\n  %s\r\n", to_string(ev.type),
+                benchMode ? "bench mode - NOT sent (no backend link):" : "payload (sent with its final id):",
+                n > 0 ? json : "[serialise overflow]");
   if (!epoch) Serial.println("  note: clock not synced, occurred_at_ms is 0");
 
   lastEvent = ev.type;
   lastEventMs = now;
+  alertEventId[0] = 0;
+  alertSentAt[0] = 0;
+  if (!benchMode) {
+    const char *id = backendLink.submit(ev, backendLink.toEpoch(ev.occurred_at_ms, epoch),
+                                 battery.valid() ? (uint8_t)battery.shown_pct() : 0);
+    strlcpy(alertEventId, id, sizeof(alertEventId));
+    Serial.printf("  queued for delivery as %s\r\n", id);
+  }
   if (ev.type == EventType::POSSIBLE_FALL || ev.type == EventType::ABNORMAL_MOVEMENT) {
     alertActive = true;
     alertType = ev.type;
@@ -399,10 +474,29 @@ static void buildHome(HomeModel &m) {
 
   m.settleLeftS = (uint8_t)settleLeftS();
   m.alertType = alertType;
+  if (benchMode || !alertEventId[0]) {
+    m.alertKind = ui::AlertKind::BENCH;
+  } else {
+    const LinkStatus ls = backendLink.status();
+    const bool mine = strcmp(ls.lastEventId, alertEventId) == 0;
+    const Delivery d = mine ? ls.lastDelivery : Delivery::QUEUED;
+    if (d == Delivery::DELIVERED) {
+      m.alertKind = ui::AlertKind::NOTIFIED;
+      if (!alertSentAt[0] && m.timeKnown) strlcpy(alertSentAt, m.hhmm, sizeof(alertSentAt));
+    } else if (d == Delivery::DISCARDED) {
+      m.alertKind = ui::AlertKind::NOT_DELIVERED;
+    } else {
+      m.alertKind = ui::AlertKind::SENDING;
+      m.alertWaitingForWifi = !m.wifiUp;
+    }
+    strlcpy(m.alertSentAt, alertSentAt, sizeof(m.alertSentAt));
+  }
 
-  // Priority: an alert, then setup, then the charging splash, then low battery.
+  // Priority: an alert, then setup, then pairing, then the charging splash,
+  // then low battery.
   if (alertActive) m.view = HomeView::ALERT;
   else if (!startupDone()) m.view = HomeView::STARTING;
+  else if (!assigned) m.view = HomeView::NOT_PAIRED;
   else if (m.settleLeftS > 0) m.view = HomeView::GETTING_READY;
   else if (now < chargingSplashUntilMs) m.view = HomeView::CHARGING;
   else if (m.batteryLow && !m.charging) m.view = HomeView::LOW_BATTERY;
@@ -433,6 +527,15 @@ static void buildTest(ui::TestModel &t) {
   t.lastEvent = lastEvent;
   t.lastEventAgeS = (uint32_t)((clock_.millis() - lastEventMs) / 1000);
   t.settleLeftS = settleLeftS();
+  const uint64_t nowMs = clock_.millis();
+  auto restLeft = [&](uint64_t since, uint32_t total) -> uint32_t {
+    const uint64_t done = nowMs - since;
+    return done >= total ? 0 : (uint32_t)((total - done + 999) / 1000);
+  };
+  if (core.fall().state() == FallDetector::State::COOLDOWN)
+    t.fallRestS = restLeft(core.fall().cooldown_since_ms(), config.fall_cooldown_ms);
+  if (core.movement().state() == MovementDetector::State::COOLDOWN)
+    t.movementRestS = restLeft(core.movement().cooldown_since_ms(), config.abn_cooldown_ms);
 }
 
 /// Views that keep the screen on by themselves (setup, alerts, charging splash).
@@ -554,12 +657,21 @@ void setup() {
                                             : "UNAVAILABLE");
   if (!wifiConfigured()) Serial.println("WiFi: not configured in include/wifi_secrets.h - offline");
 
+  backendLink.begin(SH_BACKEND_URL, FIRMWARE_VERSION, &monoNow);
+  {
+    const LinkStatus ls = backendLink.status();
+    Serial.printf("Backend: %s\r\n", !ls.configured ? "not configured (SH_BACKEND_URL) - BENCH mode"
+                                     : ls.enrolled   ? SH_BACKEND_URL
+                                                     : "configured, NOT enrolled - type: enroll <CODE>");
+  }
+
   sampleBattery();
   wasCharging = battery.charging();  // no charging splash for the state we booted in
   startWifi();
-  assign(MonitoringProfile::FALL_RISK);
+  serviceAssignment();
   Serial.println("Front button A: HOME/TEST.  Side button B: clear / close alert.  "
                  "Screen sleeps after 15 s; any button wakes it.");
+  Serial.println("Serial: enroll <CODE> | forget | status | d (battery log) | c (clear log)");
 }
 
 static void handleButtons() {
@@ -591,13 +703,54 @@ static void handleButtons() {
   }
 }
 
+static void printStatus() {
+  const LinkStatus ls = backendLink.status();
+  Serial.printf("[STATUS] mode %s | backend %s | enrolled %s%s | heartbeat %s | assignment %s%s | "
+                "queue %lu | wifi %s\r\n",
+                benchMode ? "BENCH" : "LINKED", ls.configured ? SH_BACKEND_URL : "(none)",
+                ls.enrolled ? "yes" : "no", ls.credentialRejected ? " (REJECTED)" : "",
+                ls.heartbeatOk ? "ok" : "not yet", assigned ? "yes, " : "none",
+                assigned ? to_string(core.profile()) : "", (unsigned long)ls.queueDepth,
+                WiFi.status() == WL_CONNECTED ? "up" : "down");
+}
+
+static void runCommand(char *line) {
+  while (*line == ' ') ++line;
+  if (!strncmp(line, "enroll ", 7)) {
+    char *code = line + 7;
+    while (*code == ' ') ++code;
+    if (!backendLink.status().configured) {
+      Serial.println("[LINK] set SH_BACKEND_URL in include/wifi_secrets.h first");
+    } else if (*code) {
+      backendLink.requestEnroll(code);
+      Serial.println("[LINK] enrolment requested - waiting for Wi-Fi/backend...");
+    }
+  } else if (!strcmp(line, "forget")) {
+    backendLink.forget();
+    Serial.println("[LINK] credential and assignment erased - back to BENCH mode");
+  } else if (!strcmp(line, "status")) {
+    printStatus();
+  } else if (!strcmp(line, "d")) {
+    dumpBatteryLog();
+  } else if (!strcmp(line, "c") && fsOk) {
+    LittleFS.remove(BATTERY_LOG_PATH);
+    Serial.println("[LOG] battery log cleared");
+  } else if (*line) {
+    Serial.printf("unknown command: %s\r\n", line);
+  }
+}
+
 static void handleSerial() {
+  static char line[64];
+  static size_t len = 0;
   while (Serial.available()) {
     const char ch = (char)Serial.read();
-    if (ch == 'd') dumpBatteryLog();
-    if (ch == 'c' && fsOk) {
-      LittleFS.remove(BATTERY_LOG_PATH);
-      Serial.println("[LOG] battery log cleared");
+    if (ch == '\r' || ch == '\n') {
+      line[len] = 0;
+      if (len) runCommand(line);
+      len = 0;
+    } else if (len < sizeof(line) - 1) {
+      line[len++] = ch;
     }
   }
 }
@@ -606,6 +759,7 @@ void loop() {
   M5.update();
   pumpSensor();  // first, every pass: detection never waits for the UI
   serviceWifi();
+  serviceAssignment();
   handleButtons();
   handleSerial();
 
@@ -627,9 +781,9 @@ void loop() {
 
   if (now - lastHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {
     lastHeartbeatMs = now;
-    Serial.printf("%s heartbeat  |a|=%.2f g  battery %d%% (raw %d%%, %d mV%s)  screen %s  wifi %s\r\n",
+    Serial.printf("%s alive  |a|=%.2f g  battery %d%% (raw %d%%, %d mV%s)  screen %s  wifi %s  %s\r\n",
                   DEVICE_ID, magnitude(lastSample), battery.shown_pct(), rawBatteryPct, batteryMv,
                   battery.charging() ? ", charging" : "", screenOn ? "on" : "off",
-                  WiFi.status() == WL_CONNECTED ? "ok" : "off");
+                  WiFi.status() == WL_CONNECTED ? "ok" : "off", benchMode ? "BENCH" : "LINKED");
   }
 }
