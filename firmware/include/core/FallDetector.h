@@ -212,7 +212,8 @@ class FallDetector {
                           tilt_delta_deg_ >= cfg_.collapse_orientation_deg && stage_inactivity_;
 
     EventType verdict = EventType::NONE;
-    if (stage_orientation_ && stage_inactivity_ && hard && !off_body) {
+    if (stage_orientation_ && stage_inactivity_ && hard && !off_body &&
+        tilt_delta_deg_ >= cfg_.confirm_orientation_deg) {
       verdict = EventType::POSSIBLE_FALL;
     } else if ((stage_orientation_ && (hard || (stage_impact_ && stage_inactivity_))) || collapse) {
       // Weaker or ambiguous: ask the wearer first. Covers a soft impact

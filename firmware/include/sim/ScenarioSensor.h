@@ -98,7 +98,7 @@ inline Script script_for(Scenario s) {
   static const Segment kFall[] = {{Shape::REST, 2000, 0, 0, 1},
                                   {Shape::FREEFALL, 160},
                                   {Shape::FALL_IMPACT, 80},
-                                  {Shape::REST, 8000, 1, 0, 0}};  // lands on its side
+                                  {Shape::REST, 8000, 0.5f, 0, -0.866f}};  // arm flipped, ~150 deg
   static const Segment kImpact[] = {{Shape::REST, 2000, 0, 0, 1},
                                     {Shape::FLAT_IMPACT, 60},
                                     {Shape::NORMAL_MOVE, 5000}};

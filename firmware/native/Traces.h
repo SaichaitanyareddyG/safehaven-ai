@@ -145,8 +145,8 @@ inline Trace fall(Noise& nz) {
     s.ay = nz.next() * 0.1f;
     s.az = p;
   });
-  // Come to rest on a new face: gravity now on +X.
-  add_resting(t, 8000, nz, /*gx=*/1.0f, /*gy=*/0.0f, /*gz=*/0.0f);
+  // Come to rest with the arm flipped (~150 deg), as real falls do.
+  add_resting(t, 8000, nz, /*gx=*/0.5f, /*gy=*/0.0f, /*gz=*/-0.866f);
   return t;
 }
 

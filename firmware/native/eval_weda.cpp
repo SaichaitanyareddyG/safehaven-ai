@@ -68,6 +68,7 @@ struct Diag {
   float peak = 0, tilt = 0;
 };
 static Diag g_diag;
+static EventMetrics g_alert;  // metrics of the trial's immediate alert, for FEAT=1
 
 static Verdict run_trial(const std::string& base, const DetectionConfig& cfg) {
   const auto a = load(base + "_accel.csv");
@@ -98,7 +99,7 @@ static Verdict run_trial(const std::string& base, const DetectionConfig& cfg) {
       if (fd.peak_g() > g_diag.peak) g_diag.peak = fd.peak_g();
       if (fd.tilt_delta_deg() > g_diag.tilt) g_diag.tilt = fd.tilt_delta_deg();
     }
-    if (ev.type == EventType::POSSIBLE_FALL) v = ALERT;
+    if (ev.type == EventType::POSSIBLE_FALL) { v = ALERT; g_alert = ev.metrics; }
     else if (ev.type == EventType::FALL_CHECK && v == NOTHING) v = CHECK;
   };
   for (int i = 0; i < 150; ++i) feed(a[0].x, a[0].y, a[0].z, g[0].x, g[0].y, g[0].z);
@@ -160,6 +161,9 @@ int main(int argc, char** argv) {
                                         f.substr(0, k).c_str(), g_diag.peak, g_diag.tilt, g_diag.freefall,
                                         g_diag.still, why.c_str());
       }
+      if (v == ALERT && getenv("FEAT"))
+        std::printf("FEAT %s peak %.2f tilt %.0f ff %d ffms %u still %u\n", code.c_str(), g_alert.peak_g,
+                    g_alert.tilt_delta_deg, g_alert.stage_freefall, g_alert.freefall_ms, g_alert.inactive_ms);
       ++n[code];
       if (v == ALERT) ++alerts[code];
       if (v == CHECK) ++checks[code];

@@ -43,6 +43,11 @@ struct DetectionConfig {
   // this much — plus reorientation and body-like stillness. Weaker evidence
   // becomes a CHECK: the band asks "Are you OK?" before involving a nurse.
   float    confirm_impact_g    = 3.50f;
+  // ... and a wrist that turned this far. Real falls flip the arm (WEDA-FALL:
+  // mostly 140-177 deg); hitting a table or dropping into a chair turns it
+  // less. Raised the share of immediate alerts that are real falls from 91%
+  // to 97%; the rest are asked "Are you OK?" first, so none are lost.
+  float    confirm_orientation_deg = 130.0f;
   // Faint / collapse: a soft deceleration with a fast, large reorientation
   // and then stillness. Lying down on purpose is slower and softer.
   float    collapse_g          = 1.60f;

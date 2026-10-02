@@ -99,7 +99,7 @@ int main() {
     add_resting(t, 3000, nz);
     add_freefall(t, 200, nz);
     add_impact(t, 80, nz, 4.5f, 0.5f, 1.0f);
-    add_resting(t, 6000, nz, 1.0f, 0.0f, 0.0f);
+    add_resting(t, 6000, nz, 0.5f, 0.0f, -0.866f);  // arm flipped, ~150 deg
     const Result r = run(t);
     check(only(r, EventType::POSSIBLE_FALL), "hard fall, worn, lies still -> POSSIBLE_FALL (alert now)", describe(r));
   }
@@ -108,9 +108,19 @@ int main() {
     Trace t;
     add_resting(t, 3000, nz);
     add_impact(t, 80, nz, 4.2f, 0.5f, 1.0f);
-    add_resting(t, 6000, nz, 1.0f, 0.0f, 0.0f);
+    add_resting(t, 6000, nz, 0.5f, 0.0f, -0.866f);
     const Result r = run(t);
     check(only(r, EventType::POSSIBLE_FALL), "hard impact >= 3.5 g, no free-fall, still -> POSSIBLE_FALL", describe(r));
+  }
+  {  // Hitting a table: hard, then still, but the wrist only turned ~90 deg.
+    // WEDA-FALL: this and dropping into a chair were the false instant alerts.
+    Noise nz(13);
+    Trace t;
+    add_resting(t, 3000, nz);
+    add_impact(t, 80, nz, 4.2f, 0.5f, 1.0f);
+    add_resting(t, 6000, nz, 1.0f, 0.0f, 0.0f);
+    const Result r = run(t);
+    check(only(r, EventType::FALL_CHECK), "hard hit, still, wrist turned only 90 deg -> CHECK, not an alert", describe(r));
   }
   {  // Bench pattern A: setting the band down on a table.
     Noise nz(3);
