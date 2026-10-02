@@ -13,8 +13,9 @@ BUILD    := build
 
 .PHONY: test replay clean
 
-test: $(BUILD)/test_detection $(BUILD)/test_scenarios $(BUILD)/test_battery
+test: $(BUILD)/test_detection $(BUILD)/test_fall_cases $(BUILD)/test_scenarios $(BUILD)/test_battery
 	@$(BUILD)/test_detection
+	@$(BUILD)/test_fall_cases
 	@$(BUILD)/test_scenarios
 	@$(BUILD)/test_battery
 
@@ -26,6 +27,9 @@ $(BUILD)/test_detection: test_detection.cpp Traces.h $(wildcard ../include/core/
 
 $(BUILD)/test_scenarios: test_scenarios.cpp $(wildcard ../include/core/*.h) $(wildcard ../include/sim/*.h) $(wildcard ../include/hal/*.h) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ test_scenarios.cpp
+
+$(BUILD)/test_fall_cases: test_fall_cases.cpp Traces.h $(wildcard ../include/core/*.h) | $(BUILD)
+	$(CXX) $(CXXFLAGS) -o $@ test_fall_cases.cpp
 
 $(BUILD)/test_battery: test_battery.cpp ../include/power/BatteryEstimator.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ test_battery.cpp

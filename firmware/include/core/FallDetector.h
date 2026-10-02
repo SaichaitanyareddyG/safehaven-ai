@@ -12,6 +12,18 @@
 //
 // The detector never concludes a fall happened. It reports that a pattern
 // matched, with the evidence. The nurse assesses.
+//
+// Two verdicts (bench data, 2026-10-02 — set-downs and toss-and-catch had
+// been alerting):
+//   POSSIBLE_FALL  hard impact (free-fall seen, or >= confirm_impact_g) +
+//                  reorientation + stillness that looks like a body, not a
+//                  table. Alert now.
+//   FALL_CHECK     weaker or ambiguous evidence — a soft impact, no stillness
+//                  after a drop, a fast collapse onto a bed, or table-like
+//                  stillness. The band asks "Are you OK?"; only an unanswered
+//                  check reaches the nurse.
+// A soft, fast collapse (collapse_g, >= collapse_orientation_deg, then still)
+// is the faint pattern: it no longer needs a 2.5 g impact to be noticed.
 
 #ifndef SAFEHAVEN_CORE_FALL_DETECTOR_H
 #define SAFEHAVEN_CORE_FALL_DETECTOR_H
@@ -70,9 +82,12 @@ class FallDetector {
           state_ = State::CAND_FREEFALL;
           freefall_start_ms_ = now;
           stage_freefall_ = false;
-        } else if (mag > cfg_.impact_g) {
+        } else if (mag > cfg_.collapse_g) {
           // Impact without an observed free-fall is still a candidate — a wrist
-          // often misses the free-fall entirely.
+          // often misses the free-fall entirely. Soft decelerations (above
+          // collapse_g, below impact_g) are candidates too: a faint onto a bed
+          // never reaches 2.5 g. Most are ordinary motion and are dropped
+          // within impact_window_ms when no large reorientation follows.
           enter_impact(now, mag);
         }
         return {};
@@ -80,7 +95,7 @@ class FallDetector {
       case State::CAND_FREEFALL: {
         if (mag < cfg_.freefall_g) {
           if (now - freefall_start_ms_ >= cfg_.freefall_ms) stage_freefall_ = true;
-        } else if (mag > cfg_.impact_g) {
+        } else if (mag > cfg_.collapse_g) {
           enter_impact(now, mag);
         } else if (now - freefall_start_ms_ > cfg_.freefall_window_ms) {
           state_ = State::IDLE;
@@ -91,6 +106,7 @@ class FallDetector {
 
       case State::CAND_IMPACT: {
         if (mag > peak_g_) peak_g_ = mag;
+        if (mag > cfg_.impact_g) stage_impact_ = true;
         const float tilt = angle_between(pre_impact_, s);
         if (tilt > tilt_delta_deg_) tilt_delta_deg_ = tilt;
 
@@ -98,8 +114,14 @@ class FallDetector {
           stage_orientation_ = true;
           enter_settled(now);
         } else if (now - impact_ms_ > cfg_.impact_window_ms) {
-          // Orientation unconfirmed — proceed anyway, the score handles it.
-          enter_settled(now);
+          if (!stage_impact_) {
+            // A soft deceleration with no large reorientation: ordinary motion.
+            state_ = State::IDLE;
+            clear_stages();
+          } else {
+            // Orientation unconfirmed — proceed anyway; the verdict handles it.
+            enter_settled(now);
+          }
         }
         return {};
       }
@@ -142,7 +164,7 @@ class FallDetector {
 
   void enter_impact(uint64_t now, float mag) {
     state_ = State::CAND_IMPACT;
-    stage_impact_ = true;
+    stage_impact_ = mag > cfg_.impact_g;
     impact_ms_ = now;
     peak_g_ = mag;
     tilt_delta_deg_ = 0.0f;
@@ -166,8 +188,22 @@ class FallDetector {
   DetectedEvent finish(uint64_t now) {
     const int score = (stage_freefall_ ? 1 : 0) + (stage_impact_ ? 1 : 0) +
                       (stage_orientation_ ? 1 : 0) + (stage_inactivity_ ? 1 : 0);
+    const bool off_body = trailing_off_body();
+    const bool hard = stage_impact_ && (stage_freefall_ || peak_g_ >= cfg_.confirm_impact_g);
+    const bool collapse = !stage_impact_ && peak_g_ >= cfg_.collapse_g &&
+                          tilt_delta_deg_ >= cfg_.collapse_orientation_deg && stage_inactivity_;
 
-    if (score < cfg_.min_fall_score) {
+    EventType verdict = EventType::NONE;
+    if (stage_orientation_ && stage_inactivity_ && hard && !off_body) {
+      verdict = EventType::POSSIBLE_FALL;
+    } else if ((stage_orientation_ && (hard || (stage_impact_ && stage_inactivity_))) || collapse) {
+      // Weaker or ambiguous: ask the wearer first. Covers a soft impact
+      // (set-down shape), a drop followed by movement (toss-and-catch shape),
+      // a faint onto a bed, and a hard fall whose stillness looks like a table.
+      verdict = EventType::FALL_CHECK;
+    }
+
+    if (verdict == EventType::NONE) {
       // Deliberately silent. Most real-world impact-like motion ends here.
       state_ = State::IDLE;
       clear_stages();
@@ -175,7 +211,8 @@ class FallDetector {
     }
 
     DetectedEvent ev;
-    ev.type = EventType::POSSIBLE_FALL;
+    ev.type = verdict;
+    ev.metrics.still_off_body = off_body;
     ev.occurred_at_ms = impact_ms_;
     ev.metrics.fall_score = score;
     ev.metrics.peak_g = peak_g_;
@@ -188,8 +225,30 @@ class FallDetector {
     ev.metrics.stage_inactivity = stage_inactivity_;
 
     state_ = State::COOLDOWN;
-    cooldown_until_base_ = now;
+    // A check is short-lived: the wearer may be about to fall for real.
+    cooldown_until_base_ = verdict == EventType::FALL_CHECK
+                               ? now - (cfg_.fall_cooldown_ms - cfg_.check_cooldown_ms)
+                               : now;
     return ev;
+  }
+
+  /// The last ~2.5 s look like a band lying on a surface (sensor noise floor)
+  /// rather than a still wrist. See WearDetector for the measurements.
+  bool trailing_off_body() const {
+    const size_t n = hist_.size();
+    if (n < 25) return false;
+    double sa = 0, sa2 = 0, sg = 0;
+    for (size_t i = 0; i < n; ++i) {
+      const ImuSample& x = hist_[i];
+      const double a = magnitude(x);
+      sa += a;
+      sa2 += a * a;
+      sg += std::sqrt(x.gx * x.gx + x.gy * x.gy + x.gz * x.gz);
+    }
+    const double mean = sa / n;
+    const double var = sa2 / n - mean * mean;
+    const double sd = var > 0 ? std::sqrt(var) : 0.0;
+    return sd < cfg_.offbody_acc_sd_g && (sg / n) < cfg_.offbody_gyro_dps;
   }
 
   /// Variance of ‖a‖ over the trailing ~500 ms. Low variance ⇒ device is still.
@@ -206,7 +265,13 @@ class FallDetector {
       const float d = magnitude(hist_[base + i]) - mean;
       sq += d * d;
     }
-    return (sq / static_cast<float>(n)) < cfg_.inactivity_var_g2;
+    if ((sq / static_cast<float>(n)) >= cfg_.inactivity_var_g2) return false;
+    float gyro = 0.0f;
+    for (size_t i = 0; i < n; ++i) {
+      const ImuSample& x = hist_[base + i];
+      gyro += std::sqrt(x.gx * x.gx + x.gy * x.gy + x.gz * x.gz);
+    }
+    return gyro / static_cast<float>(n) < cfg_.still_gyro_dps;
   }
 
   const DetectionConfig& cfg_;

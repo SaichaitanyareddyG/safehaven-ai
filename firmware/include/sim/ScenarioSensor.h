@@ -184,6 +184,9 @@ class ScenarioSensor : public ISensorProvider {
         s.ax = 0.10f * std::sin(2.0f * kPi * 0.4f * sec) + nz_.next() * 0.02f;
         s.ay = 0.08f * std::sin(2.0f * kPi * 0.3f * sec + 1.0f) + nz_.next() * 0.02f;
         s.az = 1.0f + 0.10f * std::sin(2.0f * kPi * 0.5f * sec) + nz_.next() * 0.02f;
+        s.gx = 35.0f * std::sin(2.0f * kPi * 0.4f * sec) + nz_.next() * 4.0f;
+        s.gy = 25.0f * std::cos(2.0f * kPi * 0.3f * sec) + nz_.next() * 4.0f;
+        s.gz = nz_.next() * 4.0f;
         break;
       case Shape::RHYTHMIC: {
         const float osc = seg->b * std::sin(2.0f * kPi * seg->a * sec);
@@ -213,10 +216,15 @@ class ScenarioSensor : public ISensorProvider {
     return s;
   }
 
+  /// Still and worn: wrist tremor/pulse noise, as in native/Traces.h (a band
+  /// with no gyro noise at all would look like it is lying on a table).
   void rest(ImuSample& s, float gx, float gy, float gz) {
-    s.ax = gx + nz_.next() * 0.004f;
-    s.ay = gy + nz_.next() * 0.004f;
-    s.az = gz + nz_.next() * 0.004f;
+    s.ax = gx + nz_.next() * 0.012f;
+    s.ay = gy + nz_.next() * 0.012f;
+    s.az = gz + nz_.next() * 0.012f;
+    s.gx = nz_.next() * 4.0f;
+    s.gy = nz_.next() * 4.0f;
+    s.gz = nz_.next() * 4.0f;
   }
 
   SampleSchedule schedule_;

@@ -58,13 +58,32 @@ inline void append(Trace& t, uint32_t ms, Fn fn) {
   }
 }
 
-/// Still, worn, gravity on +Z. Tiny sensor noise only.
+/// Still and WORN, gravity on (gx, gy, gz). A wrist is never sensor-still:
+/// tremor and pulse keep |a| wobbling ~0.007 g and the gyro at a few deg/s
+/// (measured on SH-WEAR-001, seated and motionless, 2026-10-02).
 inline void add_resting(Trace& t, uint32_t ms, Noise& nz, float gx = 0.0f,
                         float gy = 0.0f, float gz = 1.0f) {
   append(t, ms, [&](size_t, uint64_t, ImuSample& s) {
-    s.ax = gx + nz.next() * 0.004f;
-    s.ay = gy + nz.next() * 0.004f;
-    s.az = gz + nz.next() * 0.004f;
+    s.ax = gx + nz.next() * 0.012f;
+    s.ay = gy + nz.next() * 0.012f;
+    s.az = gz + nz.next() * 0.012f;
+    s.gx = nz.next() * 4.0f;
+    s.gy = nz.next() * 4.0f;
+    s.gz = nz.next() * 4.0f;
+  });
+}
+
+/// Lying on a table: the sensor's own noise floor (|a| ~0.001 g, gyro ~0.4
+/// deg/s, measured on the same band).
+inline void add_table_rest(Trace& t, uint32_t ms, Noise& nz, float gx = 0.0f,
+                           float gy = 0.0f, float gz = 1.0f) {
+  append(t, ms, [&](size_t, uint64_t, ImuSample& s) {
+    s.ax = gx + nz.next() * 0.0015f;
+    s.ay = gy + nz.next() * 0.0015f;
+    s.az = gz + nz.next() * 0.0015f;
+    s.gx = 0.3f + nz.next() * 0.15f;
+    s.gy = -0.2f + nz.next() * 0.15f;
+    s.gz = nz.next() * 0.15f;
   });
 }
 
@@ -76,6 +95,10 @@ inline void add_normal_movement(Trace& t, uint32_t ms, Noise& nz) {
     s.ax = 0.10f * std::sin(2.0f * kPi * 0.4f * sec) + nz.next() * 0.02f;
     s.ay = 0.08f * std::sin(2.0f * kPi * 0.3f * sec + 1.0f) + nz.next() * 0.02f;
     s.az = 1.0f + 0.10f * std::sin(2.0f * kPi * 0.5f * sec) + nz.next() * 0.02f;
+    // A moving arm rotates: tens of deg/s.
+    s.gx = 35.0f * std::sin(2.0f * kPi * 0.4f * sec) + nz.next() * 4.0f;
+    s.gy = 25.0f * std::cos(2.0f * kPi * 0.3f * sec) + nz.next() * 4.0f;
+    s.gz = nz.next() * 4.0f;
   });
 }
 

@@ -8,6 +8,7 @@ export type AlertType =
   | 'DEVICE_OFFLINE'
   | 'HELP_REQUESTED'
   | 'NO_RESPONSE'
+  | 'DEVICE_NOT_WORN'
 
 /**
  * Operational priority — how soon someone should look. Deliberately NOT a
@@ -106,6 +107,7 @@ export type SensorEventType =
   | 'DEVICE_LOW_BATTERY'
   | 'HELP_REQUESTED'
   | 'NO_RESPONSE'
+  | 'DEVICE_NOT_WORN'
 
 export interface SensorEvent {
   id: string

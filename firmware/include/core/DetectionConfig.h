@@ -29,9 +29,32 @@ struct DetectionConfig {
   float    orientation_deg     = 45.0f;  ///< tilt change that counts as reorientation
   uint32_t inactivity_window_ms= 3000;   ///< how long we watch for stillness
   uint32_t inactivity_ms       = 1500;   ///< stillness needed to count the stage
-  float    inactivity_var_g2   = 0.0040f;///< variance of |a| below this ⇒ still
+  // "Still" after an impact. Tightened from 0.004 after the 2026-10-02 bench
+  // session: slow arm movement passed as still. A motionless wrist measured
+  // var ~0.00004-0.00008 g^2 and gyro ~2 deg/s; both limits sit ~10x above.
+  float    inactivity_var_g2   = 0.0008f;///< variance of |a| below this ...
+  float    still_gyro_dps      = 12.0f;  ///< ... AND mean rotation below this ⇒ still
   int      min_fall_score      = 3;      ///< of 4 stages; raise to 4 if noisy
   uint32_t fall_cooldown_ms    = 60000;
+
+  // Two levels (bench data 2026-10-02: set-downs and toss-and-catch alerted).
+  // CONFIRMED (alert now) needs a HARD impact — free-fall seen, or at least
+  // this much — plus reorientation and body-like stillness. Weaker evidence
+  // becomes a CHECK: the band asks "Are you OK?" before involving a nurse.
+  float    confirm_impact_g    = 3.50f;
+  // Faint / collapse: a soft deceleration with a fast, large reorientation
+  // and then stillness. Lying down on purpose is slower and softer.
+  float    collapse_g          = 1.60f;
+  float    collapse_orientation_deg = 60.0f;
+  uint32_t check_cooldown_ms   = 5000;   ///< short: a real fall may follow a check
+
+  // ── Worn / not worn ─────────────────────────────────────────────────────
+  // Measured on SH-WEAR-001: on a table |a| sd 0.001 g, gyro mean 0.37 dps;
+  // on a still, seated wrist |a| sd 0.006-0.009 g, gyro mean 1.6-2.3 dps.
+  // Thresholds sit between, ~2.5x from each.
+  float    offbody_acc_sd_g    = 0.0025f;
+  float    offbody_gyro_dps    = 0.90f;
+  uint32_t offbody_after_ms    = 30000;  ///< this long table-still = not worn
 
   // ── Abnormal repetitive movement (§14) ──────────────────────────────────
   uint32_t abn_window_ms       = 4000;   ///< analysis window

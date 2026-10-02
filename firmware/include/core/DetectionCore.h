@@ -13,6 +13,7 @@
 #include "MobilityDetector.h"
 #include "MovementDetector.h"
 #include "Types.h"
+#include "WearDetector.h"
 
 namespace safehaven {
 
@@ -24,7 +25,7 @@ constexpr uint32_t kAssignmentSettleMs = 60000;
 class DetectionCore {
  public:
   explicit DetectionCore(const DetectionConfig& cfg)
-      : fall_(cfg), movement_(cfg), mobility_(cfg) {}
+      : fall_(cfg), movement_(cfg), mobility_(cfg), wear_(cfg) {}
 
   /// Called when the backend reports a new assignment (or none).
   /// `assigned == false` puts the core in a safe idle state: an unassigned
@@ -47,6 +48,7 @@ class DetectionCore {
   /// persistence-based detectors. If a fall is emitted on this sample we return
   /// it and let the others keep accumulating internally.
   DetectedEvent update(const ImuSample& s) {
+    wear_.update(s);  // always: "not worn" matters most when nobody is watching
     if (!assigned_) return {};
     // Still feed the detectors during the settle window so their windows are
     // warm, but discard anything they produce.
@@ -69,11 +71,13 @@ class DetectionCore {
   const FallDetector& fall() const { return fall_; }
   const MovementDetector& movement() const { return movement_; }
   const MobilityDetector& mobility() const { return mobility_; }
+  const WearDetector& wear() const { return wear_; }
 
  private:
   FallDetector fall_;
   MovementDetector movement_;
   MobilityDetector mobility_;
+  WearDetector wear_;
 
   bool assigned_ = false;
   MonitoringProfile profile_ = MonitoringProfile::STANDARD;

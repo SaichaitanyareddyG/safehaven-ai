@@ -37,6 +37,11 @@ enum class EventType : uint8_t {
   DEVICE_LOW_BATTERY,
   HELP_REQUESTED,  ///< the wearer held the help button — not a detection
   NO_RESPONSE,     ///< a possible fall went unanswered on the band (escalation)
+  DEVICE_NOT_WORN, ///< band appears off the wrist: the patient may be unmonitored
+  /// INTERNAL, never sent: an uncertain fall/collapse. The band asks the wearer
+  /// "Are you OK?" first; only an unanswered check reaches the nurse (as
+  /// NO_RESPONSE, or DEVICE_NOT_WORN if the band is lying still off a wrist).
+  FALL_CHECK,
 };
 
 /// Set by the backend on assignment. Gates which detectors run at all.
@@ -69,6 +74,10 @@ struct EventMetrics {
   float dom_freq_hz  = 0.0f;
   float magnitude    = 0.0f;
   float periodicity  = 0.0f;
+
+  // Device-side only (not part of the wire payload): the stillness after the
+  // event looked like a band lying on a surface, not a wrist.
+  bool still_off_body = false;
 };
 
 /// A candidate event. The device emits these; the backend decides whether a
@@ -93,6 +102,8 @@ inline const char* to_string(EventType t) {
     case EventType::DEVICE_LOW_BATTERY:  return "DEVICE_LOW_BATTERY";
     case EventType::HELP_REQUESTED:      return "HELP_REQUESTED";
     case EventType::NO_RESPONSE:         return "NO_RESPONSE";
+    case EventType::DEVICE_NOT_WORN:     return "DEVICE_NOT_WORN";
+    case EventType::FALL_CHECK:          return "FALL_CHECK";
     case EventType::NONE:                return "NONE";
   }
   return "NONE";

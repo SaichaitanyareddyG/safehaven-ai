@@ -51,6 +51,7 @@ _EVENT_TO_ALERT = {
     SensorEventType.DEVICE_LOW_BATTERY: AlertType.DEVICE_LOW_BATTERY,
     SensorEventType.HELP_REQUESTED: AlertType.HELP_REQUESTED,
     SensorEventType.NO_RESPONSE: AlertType.NO_RESPONSE,
+    SensorEventType.DEVICE_NOT_WORN: AlertType.DEVICE_NOT_WORN,
 }
 
 # Profiles under which a heightened-risk patient's abnormal movement is treated
@@ -111,6 +112,11 @@ def evaluate(
         # desktop notification) rather than a counter quietly ticking up.
         return AlertDecision(True, AlertType.NO_RESPONSE, AlertPriority.HIGH)
 
+    if event_type is SensorEventType.DEVICE_NOT_WORN:
+        # MEDIUM, above low battery: a band on a table is a patient without
+        # monitoring NOW. Not HIGH — usually the band was simply taken off.
+        return AlertDecision(True, AlertType.DEVICE_NOT_WORN, AlertPriority.MEDIUM)
+
     if event_type is SensorEventType.DEVICE_LOW_BATTERY:
         # Operational, not clinical. It matters because a dead wearable stops
         # monitoring, but it is not itself a patient event.
@@ -126,4 +132,4 @@ def is_operational(alert_type: AlertType) -> bool:
     time-window used for clinical episodes would re-alert repeatedly. See
     service.evaluate_event.
     """
-    return alert_type in (AlertType.DEVICE_LOW_BATTERY, AlertType.DEVICE_OFFLINE)
+    return alert_type in (AlertType.DEVICE_LOW_BATTERY, AlertType.DEVICE_OFFLINE, AlertType.DEVICE_NOT_WORN)

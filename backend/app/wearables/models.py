@@ -210,6 +210,10 @@ class SensorEventType(str, enum.Enum):
     # After a possible fall the band sounded and flashed and nobody pressed a
     # button. Reports an absence of response — not a state of consciousness.
     NO_RESPONSE = "NO_RESPONSE"
+    # The band has been lying sensor-still like an object, not a wrist: taken
+    # off, or (rarely) a wearer so still it reads as a table. Either way the
+    # patient may not be monitored, which is what the nurse needs to know.
+    DEVICE_NOT_WORN = "DEVICE_NOT_WORN"
 
 
 class SensorEvent(Base):
@@ -290,6 +294,7 @@ class AlertType(str, enum.Enum):
     DEVICE_OFFLINE = "DEVICE_OFFLINE"
     HELP_REQUESTED = "HELP_REQUESTED"
     NO_RESPONSE = "NO_RESPONSE"
+    DEVICE_NOT_WORN = "DEVICE_NOT_WORN"
 
 
 class AlertPriority(str, enum.Enum):

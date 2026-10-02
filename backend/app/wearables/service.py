@@ -1342,6 +1342,9 @@ _ALERT_MESSAGES = {
     AlertType.NO_RESPONSE: (
         "No response on the wearable after a possible fall — attend now."
     ),
+    AlertType.DEVICE_NOT_WORN: (
+        "Wearable appears not to be worn — the patient may not be monitored. Check the patient and the band."
+    ),
 }
 
 

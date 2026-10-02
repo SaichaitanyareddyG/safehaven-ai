@@ -138,3 +138,18 @@ def test_band_follows_the_escalation_alert(client):
     _event(client, device, "NO_RESPONSE", "ev-2", occurred_ms=now)
     view = _heartbeat(client, device)["alert"]
     assert view["alert_type"] == "NO_RESPONSE" and view["status"] == "OPEN"
+
+
+def test_band_not_worn_raises_one_medium_alert(client):
+    headers, _, device = _assigned_band(client)
+    _event(client, device, "DEVICE_NOT_WORN", "ev-1")
+    _event(client, device, "DEVICE_NOT_WORN", "ev-2")  # same removal reported again
+    alerts = [a for a in _open_alerts(client, headers) if a["alert_type"] == "DEVICE_NOT_WORN"]
+    assert len(alerts) == 1 and alerts[0]["priority"] == "MEDIUM"
+    assert "not be monitored" in alerts[0]["message"]
+
+
+def test_not_worn_is_never_shown_to_the_wearer(client):
+    _, _, device = _assigned_band(client)
+    _event(client, device, "DEVICE_NOT_WORN", "ev-1")
+    assert _heartbeat(client, device)["alert"] is None

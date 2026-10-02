@@ -89,7 +89,7 @@ struct SmoothFont {
 };
 
 enum class HomeView : uint8_t {
-  STARTING, ADD_BAND, NOT_PAIRED, GETTING_READY, MONITORING, LOW_BATTERY, CHARGING, ALERT
+  STARTING, ADD_BAND, NOT_PAIRED, GETTING_READY, MONITORING, LOW_BATTERY, CHARGING, ALERT, CHECK
 };
 /// Which alert screen. BENCH is used while no backend is linked: it must say
 /// that nobody was notified. NOTIFIED is shown only once the backend has
@@ -128,6 +128,8 @@ struct HomeModel {
   bool attention;
   uint16_t attentionPhase;  // 0..999 through the current pulse
   bool attentionSlow;       // after 2 min unpressed: slower, quieter pulse
+  // "Are you OK?" check after an uncertain fall/collapse
+  uint8_t checkLeftS;
   bool alertWaitingForWifi;
   char alertSentAt[6];
 };
@@ -152,6 +154,8 @@ struct TestModel {
   uint32_t settleLeftS;
   uint32_t fallRestS;      // fall detector resting after a fall (0 = armed)
   uint32_t movementRestS;  // abnormal-movement detector resting (0 = armed)
+  bool recording;          // tuning session in progress (bench)
+  int recMarker;           // current session marker (side-button clicks)
 };
 
 class StickUi {
@@ -187,6 +191,7 @@ class StickUi {
       case HomeView::LOW_BATTERY: lowBattery(m); break;
       case HomeView::CHARGING: chargingSplash(m); break;
       case HomeView::ALERT: alert(m); break;
+      case HomeView::CHECK: areYouOk(m); break;
     }
     if (push) c.pushSprite(0, 0);
   }
@@ -242,6 +247,7 @@ class StickUi {
     else if (t.outcome == 1) { col = CORAL_TEXT; what = "Possible fall"; }
     else if (t.outcome == 2) { col = TEXT3; what = "no alert"; }
     else if (t.outcome == 3) { col = AMBER_TEXT; what = "muted (settling)"; }
+    else if (t.outcome == 4) { col = AMBER_TEXT; what = "check: OK?"; }
     if (t.checking || t.outcome) {
       snprintf(buf, sizeof(buf), "%d/4", t.score);
       text(title_, buf, 8, 160, col, middle_left);
@@ -274,7 +280,12 @@ class StickUi {
       snprintf(buf, sizeof(buf), "alerts muted %lus", (unsigned long)t.settleLeftS);
       text(small_, buf, 8, 208, AMBER_TEXT, middle_left);
     }
-    if (t.fallRestS > 0) {
+    if (t.recording) {
+      // Tuning session: the side button drops a numbered marker.
+      c.fillRoundRect(CX - 40, 225, 80, 14, 7, CORAL);
+      snprintf(buf, sizeof(buf), "REC  marker %d", t.recMarker);
+      text(bodyBold_, buf, CX, 232, BG, middle_center);
+    } else if (t.fallRestS > 0) {
       // After a fall the detector rests so one fall cannot raise several alerts.
       snprintf(buf, sizeof(buf), "fall check resting %lus", (unsigned long)t.fallRestS);
       text(bodyBold_, buf, CX, 232, AMBER_TEXT, middle_center);
@@ -592,6 +603,28 @@ class StickUi {
     text(small_, "A new code appears every", CX, 186, TEXT3, middle_center);
     text(small_, "10 minutes", CX, 198, TEXT3, middle_center);
     text(small_, "SAFEHAVEN \xc2\xb7 new band", CX, 228, TEXT3, middle_center);
+  }
+
+  /// Uncertain fall / possible faint: ask before calling anyone. Amber, not
+  /// red — nothing has been sent yet. Unanswered, the nurse is called.
+  void areYouOk(const HomeModel& m) {
+    auto& c = canvas_;
+    barFor(m, m.timeKnown ? m.hhmm : "");
+    const int cy = 82;
+    c.fillArc(CX, cy, 28, 33, 0, 360, AMBER_DARK);
+    const int left = m.checkLeftS > 30 ? 30 : m.checkLeftS;
+    const int sweep = 360 * left / 30;
+    if (sweep > 0) c.fillArc(CX, cy, 28, 33, 270, 270 + sweep, AMBER);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d", left);
+    text(number_, buf, CX, cy - 3, TEXT, middle_center);
+    text(small_, "seconds", CX, cy + 14, TEXT2, middle_center);
+    text(title_, "Are you OK?", CX, 138, TEXT, middle_center);
+    text(body_, "If you are, press", CX, 160, TEXT2, middle_center);
+    text(body_, "any button.", CX, 173, TEXT2, middle_center);
+    c.drawRoundRect(10, 190, 115, 32, 7, AMBER);
+    text(small_, "If not, your nurse", CX, 200, AMBER_TEXT, middle_center);
+    text(small_, "will be called.", CX, 212, AMBER_TEXT, middle_center);
   }
 
   void notPaired(const HomeModel& m) {

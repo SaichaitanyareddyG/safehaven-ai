@@ -180,6 +180,21 @@ static const unsigned long NO_RESPONSE_AFTER_MS = 60000;
 static const float MOVING_DEVIATION_G = 0.15f;  // |a| this far from 1 g = the wearer moved
 static bool noResponseSent = false;
 static unsigned long lastMovementMs = 0;
+
+// "Are you OK?" — an uncertain fall or possible faint is put to the wearer
+// before anyone is called. Unanswered after CHECK_WINDOW_MS it becomes
+// NO_RESPONSE (HIGH), or DEVICE_NOT_WORN if the band is lying still like an
+// object — never silently dropped.
+static const unsigned long CHECK_WINDOW_MS = 30000;
+static const unsigned long CHECK_BEEP_EVERY_MS = 3000;
+static bool checkActive = false;
+static unsigned long checkSinceMs = 0;
+static unsigned long lastCheckBeepMs = 0;
+static DetectedEvent checkEvent;
+
+// Band off the wrist this long while assigned → DEVICE_NOT_WORN, once per removal.
+static const unsigned long NOT_WORN_ALERT_MS = 300000;
+static bool notWornSent = false;
 static unsigned long lastBeepCycle = UINT32_MAX;
 static bool chimedForAlert = false;
 static char alertEventId[24] = "";       // empty in bench mode
@@ -238,6 +253,7 @@ static void unassign() {
     noResponseSent = true;
     alertActive = false;
   }
+  checkActive = false;  // no "Are you OK?" for a patient no longer monitored
   Serial.println("[ASSIGN] not assigned - detection idle, no patient events");
 }
 
@@ -390,7 +406,31 @@ static void dumpBatteryLog() {
 }
 
 // ── detection ────────────────────────────────────────────────────────────────
+static void setScreen(Screen s, const char *why);
+
+static void startCheck(const DetectedEvent &ev) {
+  if (alertActive || checkActive) {
+    Serial.println("[CHECK] uncertain event during an active alert/check - folded in, not re-asked");
+    return;
+  }
+  checkActive = true;
+  checkSinceMs = millis();
+  lastCheckBeepMs = 0;
+  checkEvent = ev;
+  setScreen(Screen::HOME, "are you ok check");
+  screenWake("are you ok check");
+  M5.Display.setBrightness(BRIGHTNESS_ATTENTION);
+  forceRedraw = true;
+  Serial.printf("[CHECK] uncertain fall/collapse (peak %.2f g, tilt %.0f deg, %s) - asking the wearer\r\n",
+                ev.metrics.peak_g, ev.metrics.tilt_delta_deg,
+                ev.metrics.still_off_body ? "table-still" : "body-still/moving");
+}
+
 static void handleEvent(const DetectedEvent &ev) {
+  if (ev.type == EventType::FALL_CHECK) {  // internal: never sent as-is
+    startCheck(ev);
+    return;
+  }
   const uint64_t now = clock_.millis();
   const uint64_t epoch = clock_.epoch_ms();
   const uint64_t occurred = epoch ? epoch - (now - ev.occurred_at_ms) : 0;
@@ -413,6 +453,10 @@ static void handleEvent(const DetectedEvent &ev) {
                           ev.type == EventType::HELP_REQUESTED;
   // Review F2: pressing for help during a fall alarm proves the wearer is
   // responsive — stop the beacon and cancel the "no response" escalation.
+  if (ev.type == EventType::HELP_REQUESTED && checkActive) {
+    checkActive = false;  // asked for help = answered the check
+    Serial.println("[CHECK] answered with the help button");
+  }
   if (ev.type == EventType::HELP_REQUESTED && attentionActive) {
     stopAttention("wearer pressed help - responsive");
     noResponseSent = true;
@@ -500,6 +544,83 @@ static void serviceEscalation() {
   strlcpy(alertEventId, id, sizeof(alertEventId));
 }
 
+/// The "Are you OK?" countdown. Answered (any click or the help button) →
+/// nothing is sent. Unanswered → the nurse is called: NO_RESPONSE with the
+/// fall evidence and the red beacon, or DEVICE_NOT_WORN when the band is lying
+/// still like an object (set down, dropped alone) — so a band on a table does
+/// not page anyone about a fall, but is still never silently dropped.
+static void serviceCheck() {
+  if (!checkActive) return;
+  const unsigned long now = millis();
+  if (now - lastCheckBeepMs >= CHECK_BEEP_EVERY_MS) {
+    lastCheckBeepMs = now;
+    M5.Speaker.tone(1800, 120);
+  }
+  if (now - checkSinceMs < CHECK_WINDOW_MS) return;
+
+  checkActive = false;
+  M5.Display.setBrightness(screen == Screen::TEST ? BRIGHTNESS_TEST : BRIGHTNESS_HOME);
+  forceRedraw = true;
+  const bool offBody = checkEvent.metrics.still_off_body || core.wear().off_body_ms() >= 10000;
+  const uint8_t batt = battery.valid() ? (uint8_t)battery.shown_pct() : 0;
+
+  if (offBody) {
+    Serial.println("[CHECK] unanswered, band lying still like an object - reporting NOT WORN, not a fall");
+    if (!benchMode && !notWornSent) {
+      DetectedEvent nw;
+      nw.type = EventType::DEVICE_NOT_WORN;
+      nw.occurred_at_ms = clock_.millis();
+      backendLink.submit(nw, backendLink.toEpoch(nw.occurred_at_ms, clock_.epoch_ms()), batt);
+      notWornSent = true;
+    }
+    return;
+  }
+
+  Serial.println("[CHECK] unanswered - calling the nurse (NO_RESPONSE) and starting the beacon");
+  DetectedEvent nr = checkEvent;
+  nr.type = EventType::NO_RESPONSE;
+  nr.occurred_at_ms = clock_.millis();
+  nr.metrics.duration_s = CHECK_WINDOW_MS / 1000.0f;
+  const unsigned long stillSince = lastMovementMs > checkSinceMs ? lastMovementMs : checkSinceMs;
+  nr.metrics.inactive_ms = (uint32_t)(now - stillSince);
+
+  alertEventId[0] = 0;
+  alertSentAt[0] = 0;
+  nurseComing = false;
+  if (!benchMode) {
+    alertEventEpochMs = backendLink.toEpoch(nr.occurred_at_ms, clock_.epoch_ms());
+    const char *id = backendLink.submit(nr, alertEventEpochMs, batt, /*watch=*/true);
+    strlcpy(alertEventId, id, sizeof(alertEventId));
+  }
+  alertActive = true;
+  alertType = EventType::POSSIBLE_FALL;
+  alertSinceMs = millis();
+  chimedForAlert = false;
+  attentionActive = true;
+  attentionSinceMs = millis();
+  noResponseSent = true;  // this IS the no-response report
+  lastBeepCycle = UINT32_MAX;
+  M5.Display.setBrightness(BRIGHTNESS_ATTENTION);
+}
+
+/// Band off the wrist for NOT_WORN_ALERT_MS while assigned: the nurse is told
+/// once per removal; putting it back on re-arms it.
+static void serviceWear() {
+  if (core.wear().worn()) {
+    notWornSent = false;
+    return;
+  }
+  if (notWornSent || !assigned || core.wear().off_body_ms() < NOT_WORN_ALERT_MS) return;
+  notWornSent = true;
+  Serial.println("[WEAR] band not worn for 5 min - reporting DEVICE_NOT_WORN");
+  if (benchMode) return;
+  DetectedEvent nw;
+  nw.type = EventType::DEVICE_NOT_WORN;
+  nw.occurred_at_ms = clock_.millis();
+  backendLink.submit(nw, backendLink.toEpoch(nw.occurred_at_ms, clock_.epoch_ms()),
+                     battery.valid() ? (uint8_t)battery.shown_pct() : 0);
+}
+
 /// Follow the nurse's response to this band's alert: acknowledged → "A nurse
 /// is coming" (and the beacon stops); resolved → the alert screen closes.
 /// Only an alert that includes this band's own event counts, so a stale
@@ -584,12 +705,14 @@ static void trackFall(const DetectedEvent &ev) {
   if (!candidateActive) return;
   candidateActive = false;
 
-  if (ev.type == EventType::POSSIBLE_FALL) {
+  if (ev.type == EventType::POSSIBLE_FALL || ev.type == EventType::FALL_CHECK) {
     const EventMetrics &m = ev.metrics;
     lastFall = {m.stage_freefall, m.stage_impact, m.stage_orientation, m.stage_inactivity,
                 m.peak_g, m.tilt_delta_deg};
-    lastOutcome = 1;
-    logFallOutcome("POSSIBLE_FALL");
+    lastOutcome = ev.type == EventType::POSSIBLE_FALL ? 1 : 4;
+    logFallOutcome(ev.type == EventType::POSSIBLE_FALL
+                       ? "POSSIBLE_FALL"
+                       : (m.still_off_body ? "CHECK (asking; stillness looks like a table)" : "CHECK (asking the wearer)"));
   } else {
     // The final sample's stillness can complete the score after our last
     // copy, so take the detector's verdict: COOLDOWN means it qualified.
@@ -604,10 +727,124 @@ static void trackFall(const DetectedEvent &ev) {
   }
 }
 
+#ifdef SH_BENCH_TOOLS
+// ── tuning tools (bench) ────────────────────────────────────────────────────
+// Recording: raw 50 Hz IMU to flash for a labelled session, so detection can
+// be tuned on REAL wrist motion and measured (false alarms / falls caught).
+// 16 bytes a sample ≈ 0.8 KB/s; capped at 15 minutes. Side-button clicks on
+// the TEST screen drop numbered markers that label the activities.
+// Raw motion never leaves the device except by this explicit USB dump.
+static const char *REC_PATH = "/rec.bin";
+static const char *REC_MARK_PATH = "/rec_marks.csv";
+static const size_t REC_MAX_BYTES = 15UL * 60 * 50 * 16;
+static bool recording = false;
+static File recFile;
+static uint64_t recStartMs = 0;
+static int recMarker = 0;
+static size_t recBytes = 0;
+
+struct __attribute__((packed)) RecSample {
+  uint32_t t_ms;           // since recording start
+  int16_t ax, ay, az;      // milli-g
+  int16_t gx, gy, gz;      // 0.1 deg/s
+};
+
+static int16_t clamp16(float v) { return v > 32767 ? 32767 : v < -32768 ? -32768 : (int16_t)lroundf(v); }
+
+static void recordSample(const ImuSample &s) {
+  if (!recording || !recFile) return;
+  if (recBytes >= REC_MAX_BYTES) {
+    recording = false;
+    recFile.close();
+    Serial.println("[REC] stopped: 15-minute limit reached");
+    return;
+  }
+  RecSample r{(uint32_t)(s.t_ms - recStartMs), clamp16(s.ax * 1000), clamp16(s.ay * 1000), clamp16(s.az * 1000),
+              clamp16(s.gx * 10),           clamp16(s.gy * 10),     clamp16(s.gz * 10)};
+  recBytes += recFile.write((const uint8_t *)&r, sizeof(r));
+}
+
+static void recMark() {
+  if (!recording) return;
+  ++recMarker;
+  File f = LittleFS.open(REC_MARK_PATH, FILE_APPEND);
+  if (f) {
+    f.printf("%lu,%d\n", (unsigned long)(clock_.millis() - recStartMs), recMarker);
+    f.close();
+  }
+  M5.Speaker.tone(2000, 80);
+  Serial.printf("[REC] marker %d\r\n", recMarker);
+}
+
+static void recCommand(const char *arg) {
+  if (!strcmp(arg, "start")) {
+    if (!fsOk) { Serial.println("[REC] flash unavailable"); return; }
+    LittleFS.remove(REC_PATH);
+    LittleFS.remove(REC_MARK_PATH);
+    recFile = LittleFS.open(REC_PATH, FILE_WRITE);
+    recStartMs = clock_.millis();
+    recMarker = 0;
+    recBytes = 0;
+    recording = (bool)recFile;
+    Serial.println(recording ? "[REC] recording - side-button clicks on the TEST screen add markers"
+                             : "[REC] could not open file");
+  } else if (!strcmp(arg, "stop")) {
+    if (recording) recFile.close();
+    recording = false;
+    Serial.printf("[REC] stopped: %lu samples, %d markers\r\n", (unsigned long)(recBytes / sizeof(RecSample)),
+                  recMarker);
+  } else if (!strcmp(arg, "dump")) {
+    if (recording) { Serial.println("[REC] stop first"); return; }
+    File f = LittleFS.open(REC_MARK_PATH, FILE_READ);
+    Serial.println("REC MARKERS");
+    while (f && f.available()) Serial.write(f.read());
+    if (f) f.close();
+    Serial.println("REC SAMPLES t_ms,ax_mg,ay_mg,az_mg,gx_ddps,gy_ddps,gz_ddps");
+    f = LittleFS.open(REC_PATH, FILE_READ);
+    RecSample r;
+    while (f && f.read((uint8_t *)&r, sizeof(r)) == sizeof(r)) {
+      Serial.printf("%lu,%d,%d,%d,%d,%d,%d\n", (unsigned long)r.t_ms, r.ax, r.ay, r.az, r.gx, r.gy, r.gz);
+    }
+    if (f) f.close();
+    Serial.println("REC END");
+  } else {
+    Serial.println("rec start|stop|dump");
+  }
+}
+
+/// Noise floor: statistics of |a| and gyro magnitude over N seconds — what
+/// "perfectly still" looks like for THIS sensor (on a table vs on a wrist).
+static void measureNoise(int seconds) {
+  if (seconds < 2 || seconds > 60) seconds = 10;
+  Serial.printf("[NOISE] measuring %d s - keep the band as it is\r\n", seconds);
+  double sa = 0, sa2 = 0, sg = 0, sg2 = 0, gmax = 0;
+  long n = 0;
+  const unsigned long end = millis() + seconds * 1000UL;
+  ImuSample s;
+  while (millis() < end) {
+    while (imu.read(s)) {
+      const double a = magnitude(s);
+      const double g = sqrt(s.gx * s.gx + s.gy * s.gy + s.gz * s.gz);
+      sa += a; sa2 += a * a; sg += g; sg2 += g * g;
+      if (g > gmax) gmax = g;
+      ++n;
+    }
+    delay(5);
+  }
+  if (n < 2) { Serial.println("[NOISE] no samples"); return; }
+  const double ma = sa / n, mg = sg / n;
+  Serial.printf("[NOISE] n=%ld  |a| mean %.4f g  var %.7f g^2  sd %.5f g  |  gyro mean %.2f dps  sd %.2f  max %.2f\r\n",
+                n, ma, sa2 / n - ma * ma, sqrt(fmax(0, sa2 / n - ma * ma)), mg, sqrt(fmax(0, sg2 / n - mg * mg)), gmax);
+}
+#endif
+
 static void pumpSensor() {
   ImuSample s;
   while (imu.read(s)) {
     lastSample = s;
+#ifdef SH_BENCH_TOOLS
+    recordSample(s);
+#endif
     if (attentionActive && fabsf(magnitude(s) - 1.0f) > MOVING_DEVIATION_G) lastMovementMs = millis();
     magHistory[magHead] = magnitude(s);
     magHead = (magHead + 1) % GRAPH_N;
@@ -695,7 +932,9 @@ static void buildHome(HomeModel &m) {
 
   // Priority: an alert, then setup, then pairing, then the charging splash,
   // then low battery.
+  if (checkActive) m.checkLeftS = (uint8_t)((CHECK_WINDOW_MS - (now - checkSinceMs) + 999) / 1000);
   if (alertActive) m.view = HomeView::ALERT;
+  else if (checkActive) m.view = HomeView::CHECK;
   else if (!startupDone()) m.view = HomeView::STARTING;
   else if (needsPairing) m.view = HomeView::ADD_BAND;
   else if (!assigned) m.view = HomeView::NOT_PAIRED;
@@ -729,6 +968,10 @@ static void buildTest(ui::TestModel &t) {
   t.lastEvent = lastEvent;
   t.lastEventAgeS = (uint32_t)((clock_.millis() - lastEventMs) / 1000);
   t.settleLeftS = settleLeftS();
+#ifdef SH_BENCH_TOOLS
+  t.recording = recording;
+  t.recMarker = recMarker;
+#endif
   const uint64_t nowMs = clock_.millis();
   auto restLeft = [&](uint64_t since, uint32_t total) -> uint32_t {
     const uint64_t done = nowMs - since;
@@ -743,7 +986,7 @@ static void buildTest(ui::TestModel &t) {
 /// Views that keep the screen on by themselves (setup, alerts, charging splash).
 static bool holdsScreenOn(const HomeModel &m) {
   return m.view == HomeView::STARTING || m.view == HomeView::ADD_BAND || m.view == HomeView::GETTING_READY ||
-         m.view == HomeView::ALERT || m.view == HomeView::CHARGING;
+         m.view == HomeView::ALERT || m.view == HomeView::CHARGING || m.view == HomeView::CHECK;
 }
 
 static void serviceScreen() {
@@ -945,6 +1188,14 @@ static void handleButtons() {
   lastActivityMs = now;
   if (screen == Screen::TEST) lastTestButtonMs = now;
 
+  if (checkActive) {  // the wearer answered "Are you OK?"
+    checkActive = false;
+    M5.Display.setBrightness(screen == Screen::TEST ? BRIGHTNESS_TEST : BRIGHTNESS_HOME);
+    forceRedraw = true;
+    M5.Speaker.tone(1568, 100);
+    Serial.println("[CHECK] answered by the wearer - nothing sent");
+    return;
+  }
   if (alertActive && attentionActive) {  // first press: stop the beacon, keep the alert
     stopAttention("button");
     return;
@@ -955,6 +1206,12 @@ static void handleButtons() {
     Serial.println("[BTN] alert closed");
     return;
   }
+#ifdef SH_BENCH_TOOLS
+  if (b && screen == Screen::TEST && recording) {
+    recMark();
+    return;
+  }
+#endif
   if (b && screen == Screen::TEST) {
     lastOutcome = 0;
     lastFall = {};
@@ -1071,6 +1328,14 @@ static void takeScreenshots() {
     sendFrame(a.name);
   }
 
+  {
+    HomeModel m = base;
+    m.view = HomeView::CHECK;
+    m.checkLeftS = 22;
+    stickUi.drawHome(m, false);
+    sendFrame("05b-are-you-ok");
+  }
+
   for (int phase : {150, 600}) {  // two moments of the pulse
     HomeModel m = base;
     m.view = HomeView::ALERT;
@@ -1110,6 +1375,13 @@ static void injectEvent(const char *what) {
     ev.metrics.tilt_delta_deg = 90.0f;
     ev.metrics.stage_freefall = ev.metrics.stage_impact = true;
     ev.metrics.stage_orientation = ev.metrics.stage_inactivity = true;
+  } else if (!strcmp(what, "check") || !strcmp(what, "checktable")) {
+    ev.type = EventType::FALL_CHECK;
+    ev.metrics.fall_score = 3;
+    ev.metrics.peak_g = 2.8f;
+    ev.metrics.tilt_delta_deg = 70.0f;
+    ev.metrics.stage_impact = ev.metrics.stage_orientation = ev.metrics.stage_inactivity = true;
+    ev.metrics.still_off_body = !strcmp(what, "checktable");
   } else if (!strcmp(what, "help")) {
     ev.type = EventType::HELP_REQUESTED;
   } else if (!strcmp(what, "abnormal")) {
@@ -1126,7 +1398,7 @@ static void injectEvent(const char *what) {
     Serial.println("[INJECT] burst of 12 low-battery events submitted");
     return;
   } else {
-    Serial.println("inject fall|help|abnormal|burst");
+    Serial.println("inject fall|check|checktable|help|abnormal|burst");
     return;
   }
   Serial.printf("[INJECT] %s\r\n", what);
@@ -1170,6 +1442,10 @@ static void runCommand(char *line) {
 #ifdef SH_BENCH_TOOLS
   } else if (!strncmp(line, "inject ", 7)) {
     injectEvent(line + 7);
+  } else if (!strncmp(line, "rec ", 4)) {
+    recCommand(line + 4);
+  } else if (!strncmp(line, "noise", 5)) {
+    measureNoise(atoi(line + 5));
 #endif
   } else if (!strcmp(line, "shot")) {
     takeScreenshots();
@@ -1216,6 +1492,8 @@ void loop() {
     forceRedraw = true;
   }
   serviceSound();
+  serviceCheck();
+  serviceWear();
   serviceEscalation();
   serviceNurseResponse();
   if (now - lastBatterySampleMs >= BATTERY_SAMPLE_MS) {
