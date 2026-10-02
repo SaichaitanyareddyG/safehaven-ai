@@ -146,7 +146,7 @@ inline Trace fall(Noise& nz) {
     s.az = p;
   });
   // Come to rest on a new face: gravity now on +X.
-  add_resting(t, 5000, nz, /*gx=*/1.0f, /*gy=*/0.0f, /*gz=*/0.0f);
+  add_resting(t, 8000, nz, /*gx=*/1.0f, /*gy=*/0.0f, /*gz=*/0.0f);
   return t;
 }
 

@@ -12,7 +12,7 @@ CXX      ?= c++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Wpedantic -I../include -I.
 BUILD    := build
 
-.PHONY: test replay replay-rec clean
+.PHONY: test replay replay-rec eval-weda clean
 
 test: $(BUILD)/test_detection $(BUILD)/test_fall_cases $(BUILD)/test_scenarios $(BUILD)/test_battery
 	@$(BUILD)/test_detection
@@ -34,6 +34,12 @@ $(BUILD)/test_fall_cases: test_fall_cases.cpp Traces.h $(wildcard ../include/cor
 
 $(BUILD)/test_battery: test_battery.cpp ../include/power/BatteryEstimator.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ test_battery.cpp
+
+eval-weda: $(BUILD)/eval_weda
+	@$(BUILD)/eval_weda $(WEDA)
+
+$(BUILD)/eval_weda: eval_weda.cpp $(wildcard ../include/core/*.h) | $(BUILD)
+	$(CXX) $(CXXFLAGS) -o $@ eval_weda.cpp
 
 replay-rec: $(BUILD)/replay_recording
 	@$(BUILD)/replay_recording $(REC) $(LABELS)

@@ -27,7 +27,8 @@ struct DetectionConfig {
   float    impact_g            = 2.50f;  ///< needs real-hardware tuning
   uint32_t impact_window_ms    = 2000;   ///< impact → settle
   float    orientation_deg     = 45.0f;  ///< tilt change that counts as reorientation
-  uint32_t inactivity_window_ms= 3000;   ///< how long we watch for stillness
+  uint32_t inactivity_window_ms= 5000;   ///< how long we watch for stillness: WEDA-FALL showed
+                                        ///< 3 s ends before post-fall body adjustment settles
   uint32_t inactivity_ms       = 1500;   ///< stillness needed to count the stage
   // "Still" after an impact. Tightened from 0.004 after the 2026-10-02 bench
   // session: slow arm movement passed as still. A motionless wrist measured

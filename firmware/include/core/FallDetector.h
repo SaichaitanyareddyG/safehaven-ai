@@ -81,6 +81,7 @@ class FallDetector {
         if (mag < cfg_.freefall_g) {
           state_ = State::CAND_FREEFALL;
           freefall_start_ms_ = now;
+          dip_start_ms_ = now;
           stage_freefall_ = false;
         } else if (mag > cfg_.collapse_g) {
           // Impact without an observed free-fall is still a candidate — a wrist
@@ -94,8 +95,14 @@ class FallDetector {
 
       case State::CAND_FREEFALL: {
         if (mag < cfg_.freefall_g) {
-          if (now - freefall_start_ms_ >= cfg_.freefall_ms) stage_freefall_ = true;
-        } else if (mag > cfg_.collapse_g) {
+          // Free-fall is one continuous dip. Timing from the first dip let the
+          // troughs of a waving arm add up to a "free-fall".
+          if (dip_start_ms_ == 0) dip_start_ms_ = now;
+          if (now - dip_start_ms_ >= cfg_.freefall_ms) stage_freefall_ = true;
+          return {};
+        }
+        dip_start_ms_ = 0;
+        if (mag > cfg_.collapse_g) {
           enter_impact(now, mag);
         } else if (now - freefall_start_ms_ > cfg_.freefall_window_ms) {
           state_ = State::IDLE;
@@ -127,6 +134,16 @@ class FallDetector {
       }
 
       case State::CAND_SETTLED: {
+        if (mag > cfg_.impact_g && !stage_impact_) {
+          // The real impact arrived after the wrist had already turned (a
+          // soft deceleration started this candidate). Re-evaluate from this
+          // impact, or a 5 g fall is judged as a soft one. Found by scoring
+          // against WEDA-FALL: 72% of recorded falls were missed without this.
+          const bool ff = stage_freefall_;
+          enter_impact(now, mag);
+          stage_freefall_ = ff;
+          return {};
+        }
         if (mag > peak_g_) peak_g_ = mag;
         const float tilt = angle_between(pre_impact_, s);
         if (tilt > tilt_delta_deg_) tilt_delta_deg_ = tilt;
@@ -156,6 +173,7 @@ class FallDetector {
     peak_g_ = 0.0f;
     tilt_delta_deg_ = 0.0f;
     freefall_start_ms_ = 0;
+    dip_start_ms_ = 0;
     impact_ms_ = 0;
     settled_ms_ = 0;
     still_since_ms_ = 0;
@@ -291,6 +309,7 @@ class FallDetector {
   uint32_t freefall_duration_ms_ = 0;
 
   uint64_t freefall_start_ms_ = 0;
+  uint64_t dip_start_ms_ = 0;       ///< start of the current continuous dip
   uint64_t impact_ms_ = 0;
   uint64_t settled_ms_ = 0;
   uint64_t still_since_ms_ = 0;
