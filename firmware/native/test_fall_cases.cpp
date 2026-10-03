@@ -170,11 +170,21 @@ int main() {
     Noise nz(6);
     Trace t;
     add_resting(t, 3000, nz);
-    add_rotation(t, 900, nz, 0, 90, 1.9f);
+    add_rotation(t, 900, nz, 0, 90, 2.4f);
     add_resting(t, 12000, nz, 1.0f, 0.0f, 0.0f);
     const Result r = run(t);
     check(only(r, EventType::FALL_CHECK) && !r.events[0].metrics.still_off_body,
-          "faint: fast collapse, 1.9 g, then still (worn) -> CHECK (was missed before)", describe(r));
+          "faint: fast collapse, 2.4 g, then still (worn) -> CHECK", describe(r));
+  }
+  {  // Turning the band over to look at it, then holding it still to read.
+    // Bench, 2026-10-02: this asked "Are you OK?" at 1.6 g.
+    Noise nz(16);
+    Trace t;
+    add_resting(t, 3000, nz);
+    add_rotation(t, 700, nz, 0, 120, 2.0f);
+    add_resting(t, 8000, nz, 0.5f, 0.0f, -0.866f);
+    const Result r = run(t);
+    check(r.events.empty(), "flip to look at the band (2.0 g, 120 deg, then still) -> nothing", describe(r));
   }
   {  // Lying down on purpose: slow, soft.
     Noise nz(7);

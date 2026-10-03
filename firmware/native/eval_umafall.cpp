@@ -123,6 +123,9 @@ int main(int argc, char** argv) {
   cfg.offbody_acc_sd_g = 0.0f;
   cfg.offbody_gyro_dps = 0.0f;
   if (const char* e = getenv("CHECK_FLIP")) cfg.check_flip_deg = std::atof(e);
+  if (const char* e = getenv("COLLAPSE_G")) cfg.collapse_g = std::atof(e);
+  if (const char* e = getenv("COLLAPSE_TILT")) cfg.collapse_orientation_deg = std::atof(e);
+  if (const char* e = getenv("INACTIVITY_MS")) cfg.inactivity_ms = std::atoi(e);
 
   std::map<std::string, int> n, alerts, checks;
   DIR* d = opendir(root.c_str());

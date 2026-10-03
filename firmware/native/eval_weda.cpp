@@ -136,6 +136,9 @@ int main(int argc, char** argv) {
   cfg.offbody_acc_sd_g = 0.0f;   // see header: quantised watch, off-body untestable here
   cfg.offbody_gyro_dps = 0.0f;
   if (const char* e = getenv("CHECK_FLIP")) cfg.check_flip_deg = std::atof(e);
+  if (const char* e = getenv("COLLAPSE_G")) cfg.collapse_g = std::atof(e);
+  if (const char* e = getenv("COLLAPSE_TILT")) cfg.collapse_orientation_deg = std::atof(e);
+  if (const char* e = getenv("INACTIVITY_MS")) cfg.inactivity_ms = std::atoi(e);
   // Overrides for held-out tuning: tune on one half of the people, test on
   // the other (SPLIT=odd|even keeps only those subject numbers).
   if (const char* e = getenv("CONFIRM_TILT")) cfg.confirm_orientation_deg = std::atof(e);

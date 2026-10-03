@@ -70,6 +70,68 @@ class BatteryEstimator {
   bool charging_ = false;
 };
 
+/// Minutes until the battery is full, while charging. The StickS3's power
+/// chip reports no charge current, so the rate is learned from how fast the
+/// raw level rises: a straight-line fit over the last 10 minutes, ignoring
+/// the first 2 minutes (the reading jumps when the charger connects).
+class ChargeEta {
+ public:
+  static constexpr int kSamples = 120;          // 10 min at one sample per 5 s
+  static constexpr uint32_t kSettleS = 120;
+  static constexpr uint32_t kMinSpanS = 180;
+
+  void update(uint32_t t_s, int raw_pct, bool charging) {
+    charging_ = charging;
+    if (!charging || raw_pct < 0 || raw_pct > 100) {
+      n_ = 0;
+      started_ = false;
+      return;
+    }
+    last_pct_ = raw_pct;
+    if (!started_) {
+      started_ = true;
+      start_s_ = t_s;
+    }
+    if (t_s - start_s_ < kSettleS) return;
+    t_[head_] = t_s;
+    p_[head_] = static_cast<int8_t>(raw_pct);
+    head_ = (head_ + 1) % kSamples;
+    if (n_ < kSamples) ++n_;
+  }
+
+  bool full() const { return charging_ && last_pct_ >= 99; }
+
+  /// Minutes to full, 0 when full, or -1 while there is not enough to go on.
+  int minutes_to_full() const {
+    if (!charging_) return -1;
+    if (last_pct_ >= 99) return 0;
+    if (n_ < 2) return -1;
+    const int oldest = (head_ - n_ + kSamples) % kSamples;
+    const int newest = (head_ - 1 + kSamples) % kSamples;
+    if (t_[newest] - t_[oldest] < kMinSpanS) return -1;
+    double st = 0, sp = 0, stt = 0, stp = 0;
+    for (int i = 0; i < n_; ++i) {
+      const int k = (oldest + i) % kSamples;
+      const double t = static_cast<double>(t_[k] - t_[oldest]);
+      st += t; sp += p_[k]; stt += t * t; stp += t * p_[k];
+    }
+    const double den = n_ * stt - st * st;
+    if (den <= 0) return -1;
+    const double slope = (n_ * stp - st * sp) / den;  // percent per second
+    if (slope < 0.0005) return -1;                     // < 0.03 %/min: not measurable yet
+    const double minutes = (100 - last_pct_) / slope / 60.0;
+    return minutes > 600 ? 600 : static_cast<int>(minutes + 0.5);
+  }
+
+ private:
+  uint32_t t_[kSamples] = {};
+  int8_t p_[kSamples] = {};
+  int head_ = 0, n_ = 0;
+  bool started_ = false, charging_ = false;
+  uint32_t start_s_ = 0;
+  int last_pct_ = -1;
+};
+
 }  // namespace safehaven
 
 #endif  // SAFEHAVEN_POWER_BATTERY_ESTIMATOR_H

@@ -50,7 +50,11 @@ struct DetectionConfig {
   float    confirm_orientation_deg = 130.0f;
   // Faint / collapse: a soft deceleration with a fast, large reorientation
   // and then stillness. Lying down on purpose is slower and softer.
-  float    collapse_g          = 1.60f;
+  // 2.2 g, raised from 1.6: on the bench, turning the band over to look at it
+  // (1.7-2.1 g, 60-150 deg, then held still) asked "Are you OK?". On both
+  // datasets 2.2 loses no fall and cuts activity prompts (WEDA 26 -> 23 %,
+  // UMAFall 16 -> 11 %); 2.5 started to lose falls.
+  float    collapse_g          = 2.20f;
   float    collapse_orientation_deg = 60.0f;
   uint32_t check_cooldown_ms   = 5000;   ///< short: a real fall may follow a check
   // Still active after: someone jogging or clapping keeps making hard peaks

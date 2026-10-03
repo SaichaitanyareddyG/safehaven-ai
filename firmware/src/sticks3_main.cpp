@@ -148,6 +148,15 @@ static unsigned long lastTestFrameMs = 0;
 static int rawBatteryPct = -1;
 static int batteryMv = 0;
 static bool wasCharging = false;
+static ChargeEta chargeEta;
+// Plugging the charger in or out moves the band: no "Are you OK?" while it
+// is charging, nor this soon after the charger changes (bench, 2026-10-02).
+static const unsigned long POWER_CHANGE_QUIET_MS = 30000;
+static const unsigned long POWER_CHANGE_CANCEL_MS = 15000;  // a check this recent was the plug
+static unsigned long lastPowerChangeMs = 0;
+static const uint8_t CHARGE_STABLE_SAMPLES = 2;  // x 5 s: plugged in/out must hold 10 s
+static const int VBUS_PRESENT_MV = 4300;
+static int vbusMv = -1;
 static bool wasLow = false;
 static unsigned long chargingSplashUntilMs = 0;
 static unsigned long lastBatterySampleMs = 0;
@@ -444,8 +453,37 @@ static uint8_t wifiBars() {
 static void sampleBattery() {
   rawBatteryPct = M5.Power.getBatteryLevel();
   batteryMv = M5.Power.getBatteryVoltage();
-  const bool charging = M5.Power.isCharging() == m5::Power_Class::is_charging;
+  // "On the charger" = USB power present. The charger's status pin flickers
+  // on this board (bench log: "charging" in 62% of samples while plugged in
+  // and rising), and each flicker woke the screen and paused checks. The USB
+  // voltage is steady; the status pin is only the fallback.
+  vbusMv = M5.Power.getVBUSVoltage();
+  const bool chargingRaw = vbusMv >= 0 ? vbusMv > VBUS_PRESENT_MV
+                                       : M5.Power.isCharging() == m5::Power_Class::is_charging;
+  static uint8_t disagree = 0;
+  static bool chargingStable = false;
+  if (chargingRaw != chargingStable) {
+    if (++disagree >= CHARGE_STABLE_SAMPLES) {
+      chargingStable = chargingRaw;
+      disagree = 0;
+    }
+  } else {
+    disagree = 0;
+  }
+  const bool charging = chargingStable;
   battery.update(rawBatteryPct, charging);
+  chargeEta.update(millis() / 1000, rawBatteryPct, charging);
+  if (charging != wasCharging) {
+    lastPowerChangeMs = millis();
+    // The charger is noticed up to 5 s late: a check that started just before
+    // was the hand plugging it in or out, not a fall.
+    if (checkActive && millis() - checkSinceMs < POWER_CHANGE_CANCEL_MS) {
+      checkActive = false;
+      M5.Display.setBrightness(screen == Screen::TEST ? BRIGHTNESS_TEST : BRIGHTNESS_HOME);
+      forceRedraw = true;
+      Serial.println("[CHECK] cancelled - the charger was plugged in or out");
+    }
+  }
 
   if (charging && !wasCharging && battery.valid()) {
     chargingSplashUntilMs = millis() + CHARGING_SPLASH_MS;
@@ -502,6 +540,12 @@ static void dumpBatteryLog() {
 static void setScreen(Screen s, const char *why);
 
 static void startCheck(const DetectedEvent &ev) {
+  if (battery.charging() || (lastPowerChangeMs && millis() - lastPowerChangeMs < POWER_CHANGE_QUIET_MS)) {
+    Serial.printf("[CHECK] not asked - %s (peak %.2f g, tilt %.0f deg)\r\n",
+                  battery.charging() ? "on the charger" : "charger just plugged in or out",
+                  ev.metrics.peak_g, ev.metrics.tilt_delta_deg);
+    return;
+  }
 #ifdef SH_TALK
   if (talkActive()) {
     const bool soft = ev.metrics.peak_g < config.impact_g;  // no real impact
@@ -1033,6 +1077,8 @@ static void buildHome(HomeModel &m) {
   m.batteryLow = battery.low();
   m.charging = battery.charging();
   m.showBatteryNumber = battery.show_number();
+  m.chargeMins = (int16_t)chargeEta.minutes_to_full();
+  m.chargeFull = chargeEta.full();
 
   struct tm t;
   m.timeKnown = localTime(t);
@@ -1097,9 +1143,9 @@ static void buildHome(HomeModel &m) {
 #endif
   else if (!startupDone()) m.view = HomeView::STARTING;
   else if (needsPairing) m.view = HomeView::ADD_BAND;
+  else if (m.charging || now < chargingSplashUntilMs) m.view = HomeView::CHARGING;
   else if (!assigned) m.view = HomeView::NOT_PAIRED;
   else if (m.settleLeftS > 0) m.view = HomeView::GETTING_READY;
-  else if (now < chargingSplashUntilMs) m.view = HomeView::CHARGING;
   else if (m.batteryLow && !m.charging) m.view = HomeView::LOW_BATTERY;
   else m.view = HomeView::MONITORING;
 }
@@ -1146,7 +1192,8 @@ static void buildTest(ui::TestModel &t) {
 /// Views that keep the screen on by themselves (setup, alerts, charging splash).
 static bool holdsScreenOn(const HomeModel &m) {
   return m.view == HomeView::STARTING || m.view == HomeView::ADD_BAND || m.view == HomeView::GETTING_READY ||
-         m.view == HomeView::ALERT || m.view == HomeView::CHARGING || m.view == HomeView::CHECK ||
+         m.view == HomeView::ALERT || (m.view == HomeView::CHARGING && millis() < chargingSplashUntilMs) ||
+         m.view == HomeView::CHECK ||
          m.view == HomeView::TALK;
 }
 
@@ -2163,9 +2210,9 @@ void loop() {
 
   if (now - lastHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {
     lastHeartbeatMs = now;
-    Serial.printf("%s alive  |a|=%.2f g  battery %d%% (raw %d%%, %d mV%s)  screen %s  wifi %s  %s\r\n",
+    Serial.printf("%s alive  |a|=%.2f g  battery %d%% (raw %d%%, %d mV%s, usb %d mV, full in %d min)  screen %s  wifi %s  %s\r\n",
                   DEVICE_ID, magnitude(lastSample), battery.shown_pct(), rawBatteryPct, batteryMv,
-                  battery.charging() ? ", charging" : "", screenOn ? "on" : "off",
+                  battery.charging() ? ", charging" : "", vbusMv, chargeEta.minutes_to_full(), screenOn ? "on" : "off",
                   WiFi.status() == WL_CONNECTED ? "ok" : "off", benchMode ? "BENCH" : "LINKED");
   }
 }

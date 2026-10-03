@@ -96,6 +96,26 @@ int main() {
     check(!b.valid(), "invalid readings (seen: -2 when the PMIC is not detected) are ignored");
   }
 
+  {  // Time to full: learned from the rise, after the plug-in jump settles.
+    ChargeEta eta;
+    check(eta.minutes_to_full() == -1, "ETA: unknown before charging");
+    uint32_t t = 0;
+    for (; t < 120; t += 5) eta.update(t, 40 + 15, true);  // jump on plug-in, ignored
+    check(eta.minutes_to_full() == -1, "ETA: unknown during the first 2 minutes");
+    // then +1 % per minute from 40 %
+    for (int i = 0; t < 120 + 600; t += 5, ++i) eta.update(t, 40 + i / 12, true);
+    const int m = eta.minutes_to_full();
+    check(m >= 45 && m <= 55, "ETA: ~1 %/min at 50 % -> about 50 minutes", std::to_string(m));
+    eta.update(t, 99, true);
+    check(eta.full() && eta.minutes_to_full() == 0, "ETA: 99 % -> full");
+    eta.update(t + 5, 99, false);
+    check(eta.minutes_to_full() == -1 && !eta.full(), "ETA: unplugged -> no estimate");
+  }
+  {  // A level that does not rise gives no estimate rather than a silly one.
+    ChargeEta eta;
+    for (uint32_t t = 0; t < 900; t += 5) eta.update(t, 60, true);
+    check(eta.minutes_to_full() == -1, "ETA: flat level -> no estimate");
+  }
   std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
   return g_fail == 0 ? 0 : 1;
 }

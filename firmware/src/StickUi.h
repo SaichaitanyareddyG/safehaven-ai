@@ -143,6 +143,9 @@ struct HomeModel {
   uint8_t talkSecs;    // listening time
   char talkTitle[32];
   char talkText[200];
+  // Charging: minutes to full (-1 not known yet), and full
+  int16_t chargeMins;
+  bool chargeFull;
 };
 
 /// What the TEST screen shows. Redrawn at a fixed rate, not on change.
@@ -354,7 +357,12 @@ class StickUi {
     const int x = rightX - 17;
     c.drawRoundRect(x, y, 15, 9, 2, col);
     c.fillRect(x + 15, y + 3, 2, 3, col);
-    if (pct >= 0) {
+    if (charging) {
+      // A lightning bolt, as on a phone: dark cut-out on a full teal battery.
+      c.fillRect(x + 2, y + 2, 11, 5, TEAL);
+      c.fillTriangle(x + 9, y + 1, x + 4, y + 5, x + 8, y + 5, BG);
+      c.fillTriangle(x + 7, y + 4, x + 11, y + 4, x + 6, y + 8, BG);
+    } else if (pct >= 0) {
       const int w = pct * 11 / 100;
       if (w > 0) c.fillRect(x + 2, y + 2, w, 5, fillCol);
     }
@@ -574,10 +582,16 @@ class StickUi {
     char buf[8];
     snprintf(buf, sizeof(buf), "%d%%", m.batteryPct < 0 ? 0 : m.batteryPct);
     text(number_, m.batteryPct < 0 ? "--" : buf, CX, 104, TEXT, middle_center);
-    text(title_, "Charging", CX, 126, TEXT, middle_center);
-    c.fillRoundRect(10, 142, 115, 34, 7, SURFACE);
-    text(small_, "Staff: return to the", CX, 153, TEXT2, middle_center);
-    text(small_, "patient when charged", CX, 165, TEXT2, middle_center);
+    text(title_, m.chargeFull ? "Fully charged" : "Charging", CX, 126, m.chargeFull ? TEAL : TEXT, middle_center);
+    char eta[32];
+    if (m.chargeFull) snprintf(eta, sizeof(eta), "Ready to wear");
+    else if (m.chargeMins < 0) snprintf(eta, sizeof(eta), "Working out time to full");
+    else if (m.chargeMins >= 60) snprintf(eta, sizeof(eta), "Full in about %dh %02dmin", m.chargeMins / 60, m.chargeMins % 60);
+    else snprintf(eta, sizeof(eta), "Full in about %d min", m.chargeMins < 1 ? 1 : m.chargeMins);
+    text(small_, eta, CX, 145, TEXT2, middle_center);
+    c.fillRoundRect(10, 160, 115, 34, 7, SURFACE);
+    text(small_, "Staff: return to the", CX, 171, TEXT2, middle_center);
+    text(small_, "patient when charged", CX, 183, TEXT2, middle_center);
     text(small_, "SAFEHAVEN \xc2\xb7 SH-WEAR-001", CX, 228, TEXT3, middle_center);
   }
 
