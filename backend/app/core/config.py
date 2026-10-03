@@ -100,6 +100,17 @@ class Settings(BaseSettings):
 
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
+    # Account emails (app/core/email.py): invite and password-reset links.
+    # No key = no email; the admin copies the link from the Users page instead.
+    resend_api_key: str | None = None
+    # Without a verified domain, Resend's shared sender can only deliver to the
+    # Resend account owner's own address.
+    email_from: str = "SafeHaven <onboarding@resend.dev>"
+    # Where the links in those emails point: the dashboard's address.
+    dashboard_url: str = "http://localhost:5173"
+    invite_link_ttl_hours: int = 24
+    reset_link_ttl_minutes: int = 60
+
     # Patient care-access token lifetime. Also the cap on a clinician-requested
     # shorter expiry (see patient_access/schemas.py's CareAccessTokenCreate) —
     # there is no way to mint a longer-lived or permanent token.

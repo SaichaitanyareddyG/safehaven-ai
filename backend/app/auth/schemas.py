@@ -69,8 +69,30 @@ class AdminUserUpdate(BaseModel):
     is_active: bool | None = None
 
 
-class OneTimePasswordResponse(BaseModel):
-    """Shown to the admin exactly once; only its hash is stored."""
+class InviteResponse(BaseModel):
+    """After adding a user or sending a reset: the link, and whether it was
+    emailed. The link is returned so an admin can pass it on another way if
+    email failed; it is never shown again."""
 
     user: AdminUserRead
-    one_time_password: str
+    link: str
+    link_expires_at: datetime
+    emailed: bool
+    email_problem: str | None = None
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordLinkInfo(BaseModel):
+    """What the set-password page shows before the password is chosen."""
+
+    purpose: Literal["invite", "reset"]
+    email: EmailStr
+    full_name: str
+
+
+class SetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(min_length=10)

@@ -20,6 +20,8 @@ os.environ["HOSPITAL_TIMEZONE"] = "UTC"
 # The background offline sweep uses its own session on the configured
 # database, not the test transaction: off for the suite (tested directly).
 os.environ["OFFLINE_SWEEP_INTERVAL_SECONDS"] = "0"
+# Never send real email from a test run (tests that need it capture send_email).
+os.environ["RESEND_API_KEY"] = ""
 
 import pytest
 from alembic import command

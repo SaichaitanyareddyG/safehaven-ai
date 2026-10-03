@@ -192,6 +192,8 @@ export function auditEventDescription(event: AuditEvent): string {
       return 'Password reset by an admin'
     case 'USER_PASSWORD_CHANGED':
       return 'Password changed'
+    case 'PASSWORD_RESET_REQUESTED':
+      return 'Password reset requested'
     case 'PATIENT_CREATED':
       return 'Patient record created'
     case 'PATIENT_UPDATED':

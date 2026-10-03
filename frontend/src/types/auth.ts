@@ -55,8 +55,17 @@ export interface AdminUserUpdate {
   is_active?: boolean
 }
 
-/** The one-time password is in this response only — it is never shown again. */
-export interface OneTimePasswordResponse {
+/** After adding a user or sending a reset. The link is in this response only. */
+export interface InviteResponse {
   user: AdminUser
-  one_time_password: string
+  link: string
+  link_expires_at: string
+  emailed: boolean
+  email_problem: string | null
+}
+
+export interface PasswordLinkInfo {
+  purpose: 'invite' | 'reset'
+  email: string
+  full_name: string
 }

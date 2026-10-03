@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.audit.models import ActorType, AuditEventType
@@ -10,10 +11,21 @@ from app.audit.service import record_event
 from app.auth.dependencies import get_signed_in_user
 from app.auth.models import User
 from app.auth.provider import AuthenticatedUser, AuthError, get_auth_provider
-from app.auth.schemas import ChangePasswordRequest, LoginRequest, RegisterRequest, TokenResponse, UserRead
+from app.auth.password_links import PURPOSE_RESET, InvalidPasswordLinkError, create_link, link_url, resolve_link
+from app.auth.schemas import (
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
+    LoginRequest,
+    PasswordLinkInfo,
+    RegisterRequest,
+    SetPasswordRequest,
+    TokenResponse,
+    UserRead,
+)
 from app.auth.security import hash_password, verify_password
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.core.email import send_reset_email
 from app.core.rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -32,6 +44,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # deferred for now per explicit choice, not an oversight).
 _LOGIN_RATE_LIMIT = "30/minute"
 _REGISTER_RATE_LIMIT = "15/minute"
+# Each one can send an email: kept low so the form cannot be used to flood
+# someone's inbox or burn the email allowance.
+_FORGOT_RATE_LIMIT = "5/minute"
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -143,3 +158,65 @@ def tour_complete(
         {User.tour_completed_at: datetime.now(timezone.utc)}
     )
     db.commit()
+
+
+_LINK_INVALID = "This link has expired or was already used. Ask your admin for a new one, or use Forgot password."
+
+
+@router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit(_FORGOT_RATE_LIMIT)
+def forgot_password(request: Request, payload: ForgotPasswordRequest, db: Annotated[Session, Depends(get_db)]) -> dict:
+    """Emails a reset link. Always the same answer, so the form never reveals
+    which addresses have an account."""
+    user = db.query(User).filter(func.lower(User.email) == payload.email.strip().lower()).first()
+    if user is not None and user.is_active:
+        token, _ = create_link(db, user, PURPOSE_RESET)
+        record_event(
+            db,
+            event_type=AuditEventType.PASSWORD_RESET_REQUESTED,
+            actor_type=ActorType.SYSTEM,
+            entity_type="User",
+            entity_id=user.id,
+        )
+        db.commit()
+        send_reset_email(user.email, user.full_name, link_url(token), get_settings().reset_link_ttl_minutes)
+    return {"detail": "If that address has an account, a reset link is on its way."}
+
+
+@router.get("/password-link/{token}", response_model=PasswordLinkInfo)
+@limiter.limit(_LOGIN_RATE_LIMIT)
+def password_link(request: Request, token: str, db: Annotated[Session, Depends(get_db)]) -> PasswordLinkInfo:
+    try:
+        record, user = resolve_link(db, token)
+    except InvalidPasswordLinkError as exc:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=_LINK_INVALID) from exc
+    return PasswordLinkInfo(purpose=record.purpose, email=user.email, full_name=user.full_name)
+
+
+@router.post("/set-password", response_model=TokenResponse)
+@limiter.limit(_LOGIN_RATE_LIMIT)
+def set_password(request: Request, payload: SetPasswordRequest, db: Annotated[Session, Depends(get_db)]) -> TokenResponse:
+    """Choose a password from an invite or reset link, and sign straight in."""
+    try:
+        record, user = resolve_link(db, payload.token)
+    except InvalidPasswordLinkError as exc:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=_LINK_INVALID) from exc
+
+    now = datetime.now(timezone.utc)
+    user.hashed_password = hash_password(payload.new_password)
+    user.must_change_password = False
+    user.last_login_at = now
+    record.used_at = now
+    record_event(
+        db,
+        event_type=AuditEventType.USER_PASSWORD_CHANGED,
+        actor_type=ActorType.CLINICIAN,
+        actor_id=user.id,
+        entity_type="User",
+        entity_id=user.id,
+        event_metadata={"via": record.purpose},
+    )
+    db.commit()
+
+    signed_in = AuthenticatedUser(id=str(user.id), email=user.email, full_name=user.full_name, role=user.role)
+    return TokenResponse(access_token=get_auth_provider(db).create_token(signed_in))

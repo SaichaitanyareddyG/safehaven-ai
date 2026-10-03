@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Eye, EyeOff, Lock } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { z } from 'zod'
 
 import { BrandPanel } from '@/components/BrandPanel'
@@ -97,9 +97,17 @@ export function LoginPage() {
           </div>
 
           <div className="flex flex-col gap-2">
-            <label htmlFor="password" className="text-[15px] font-medium">
-              Password
-            </label>
+            <div className="flex items-center justify-between gap-3">
+              <label htmlFor="password" className="text-[15px] font-medium">
+                Password
+              </label>
+              <Link
+                to="/forgot-password"
+                className="rounded text-sm font-medium text-[#0E7C72] underline-offset-4 hover:underline focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/40 focus-visible:outline-none"
+              >
+                Forgot password?
+              </Link>
+            </div>
             <div className="relative">
               <input
                 id="password"

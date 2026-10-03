@@ -23,6 +23,10 @@ services:
         generateValue: true
       - key: ALLOW_SELF_REGISTRATION   # admins create accounts (Users page)
         value: "false"
+      - key: RESEND_API_KEY            # invite and reset emails (sending-only key)
+        sync: false
+      - key: DASHBOARD_URL             # where those emails' links point
+        sync: false
       - key: LLM_PROVIDER
         value: openai
       - key: OPENAI_MODEL

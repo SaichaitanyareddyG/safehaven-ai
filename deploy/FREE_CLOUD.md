@@ -76,6 +76,13 @@ DATABASE_URL="$(cat ~/.safehaven-cloud/database_url)" \
 Sign in with it; the dashboard asks you to choose your own password, then
 shows a short guided tour.
 
+**Email** (invite and reset links) goes through [Resend](https://resend.com)'s
+free plan. On Render set `RESEND_API_KEY` (a sending-only key) and
+`DASHBOARD_URL` (the dashboard address, which the links point to). Until a
+domain is verified in Resend, it can email only the Resend account's own
+address; the Users page then shows the link to copy and send another way.
+With a domain, also set `EMAIL_FROM`, e.g. `SafeHaven <no-reply@your-domain>`.
+
 ## 5. Check it
 
 From the repository on any computer, with the admin account:

@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
-import { Check, Copy, KeyRound, Search, UserPlus } from 'lucide-react'
+import { Check, Copy, Mail, MailWarning, Search, Send, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 
-import { createUser, listUsers, resetUserPassword, updateUser } from '@/api/admin-users'
+import { createUser, listUsers, sendPasswordLink, updateUser } from '@/api/admin-users'
 import { AppLayout } from '@/components/AppLayout'
 import { Button } from '@/components/ui/button'
 import {
@@ -20,20 +20,21 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useAuth } from '@/lib/auth-context'
 import { cn } from '@/lib/utils'
-import type { AdminUser, OneTimePasswordResponse, Role } from '@/types/auth'
+import type { AdminUser, InviteResponse, Role } from '@/types/auth'
 
 const USERS_QUERY_KEY = ['admin-users']
 
 /**
- * Admin only: who can sign in to this dashboard. New accounts get a one-time
- * password, shown once, which the admin hands over in person; its owner
- * chooses their own at first sign-in. Accounts are switched off, never
- * deleted, so the audit trail keeps a real person behind every action.
+ * Admin only: who can sign in to this dashboard. A new user is emailed an
+ * invite link (single use, expires) to choose their own password — the admin
+ * never sees it. If the email fails the admin can copy the link instead.
+ * Accounts are switched off, never deleted, so the audit trail keeps a real
+ * person behind every action.
  */
 export function UsersPage() {
   const { user: me } = useAuth()
   const [search, setSearch] = useState('')
-  const [issued, setIssued] = useState<{ response: OneTimePasswordResponse; reason: 'created' | 'reset' } | null>(null)
+  const [issued, setIssued] = useState<{ response: InviteResponse; reason: 'created' | 'resent' } | null>(null)
   const [confirming, setConfirming] = useState<AdminUser | null>(null)
   const { data, isLoading } = useQuery({ queryKey: USERS_QUERY_KEY, queryFn: listUsers })
 
@@ -92,7 +93,7 @@ export function UsersPage() {
                       key={u.id}
                       user={u}
                       isMe={u.id === me?.id}
-                      onPasswordIssued={(response) => setIssued({ response, reason: 'reset' })}
+                      onLinkSent={(response) => setIssued({ response, reason: 'resent' })}
                       onDeactivate={() => setConfirming(u)}
                     />
                   ))}
@@ -112,7 +113,7 @@ export function UsersPage() {
         <AddUserForm onCreated={(response) => setIssued({ response, reason: 'created' })} />
       </div>
 
-      <OneTimePasswordDialog issued={issued} onClose={() => setIssued(null)} />
+      <InviteDialog issued={issued} onClose={() => setIssued(null)} />
       <DeactivateDialog user={confirming} onClose={() => setConfirming(null)} />
     </AppLayout>
   )
@@ -121,12 +122,12 @@ export function UsersPage() {
 function UserRow({
   user,
   isMe,
-  onPasswordIssued,
+  onLinkSent,
   onDeactivate,
 }: {
   user: AdminUser
   isMe: boolean
-  onPasswordIssued: (r: OneTimePasswordResponse) => void
+  onLinkSent: (r: InviteResponse) => void
   onDeactivate: () => void
 }) {
   const queryClient = useQueryClient()
@@ -134,7 +135,14 @@ function UserRow({
 
   const changeRole = useMutation({ mutationFn: (role: Role) => updateUser(user.id, { role }), onSuccess: refresh })
   const reactivate = useMutation({ mutationFn: () => updateUser(user.id, { is_active: true }), onSuccess: refresh })
-  const reset = useMutation({ mutationFn: () => resetUserPassword(user.id), onSuccess: onPasswordIssued })
+  const sendLink = useMutation({
+    mutationFn: () => sendPasswordLink(user.id),
+    onSuccess: (r) => {
+      void refresh()
+      onLinkSent(r)
+    },
+  })
+  const linkLabel = user.must_change_password ? 'Resend invite' : 'Send password reset link'
 
   return (
     <TableRow data-testid="user-row" className={cn(!user.is_active && 'text-muted-foreground')}>
@@ -179,12 +187,12 @@ function UserRow({
             <Button
               variant="outline"
               size="icon-sm"
-              onClick={() => reset.mutate()}
-              disabled={reset.isPending}
-              aria-label={`Reset password for ${user.full_name}`}
-              title="Reset password"
+              onClick={() => sendLink.mutate()}
+              disabled={sendLink.isPending}
+              aria-label={`${linkLabel} to ${user.full_name}`}
+              title={linkLabel}
             >
-              <KeyRound className="h-4 w-4" />
+              <Send className="h-4 w-4" />
             </Button>
             <Button
               variant="outline"
@@ -232,7 +240,7 @@ function Status({ user }: { user: AdminUser }) {
   )
 }
 
-function AddUserForm({ onCreated }: { onCreated: (r: OneTimePasswordResponse) => void }) {
+function AddUserForm({ onCreated }: { onCreated: (r: InviteResponse) => void }) {
   const queryClient = useQueryClient()
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
@@ -291,10 +299,10 @@ function AddUserForm({ onCreated }: { onCreated: (r: OneTimePasswordResponse) =>
         </p>
       )}
       <Button type="submit" disabled={!valid || create.isPending} className="h-11" data-testid="create-user">
-        {create.isPending ? 'Creating…' : 'Create user'}
+        {create.isPending ? 'Sending invite…' : 'Send invite'}
       </Button>
       <p className="text-sm leading-relaxed text-muted-foreground">
-        SafeHaven shows a one-time password once. Give it to them in person — they choose their own at first sign-in.
+        They get an email with a link to choose their own password. It works once, for 24 hours.
       </p>
     </form>
   )
@@ -337,66 +345,74 @@ function RoleOption({
   )
 }
 
-function OneTimePasswordDialog({
+function InviteDialog({
   issued,
   onClose,
 }: {
-  issued: { response: OneTimePasswordResponse; reason: 'created' | 'reset' } | null
+  issued: { response: InviteResponse; reason: 'created' | 'resent' } | null
   onClose: () => void
 }) {
   const [copied, setCopied] = useState(false)
   if (!issued) return null
-  const { user, one_time_password: password } = issued.response
+  const { user, link, emailed, email_problem: problem } = issued.response
+  const first = user.full_name.split(' ')[0]
+  const invite = user.must_change_password
+  const close = () => {
+    setCopied(false)
+    onClose()
+  }
 
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) {
-          setCopied(false)
-          onClose()
-        }
-      }}
-    >
-      <DialogContent>
+    <Dialog open onOpenChange={(open) => !open && close()}>
+      <DialogContent className="grid-cols-[minmax(0,1fr)]">
         <DialogHeader>
-          <DialogTitle>{issued.reason === 'created' ? `${user.full_name} can now sign in` : 'New one-time password'}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {emailed ? <Mail className="h-5 w-5 text-[#0E7C72]" /> : <MailWarning className="h-5 w-5 text-[#B45309]" />}
+            {emailed
+              ? invite
+                ? `Invite sent to ${first}`
+                : `Reset link sent to ${first}`
+              : "The email didn't go out"}
+          </DialogTitle>
           <DialogDescription>
-            Give this to {user.full_name.split(' ')[0]} in person. It is shown only now, and works once: they choose their
-            own password when they sign in.
+            {emailed ? (
+              <>
+                {invite ? 'An invite' : 'A link to choose a new password'} is on its way to{' '}
+                <strong className="text-foreground">{user.email}</strong>. It works once
+                {invite ? ', for 24 hours' : ', for one hour'}.
+              </>
+            ) : (
+              <>
+                {problem ?? 'The email service had a problem'}. Copy the link below and send it to {first} another way —
+                a message, or your own email.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="text-sm">
-            <span className="text-muted-foreground">Email: </span>
-            <span className="font-medium">{user.email}</span>
-          </div>
-          <div className="flex items-center gap-2 rounded-xl bg-[#F4F7F6] p-3">
-            <code className="flex-1 font-mono text-xl tracking-wider select-all" data-testid="one-time-password">
-              {password}
+        <div className="min-w-0 space-y-2">
+          <p className="text-sm text-muted-foreground">
+            {emailed ? 'You can also copy the link, if they can’t find the email:' : 'Their link:'}
+          </p>
+          <div className="flex min-w-0 items-center gap-2 rounded-xl bg-[#F4F7F6] p-3">
+            <code className="min-w-0 flex-1 truncate font-mono text-sm select-all" data-testid="invite-link" title={link}>
+              {link}
             </code>
             <Button
               variant="outline"
               size="sm"
               onClick={async () => {
-                await navigator.clipboard.writeText(password)
+                await navigator.clipboard.writeText(link)
                 setCopied(true)
               }}
             >
               {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              {copied ? 'Copied' : 'Copy'}
+              {copied ? 'Copied' : 'Copy link'}
             </Button>
           </div>
+          <p className="text-xs text-muted-foreground">Anyone with this link can set the password — send it only to {first}.</p>
         </div>
         <DialogFooter>
-          <Button
-            onClick={() => {
-              setCopied(false)
-              onClose()
-            }}
-          >
-            Done
-          </Button>
+          <Button onClick={close}>Done</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

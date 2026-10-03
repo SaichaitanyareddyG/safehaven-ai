@@ -9,6 +9,8 @@ interface AuthContextValue {
   isLoading: boolean
   login: (email: string, password: string) => Promise<void>
   logout: () => void
+  /** Sign in with a token already issued, e.g. by choosing a password from a link. */
+  signInWithToken: (token: string) => Promise<void>
   /** Re-read the signed-in user, e.g. after a password change or the tour. */
   refreshUser: () => Promise<void>
 }
@@ -37,6 +39,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(me)
   }
 
+  async function signInWithToken(token: string) {
+    setToken(token)
+    setUser(await getCurrentUser())
+  }
+
   async function refreshUser() {
     setUser(await getCurrentUser())
   }
@@ -46,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
   }
 
-  return <AuthContext.Provider value={{ user, isLoading, login, logout, refreshUser }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, isLoading, login, logout, signInWithToken, refreshUser }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth(): AuthContextValue {

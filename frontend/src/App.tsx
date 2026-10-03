@@ -16,6 +16,8 @@ import { DevicesPage } from '@/pages/DevicesPage'
 import { PatientCarePage } from '@/pages/PatientCarePage'
 import { ChangePasswordPage } from '@/pages/ChangePasswordPage'
 import { UsersPage } from '@/pages/UsersPage'
+import { SetPasswordPage } from '@/pages/SetPasswordPage'
+import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 
 export default function App() {
   return (
@@ -26,6 +28,9 @@ export default function App() {
             <Route path="/login" element={<LoginPage />} />
             {/* Signed in but not behind ProtectedRoute: a one-time password lands here first */}
             <Route path="/change-password" element={<ChangePasswordPage />} />
+            {/* Public: an invite or reset link, and asking for one */}
+            <Route path="/set-password" element={<SetPasswordPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             {/* Public, token-gated — no clinician session, must never sit behind ProtectedRoute */}
             <Route path="/care" element={<PatientCarePage />} />
             <Route

@@ -1,8 +1,9 @@
 """User management for admins: the dashboard's Users page.
 
-Accounts are created with a one-time password the admin hands over in person;
-it works only to choose a new one (see get_current_user). Users are
-deactivated, never deleted, so audit rows keep a real person behind them.
+A new user gets an invite link by email (single use, expires) and chooses
+their own password; the admin never knows it. The link is also returned, so
+the admin can pass it on another way if email fails. Users are deactivated,
+never deleted, so audit rows keep a real person behind them.
 """
 
 import uuid
@@ -15,10 +16,13 @@ from app.audit.models import ActorType, AuditEventType
 from app.audit.service import record_event
 from app.auth.dependencies import require_admin
 from app.auth.models import ROLE_ADMIN, User
+from app.auth.password_links import PURPOSE_INVITE, PURPOSE_RESET, create_link, link_url, unusable_password
 from app.auth.provider import AuthenticatedUser
-from app.auth.schemas import AdminUserCreate, AdminUserRead, AdminUserUpdate, OneTimePasswordResponse
-from app.auth.security import generate_one_time_password, hash_password
+from app.auth.schemas import AdminUserCreate, AdminUserRead, AdminUserUpdate, InviteResponse
+from app.auth.security import hash_password
+from app.core.config import get_settings
 from app.core.db import get_db
+from app.core.email import send_invite_email, send_reset_email
 
 router = APIRouter(prefix="/admin/users", tags=["admin"])
 
@@ -45,32 +49,53 @@ def _get_user(db: Session, user_id: uuid.UUID) -> User:
     return user
 
 
+def _send_link(db: Session, user: User, purpose: str) -> InviteResponse:
+    """Make the link, commit, then email it (after the commit, so a slow mail
+    service never holds the transaction open)."""
+    settings = get_settings()
+    token, record = create_link(db, user, purpose)
+    db.commit()
+    db.refresh(user)
+    link = link_url(token)
+    if purpose == PURPOSE_INVITE:
+        result = send_invite_email(user.email, user.full_name, link, settings.invite_link_ttl_hours)
+    else:
+        result = send_reset_email(user.email, user.full_name, link, settings.reset_link_ttl_minutes)
+    return InviteResponse(
+        user=AdminUserRead.model_validate(user),
+        link=link,
+        link_expires_at=record.expires_at,
+        emailed=result.sent,
+        email_problem=result.problem,
+    )
+
+
 @router.get("", response_model=list[AdminUserRead])
 def list_users(_: Admin, db: Db) -> list[User]:
     # Active first, then by name: the people a ward actually has.
     return db.query(User).order_by(User.is_active.desc(), User.full_name).all()
 
 
-@router.post("", response_model=OneTimePasswordResponse, status_code=status.HTTP_201_CREATED)
-def create_user(payload: AdminUserCreate, admin: Admin, db: Db) -> OneTimePasswordResponse:
+@router.post("", response_model=InviteResponse, status_code=status.HTTP_201_CREATED)
+def create_user(payload: AdminUserCreate, admin: Admin, db: Db) -> InviteResponse:
     email = payload.email.lower()
     if db.query(User).filter(User.email == email).first() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A user with this email already exists")
 
-    password = generate_one_time_password()
     user = User(
         email=email,
         full_name=payload.full_name.strip(),
         role=payload.role,
-        hashed_password=hash_password(password),
+        # Nobody knows this one: the user signs in only after choosing
+        # their own through the invite link. must_change_password marks
+        # them "Invited" until then.
+        hashed_password=hash_password(unusable_password()),
         must_change_password=True,
     )
     db.add(user)
     db.flush()
     _audit(db, admin, AuditEventType.USER_CREATED, user, role=user.role)
-    db.commit()
-    db.refresh(user)
-    return OneTimePasswordResponse(user=AdminUserRead.model_validate(user), one_time_password=password)
+    return _send_link(db, user, PURPOSE_INVITE)
 
 
 @router.patch("/{user_id}", response_model=AdminUserRead)
@@ -95,16 +120,17 @@ def update_user(user_id: uuid.UUID, payload: AdminUserUpdate, admin: Admin, db: 
     return user
 
 
-@router.post("/{user_id}/reset-password", response_model=OneTimePasswordResponse)
-def reset_password(user_id: uuid.UUID, admin: Admin, db: Db) -> OneTimePasswordResponse:
+@router.post("/{user_id}/send-link", response_model=InviteResponse)
+def send_password_link(user_id: uuid.UUID, admin: Admin, db: Db) -> InviteResponse:
+    """Resend the invite to someone who has not set a password yet, or send a
+    reset link to someone who has. Their current password keeps working
+    until they use the link; older links stop working."""
     user = _get_user(db, user_id)
     if str(user.id) == admin.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Change your own password from your menu")
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reactivate this user first")
 
-    password = generate_one_time_password()
-    user.hashed_password = hash_password(password)
-    user.must_change_password = True
-    _audit(db, admin, AuditEventType.USER_PASSWORD_RESET, user)
-    db.commit()
-    db.refresh(user)
-    return OneTimePasswordResponse(user=AdminUserRead.model_validate(user), one_time_password=password)
+    purpose = PURPOSE_INVITE if user.must_change_password else PURPOSE_RESET
+    _audit(db, admin, AuditEventType.USER_PASSWORD_RESET, user, purpose=purpose)
+    return _send_link(db, user, purpose)
