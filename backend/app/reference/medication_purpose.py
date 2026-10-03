@@ -21,7 +21,9 @@ information is shown — never a guess, and never an LLM asked to fill the gap
 correction — see patient_access/service.py's resolve_why docstring).
 """
 
-# Keyed by lowercased medication name. Text is intentionally general ("commonly
+import re
+
+# Keyed by lowercased generic medication name. Text is intentionally general ("commonly
 # used to...") and lists the primary, well-established indications only — no
 # off-label or rare uses, since precision here matters more than completeness.
 MEDICATION_PURPOSE: dict[str, str] = {
@@ -44,10 +46,74 @@ MEDICATION_PURPOSE: dict[str, str] = {
     "prednisone": "A steroid commonly used to reduce inflammation in a range of conditions, including allergic reactions and autoimmune flares.",
     "aspirin": "Commonly used to relieve pain and reduce fever, and at low doses to help prevent heart attack and stroke.",
     "furosemide": "A water pill (diuretic) commonly used to treat fluid retention and swelling, including from heart failure.",
+    "acetaminophen": "Commonly used to relieve mild to moderate pain and to bring down a fever.",
+    "paracetamol": "Commonly used to relieve mild to moderate pain and to bring down a fever.",
 }
+
+# Common brand names -> the generic name above. Patients and prescriptions
+# often use the brand ("Tylenol", "DOLO"); without this the lookup missed
+# medicines the table already covers. Hand-curated like the table, and
+# limited to brands whose ONLY active ingredient is that generic — never a
+# combination product (e.g. "Tylenol PM" also contains a sleep aid), which
+# is why only exact brand words map, never anything else on the label.
+BRAND_TO_GENERIC: dict[str, str] = {
+    # US
+    "tylenol": "acetaminophen",
+    "advil": "ibuprofen",
+    "motrin": "ibuprofen",
+    "aleve": "naproxen",
+    "naprosyn": "naproxen",
+    "lopressor": "metoprolol",
+    "toprol": "metoprolol",
+    "zestril": "lisinopril",
+    "prinivil": "lisinopril",
+    "synthroid": "levothyroxine",
+    "levoxyl": "levothyroxine",
+    "coumadin": "warfarin",
+    "jantoven": "warfarin",
+    "glucophage": "metformin",
+    "norvasc": "amlodipine",
+    "lipitor": "atorvastatin",
+    "cozaar": "losartan",
+    "microzide": "hydrochlorothiazide",
+    "prilosec": "omeprazole",
+    "zoloft": "sertraline",
+    "proair": "albuterol",
+    "ventolin": "albuterol",
+    "proventil": "albuterol",
+    "neurontin": "gabapentin",
+    "lasix": "furosemide",
+    "bayer": "aspirin",
+    # India / UK (paracetamol brands seen in testing)
+    "dolo": "paracetamol",
+    "crocin": "paracetamol",
+    "calpol": "paracetamol",
+    "panadol": "paracetamol",
+}
+
+# Strength and form words that follow a name on a label ("DOLO 650",
+# "Tylenol Extra Strength", "metoprolol succinate ER"): dropped only to find
+# the medicine's own name, never to change what is shown.
+_LABEL_NOISE = re.compile(
+    r"\b(\d+(\.\d+)?\s*(mg|mcg|g|ml)?|tablets?|tabs?|capsules?|caps?|syrup|suspension|"
+    r"extra|strength|regular|er|xr|xl|sr|cr|dr|la|succinate|tartrate|sodium|potassium|hcl)\b",
+    re.IGNORECASE,
+)
+
+
+def generic_name(medication_name: str | None) -> str | None:
+    """The generic medicine this name refers to, if known ("DOLO 650" ->
+    "paracetamol", "Metoprolol succinate ER" -> "metoprolol"), else None."""
+    if not medication_name:
+        return None
+    # The whole remaining name must match: "Tylenol PM" (acetaminophen plus a
+    # sleep aid) is not "Tylenol", so it gets nothing rather than half an answer.
+    name = " ".join(_LABEL_NOISE.sub(" ", medication_name.lower()).split())
+    if name in MEDICATION_PURPOSE:
+        return name
+    return BRAND_TO_GENERIC.get(name)
 
 
 def lookup_medication_purpose(medication_name: str | None) -> str | None:
-    if not medication_name:
-        return None
-    return MEDICATION_PURPOSE.get(medication_name.strip().lower())
+    generic = generic_name(medication_name)
+    return MEDICATION_PURPOSE.get(generic) if generic else None

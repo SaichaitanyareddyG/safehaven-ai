@@ -8,8 +8,10 @@ from app.ai.provider import ChatTurn, ExtractionProviderError, get_llm_provider
 from app.audit.models import ActorType, AuditEventType
 from app.audit.service import record_event
 from app.instructions.models import CareInstruction, ClinicalStatus, InstructionStatus, InstructionVersion
+from app.patient_access.schemas import WhyTier
 from app.patient_access.service import resolve_why, validate_care_access_token
 from app.patient_chat.models import ChatRole, PatientChatMessage
+from app.reference.medication_purpose import generic_name
 
 # Two hard, deterministic gates that run BEFORE the AI is ever called — the
 # same "never trust the LLM alone for a safety-critical decision" principle
@@ -100,9 +102,20 @@ def _build_care_plan_summary(db: Session, patient_id: uuid.UUID) -> str:
         name = facts.get("medication_name") or extraction.instruction_type.value.replace("_", " ").title()
         line = f"- {name}: {_facts_line(facts)}"
 
+        generic = generic_name(facts.get("medication_name"))
+        if generic and generic != str(facts.get("medication_name", "")).strip().lower():
+            line += f" [the medicine in it: {generic}]"
+
         why = resolve_why(extraction)
-        if why is not None:
-            line += f" (reason/purpose: {why.text})"
+        if why is not None and why.tier == WhyTier.DOCUMENTED:
+            line += f" (reason documented by the care team: {why.text})"
+        elif why is not None:
+            # Curated general use — the prompt must present it as general,
+            # never as why THIS patient was given it.
+            line += (
+                f" (general use from the approved reference, NOT a documented reason for this patient: {why.text}"
+                " The care team did not record why this patient takes it.)"
+            )
         lines.append(line)
 
     if not lines:

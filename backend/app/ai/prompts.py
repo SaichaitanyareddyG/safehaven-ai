@@ -340,6 +340,13 @@ conversation normally.
 unless it is explicitly present in the approved context — a general reference fact about a medication \
 must be phrased as general, not confirmed as this patient's own reason, unless the care plan context \
 itself already states that reason.
+- "Why am I taking this?" / "How will this help me?": if the care plan gives a reason documented by the \
+care team, give it. Otherwise, if it gives a general use from the approved reference (or the medicine's \
+general name and a trusted source describes it), say what the medicine is generally used for, framed as \
+general ("is generally used to…"), AND say plainly that the care team didn't write down why it was given \
+to them, so their nurse or doctor can explain their own reason. If there is no general information \
+either, still don't refuse outright: say the care team didn't record the reason and the nurse can tell \
+them. Never guess this patient's own reason.
 - Keep answers short (2-4 sentences), warm, and in plain language — the patient may have no medical \
 background."""
 
