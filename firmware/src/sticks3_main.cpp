@@ -154,9 +154,16 @@ static ChargeEta chargeEta;
 static const unsigned long POWER_CHANGE_QUIET_MS = 30000;
 static const unsigned long POWER_CHANGE_CANCEL_MS = 15000;  // a check this recent was the plug
 static unsigned long lastPowerChangeMs = 0;
-static const uint8_t CHARGE_STABLE_SAMPLES = 2;  // x 5 s: plugged in/out must hold 10 s
+// "On the charger" = USB power present, read every second so plugging in
+// shows within ~2 s. The charger's status pin flickers on this board (bench
+// log: "charging" in 62% of samples while plugged in and rising) and each
+// flicker woke the screen; the USB voltage is steady. Status pin = fallback.
+static const unsigned long POWER_POLL_MS = 1000;
+static const uint8_t POWER_STABLE_READS = 2;  // two readings in a row
 static const int VBUS_PRESENT_MV = 4300;
 static int vbusMv = -1;
+static bool onCharger = false;
+static unsigned long lastPowerPollMs = 0;
 static bool wasLow = false;
 static unsigned long chargingSplashUntilMs = 0;
 static unsigned long lastBatterySampleMs = 0;
@@ -450,27 +457,30 @@ static uint8_t wifiBars() {
 }
 
 // ── battery ──────────────────────────────────────────────────────────────────
+static void sampleBattery();
+
+static void servicePower() {
+  const unsigned long now = millis();
+  if (now - lastPowerPollMs < POWER_POLL_MS) return;
+  lastPowerPollMs = now;
+  vbusMv = M5.Power.getVBUSVoltage();
+  const bool raw = vbusMv >= 0 ? vbusMv > VBUS_PRESENT_MV : M5.Power.isCharging() == m5::Power_Class::is_charging;
+  static uint8_t disagree = 0;
+  if (raw == onCharger) {
+    disagree = 0;
+    return;
+  }
+  if (++disagree < POWER_STABLE_READS) return;
+  disagree = 0;
+  onCharger = raw;
+  Serial.printf("[POWER] %s (usb %d mV)\r\n", onCharger ? "charger plugged in" : "charger removed", vbusMv);
+  sampleBattery();  // update the battery view, splash and check rules now, not in up to 5 s
+}
+
 static void sampleBattery() {
   rawBatteryPct = M5.Power.getBatteryLevel();
   batteryMv = M5.Power.getBatteryVoltage();
-  // "On the charger" = USB power present. The charger's status pin flickers
-  // on this board (bench log: "charging" in 62% of samples while plugged in
-  // and rising), and each flicker woke the screen and paused checks. The USB
-  // voltage is steady; the status pin is only the fallback.
-  vbusMv = M5.Power.getVBUSVoltage();
-  const bool chargingRaw = vbusMv >= 0 ? vbusMv > VBUS_PRESENT_MV
-                                       : M5.Power.isCharging() == m5::Power_Class::is_charging;
-  static uint8_t disagree = 0;
-  static bool chargingStable = false;
-  if (chargingRaw != chargingStable) {
-    if (++disagree >= CHARGE_STABLE_SAMPLES) {
-      chargingStable = chargingRaw;
-      disagree = 0;
-    }
-  } else {
-    disagree = 0;
-  }
-  const bool charging = chargingStable;
+  const bool charging = onCharger;  // kept current by servicePower()
   battery.update(rawBatteryPct, charging);
   chargeEta.update(millis() / 1000, rawBatteryPct, charging);
   if (charging != wasCharging) {
@@ -2194,6 +2204,7 @@ void loop() {
   serviceWear();
   serviceEscalation();
   serviceNurseResponse();
+  servicePower();
   if (now - lastBatterySampleMs >= BATTERY_SAMPLE_MS) {
     lastBatterySampleMs = now;
     sampleBattery();
