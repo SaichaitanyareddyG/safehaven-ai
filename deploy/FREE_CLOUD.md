@@ -2,7 +2,8 @@
 
 **Live since 2026-10-03:** backend https://safehaven-backend-kl64.onrender.com
 (Render, Singapore), dashboard https://safehaven-dashboard.safehaven-ai.workers.dev
-(Cloudflare), database on Supabase (Sydney). Smoke test PASS on every step;
+(Cloudflare), database on Supabase (Singapore, next to the backend; moved
+from Sydney the same day). Smoke test PASS on every step;
 voice assistant 6.7 s for a typed question (server 5.5 s, most of it the
 OpenAI voice); a silent band raised "band offline" 151 s after its last
 check-in with no dashboard open.
@@ -20,7 +21,11 @@ time.
 
 1. supabase.com → sign in with GitHub → **New project**.
 2. Name `safehaven`, a strong **database password** (save it), region
-   **Southeast Asia (Singapore)**. Create.
+   **Southeast Asia (Singapore)**, the backend's region. Tick **Enable
+   automatic RLS**: SafeHaven never uses Supabase's web API, and without
+   row-level security anyone holding the project's public key could read
+   the tables through it (the backend's `postgres` login bypasses RLS).
+   Create.
 3. **Connect** (top bar) → **Session pooler** → copy the URI. It looks like
    `postgresql://postgres.<id>:[YOUR-PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres`
 4. Put your password in place of `[YOUR-PASSWORD]` and add `?sslmode=require`
