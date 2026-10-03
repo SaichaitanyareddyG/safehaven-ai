@@ -14,6 +14,8 @@ import { SafetyAlertsPage } from '@/pages/SafetyAlertsPage'
 import { ScanBandPage } from '@/pages/ScanBandPage'
 import { DevicesPage } from '@/pages/DevicesPage'
 import { PatientCarePage } from '@/pages/PatientCarePage'
+import { ChangePasswordPage } from '@/pages/ChangePasswordPage'
+import { UsersPage } from '@/pages/UsersPage'
 
 export default function App() {
   return (
@@ -22,6 +24,8 @@ export default function App() {
         <Router>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            {/* Signed in but not behind ProtectedRoute: a one-time password lands here first */}
+            <Route path="/change-password" element={<ChangePasswordPage />} />
             {/* Public, token-gated — no clinician session, must never sit behind ProtectedRoute */}
             <Route path="/care" element={<PatientCarePage />} />
             <Route
@@ -77,6 +81,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <ScanBandPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/users"
+              element={
+                <ProtectedRoute adminOnly>
+                  <UsersPage />
                 </ProtectedRoute>
               }
             />

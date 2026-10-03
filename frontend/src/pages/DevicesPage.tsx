@@ -44,7 +44,7 @@ export function DevicesPage() {
     <AppLayout>
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Devices</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Bands</h1>
           <p className="text-sm text-muted-foreground">
             Wearable bands on this ward. Assign a band to a patient from the patient's page.
           </p>

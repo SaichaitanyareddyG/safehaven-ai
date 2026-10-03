@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.allergies.router import router as allergies_router
 from app.audit.router import router as audit_router
+from app.auth.admin_router import router as admin_users_router
 from app.auth.router import router as auth_router
 from app.conditions.router import router as conditions_router
 from app.core.config import get_settings
@@ -60,6 +61,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(admin_users_router)
 app.include_router(patients_router)
 app.include_router(instructions_router)
 app.include_router(patient_access_router)

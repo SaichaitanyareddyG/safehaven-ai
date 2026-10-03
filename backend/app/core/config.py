@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # "dev" is the only implemented provider in Phase 1. A CognitoAuthProvider can be
     # added later behind the same AuthProvider protocol without touching route code.
     auth_provider: str = "dev"
+    # Open POST /auth/register, for local development and the test suite.
+    # Off on any shared server, where only an admin creates accounts
+    # (app/auth/admin_router.py; the first admin via app.auth.create_admin).
+    allow_self_registration: bool = True
     jwt_secret_key: str = "dev-secret-change-me"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 8

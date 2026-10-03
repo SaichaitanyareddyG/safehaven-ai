@@ -184,6 +184,14 @@ export function auditEventDescription(event: AuditEvent): string {
       }`
     case 'USER_LOGIN':
       return 'Clinician logged in'
+    case 'USER_CREATED':
+      return 'User account created'
+    case 'USER_UPDATED':
+      return 'User account changed'
+    case 'USER_PASSWORD_RESET':
+      return 'Password reset by an admin'
+    case 'USER_PASSWORD_CHANGED':
+      return 'Password changed'
     case 'PATIENT_CREATED':
       return 'Patient record created'
     case 'PATIENT_UPDATED':

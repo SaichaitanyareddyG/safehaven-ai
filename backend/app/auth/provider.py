@@ -12,6 +12,12 @@ class AuthenticatedUser:
     email: str
     full_name: str
     role: str
+    must_change_password: bool = False
+    tour_completed: bool = True
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
 
 
 class AuthError(Exception):

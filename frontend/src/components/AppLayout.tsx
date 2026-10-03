@@ -1,78 +1,208 @@
-import { HeartPulse, LogOut, QrCode, ScanLine, ShieldAlert, Watch } from 'lucide-react'
-import type { ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import {
+  Bell,
+  ChevronUp,
+  KeyRound,
+  LogOut,
+  Compass,
+  Menu,
+  QrCode,
+  ScanLine,
+  ShieldCheck,
+  Users,
+  Watch,
+  X,
+  type LucideIcon,
+} from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import { NavLink, useNavigate } from 'react-router-dom'
 
-import { Button } from '@/components/ui/button'
+import { Logo } from '@/components/BrandPanel'
+import { GuidedTour } from '@/components/GuidedTour'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useAlertNotifications } from '@/features/safety-monitoring/use-alert-notifications'
 import { useLiveSafetyAlerts } from '@/features/safety-monitoring/use-safety-alerts'
 import { useAuth } from '@/lib/auth-context'
 import { cn } from '@/lib/utils'
 
-export function AppLayout({ children }: { children: ReactNode }) {
-  const { user, logout } = useAuth()
-  const navigate = useNavigate()
+interface NavItem {
+  to: string
+  label: string
+  icon: LucideIcon
+  /** Anchor for the guided tour (see GuidedTour's steps). */
+  tour: string
+  testId?: string
+}
 
-  function handleLogout() {
-    logout()
-    navigate('/login')
-  }
+const WARD_ITEMS: NavItem[] = [
+  { to: '/patients', label: 'Patients', icon: Users, tour: 'patients', testId: 'patients-nav' },
+  { to: '/devices', label: 'Bands', icon: Watch, tour: 'devices', testId: 'devices-nav' },
+  { to: '/scan-band', label: 'Scan band', icon: QrCode, tour: 'scan-band', testId: 'scan-band-nav' },
+  { to: '/medication-verification', label: 'Medication check', icon: ScanLine, tour: 'medication' },
+]
+
+const ADMIN_ITEMS: NavItem[] = [
+  { to: '/admin/users', label: 'Users', icon: ShieldCheck, tour: 'users', testId: 'users-nav' },
+]
+
+/**
+ * The signed-in dashboard: a dark teal side menu (the brand of the sign-in
+ * screen) and the page beside it. On a phone the menu folds into a top bar
+ * with a menu button. Design: the "SafeHaven Dashboard Navigation" canvas.
+ */
+export function AppLayout({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [tourRequested, setTourRequested] = useState(false)
+  const [tourDismissed, setTourDismissed] = useState(false)
+  // A new user's first visit shows the tour once; anyone can replay it.
+  const touring = tourRequested || (!!user && !user.tour_completed && !tourDismissed)
 
   return (
-    <div className="min-h-screen bg-muted/30">
-      <header className="border-b bg-background">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
-          <Link to="/patients" className="flex items-center gap-2 font-semibold tracking-tight">
-            <HeartPulse className="h-5 w-5 text-primary" />
-            SafeHaven AI
-          </Link>
-          {user && (
-            <div className="flex items-center gap-3 text-sm text-muted-foreground">
-              <SafetyMonitoringNavItem />
-              <Link to="/devices">
-                <Button variant="ghost" size="sm" data-testid="devices-nav">
-                  <Watch className="h-4 w-4" />
-                  Devices
-                </Button>
-              </Link>
-              <Link to="/scan-band">
-                <Button variant="ghost" size="sm" data-testid="scan-band-nav">
-                  <QrCode className="h-4 w-4" />
-                  Scan band
-                </Button>
-              </Link>
-              <Link to="/medication-verification">
-                <Button variant="ghost" size="sm">
-                  <ScanLine className="h-4 w-4" />
-                  Medication Verification
-                </Button>
-              </Link>
-              <span>{user.full_name}</span>
-              <Button variant="ghost" size="sm" onClick={handleLogout}>
-                <LogOut className="h-4 w-4" />
-                Log out
-              </Button>
-            </div>
-          )}
-        </div>
-      </header>
-      <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
+    <div className="min-h-screen bg-[#F4F7F6] lg:flex">
+      {/* Phone top bar */}
+      <div className="sticky top-0 z-30 flex h-16 items-center gap-2.5 bg-[#0A2422] pr-2 pl-4 lg:hidden">
+        <Logo className="h-6.5 w-6.5" />
+        <span className="text-[15px] font-semibold tracking-[0.2em] text-[#7FE0D6]">SAFEHAVEN AI</span>
+        <button
+          type="button"
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={menuOpen}
+          aria-controls="side-nav"
+          className="ml-auto flex h-12 w-12 items-center justify-center rounded-xl text-[#DCE4E2] hover:bg-white/10 focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/50 focus-visible:outline-none"
+        >
+          {menuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+        </button>
+      </div>
+
+      {user && (
+        <SideNav
+          open={menuOpen}
+          onNavigate={() => setMenuOpen(false)}
+          onStartTour={() => {
+            setMenuOpen(false)
+            setTourRequested(true)
+          }}
+        />
+      )}
+
+      <main className="min-w-0 flex-1">
+        <div className="mx-auto max-w-6xl px-4 py-8 lg:px-10 lg:py-10">{children}</div>
+      </main>
+
+      {touring && (
+        <GuidedTour
+          onClose={() => {
+            setTourRequested(false)
+            setTourDismissed(true)
+          }}
+        />
+      )}
     </div>
   )
 }
 
+function SideNav({
+  open,
+  onNavigate,
+  onStartTour,
+}: {
+  open: boolean
+  onNavigate: () => void
+  onStartTour: () => void
+}) {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
+
+  return (
+    <nav
+      id="side-nav"
+      aria-label="Main"
+      // Following a link closes the phone menu.
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('a')) onNavigate()
+      }}
+      className={cn(
+        'z-20 flex-col gap-6 bg-[#0A2422] px-3.5 py-6 text-[#DCE4E2]',
+        // Phone: a full-height sheet under the top bar. Desktop: a fixed column.
+        open ? 'fixed inset-x-0 top-16 bottom-0 flex overflow-y-auto' : 'hidden',
+        'lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-66 lg:shrink-0',
+      )}
+    >
+      <div className="hidden items-center gap-2.5 px-2.5 lg:flex">
+        <Logo className="h-7.5 w-7.5" />
+        <span className="text-base font-semibold tracking-[0.2em] text-[#7FE0D6]">SAFEHAVEN AI</span>
+      </div>
+
+      <NavSection title="Ward">
+        <AlertsNavItem />
+        {WARD_ITEMS.map((item) => (
+          <NavItemLink key={item.to} item={item} />
+        ))}
+      </NavSection>
+
+      {isAdmin && (
+        <NavSection title="Admin">
+          {ADMIN_ITEMS.map((item) => (
+            <NavItemLink key={item.to} item={item} />
+          ))}
+        </NavSection>
+      )}
+
+      <UserMenu onStartTour={onStartTour} />
+    </nav>
+  )
+}
+
+function NavSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="px-3 pb-1.5 text-xs font-semibold tracking-[0.12em] text-[#8FB3AE] uppercase">{title}</span>
+      {children}
+    </div>
+  )
+}
+
+const linkClass = ({ isActive }: { isActive: boolean }) =>
+  cn(
+    'flex min-h-12 items-center gap-3 rounded-[10px] px-3 text-[15px] font-medium transition-colors lg:min-h-[46px]',
+    'focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/50 focus-visible:outline-none',
+    isActive ? 'bg-[#144A45] text-white' : 'text-[#DCE4E2] hover:bg-white/6',
+  )
+
+function NavItemLink({ item }: { item: NavItem }) {
+  const Icon = item.icon
+  return (
+    <NavLink to={item.to} className={linkClass} data-testid={item.testId} data-tour={item.tour}>
+      {({ isActive }) => (
+        <>
+          <Icon className={cn('h-5 w-5', isActive ? 'text-[#7FE0D6]' : 'text-[#9FBFBA]')} aria-hidden="true" />
+          {item.label}
+        </>
+      )}
+    </NavLink>
+  )
+}
+
 /**
- * Live alert count in the header, plus the global notifier.
+ * Safety alerts, with the live count, plus the global notifier.
  *
- * Both live here rather than on the alerts page so a nurse is told about a
- * possible fall wherever they are in the app — an alert only visible on the
- * page you are already looking at is close to no alert at all
+ * Both live in the menu rather than on the alerts page so a nurse is told
+ * about a possible fall wherever they are in the app — an alert only visible
+ * on the page you are already looking at is close to no alert at all
  * (DOCUMENTATION.md §13).
  *
  * Shares a query key with the alerts page, so react-query serves both from a
  * single poll rather than two. Rendered only for a signed-in clinician, so the
  * public /care route and the login page never poll.
  */
-function SafetyMonitoringNavItem() {
+function AlertsNavItem() {
   useAlertNotifications()
   const { data } = useLiveSafetyAlerts()
 
@@ -80,24 +210,77 @@ function SafetyMonitoringNavItem() {
   const highCount = alerts.filter((a) => a.priority === 'HIGH').length
 
   return (
-    <Link to="/safety-monitoring">
-      <Button variant="ghost" size="sm" data-testid="safety-monitoring-nav">
-        <ShieldAlert className={cn('h-4 w-4', highCount > 0 && 'text-red-600')} />
-        Safety Monitoring
-        {alerts.length > 0 && (
+    <NavLink to="/safety-monitoring" className={linkClass} data-testid="safety-monitoring-nav" data-tour="alerts">
+      {({ isActive }) => (
+        <>
+          <Bell className={cn('h-5 w-5', isActive ? 'text-[#7FE0D6]' : 'text-[#9FBFBA]')} aria-hidden="true" />
+          Safety alerts
+          {alerts.length > 0 && (
+            <span
+              className={cn(
+                'ml-auto inline-flex h-6 min-w-6 items-center justify-center rounded-full px-2 text-[13px] font-semibold',
+                // Loud only when something is genuinely urgent. A permanently
+                // loud badge stops meaning anything.
+                highCount > 0 ? 'bg-[#F59E3D] text-[#241200]' : 'bg-white/15 text-white',
+              )}
+              data-testid="safety-alert-count"
+              aria-label={`${alerts.length} open alert${alerts.length === 1 ? '' : 's'}`}
+            >
+              {alerts.length}
+            </span>
+          )}
+        </>
+      )}
+    </NavLink>
+  )
+}
+
+function UserMenu({ onStartTour }: { onStartTour: () => void }) {
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
+  if (!user) return null
+
+  return (
+    <div className="mt-auto border-t border-[#1E4B47] pt-4" data-tour="user-menu">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-white/6 focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/50 focus-visible:outline-none"
+          data-testid="user-menu"
+        >
           <span
-            className={cn(
-              'ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-semibold',
-              // Red only when something is genuinely urgent. A permanently red
-              // badge stops meaning anything.
-              highCount > 0 ? 'bg-red-600 text-white' : 'bg-muted-foreground/20 text-foreground',
-            )}
-            data-testid="safety-alert-count"
+            aria-hidden="true"
+            className="flex h-9.5 w-9.5 shrink-0 items-center justify-center rounded-full bg-[#1E5A54] text-[15px] font-semibold text-[#CFF5F0]"
           >
-            {alerts.length}
+            {user.full_name.trim().charAt(0).toUpperCase()}
           </span>
-        )}
-      </Button>
-    </Link>
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate text-[15px] font-medium text-[#F2F4F3]">{user.full_name}</span>
+            <span className="text-[13px] text-[#9FBFBA]">{user.role === 'admin' ? 'Admin' : 'Clinician'}</span>
+          </span>
+          <ChevronUp className="ml-auto h-4 w-4 text-[#9FBFBA]" aria-hidden="true" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="top" align="start" className="w-56">
+          <DropdownMenuItem onSelect={onStartTour}>
+            <Compass className="h-4 w-4" />
+            Take the tour
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => navigate('/change-password')}>
+            <KeyRound className="h-4 w-4" />
+            Change password
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            data-testid="logout"
+            onSelect={() => {
+              logout()
+              navigate('/login')
+            }}
+          >
+            <LogOut className="h-4 w-4" />
+            Log out
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 }

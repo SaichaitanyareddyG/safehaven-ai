@@ -1,5 +1,6 @@
 import uuid
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth.models import User
@@ -15,8 +16,10 @@ class DevAuthProvider:
         self.db = db
 
     def authenticate(self, email: str, password: str) -> AuthenticatedUser:
-        user = self.db.query(User).filter(User.email == email).first()
-        if user is None or not verify_password(password, user.hashed_password):
+        user = self.db.query(User).filter(func.lower(User.email) == email.strip().lower()).first()
+        # A deactivated account gets the same answer as a wrong password, so
+        # the login form never confirms which addresses exist.
+        if user is None or not user.is_active or not verify_password(password, user.hashed_password):
             raise AuthError("Invalid email or password")
         return _to_authenticated_user(user)
 
@@ -31,10 +34,19 @@ class DevAuthProvider:
             raise AuthError("Invalid or expired token") from exc
 
         user = self.db.query(User).filter(User.id == user_id).first()
-        if user is None:
+        if user is None or not user.is_active:
+            # Deactivation takes effect on the next request, not when the
+            # token expires hours later.
             raise AuthError("User no longer exists")
         return _to_authenticated_user(user)
 
 
 def _to_authenticated_user(user: User) -> AuthenticatedUser:
-    return AuthenticatedUser(id=str(user.id), email=user.email, full_name=user.full_name, role=user.role)
+    return AuthenticatedUser(
+        id=str(user.id),
+        email=user.email,
+        full_name=user.full_name,
+        role=user.role,
+        must_change_password=user.must_change_password,
+        tour_completed=user.tour_completed_at is not None,
+    )

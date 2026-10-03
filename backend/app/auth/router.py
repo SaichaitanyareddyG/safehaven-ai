@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -6,11 +7,11 @@ from sqlalchemy.orm import Session
 
 from app.audit.models import ActorType, AuditEventType
 from app.audit.service import record_event
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_signed_in_user
 from app.auth.models import User
 from app.auth.provider import AuthenticatedUser, AuthError, get_auth_provider
-from app.auth.schemas import LoginRequest, RegisterRequest, TokenResponse, UserRead
-from app.auth.security import hash_password
+from app.auth.schemas import ChangePasswordRequest, LoginRequest, RegisterRequest, TokenResponse, UserRead
+from app.auth.security import hash_password, verify_password
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.rate_limit import limiter
@@ -56,6 +57,7 @@ def login(request: Request, payload: LoginRequest, db: Annotated[Session, Depend
         db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
+    db.query(User).filter(User.id == uuid.UUID(user.id)).update({User.last_login_at: datetime.now(timezone.utc)})
     record_event(
         db,
         event_type=AuditEventType.USER_LOGIN,
@@ -73,9 +75,11 @@ def login(request: Request, payload: LoginRequest, db: Annotated[Session, Depend
 @limiter.limit(_REGISTER_RATE_LIMIT)
 def register(request: Request, payload: RegisterRequest, db: Annotated[Session, Depends(get_db)]) -> User:
     """Dev-only convenience for creating clinician accounts locally. Not part of the
-    Phase 1 product API surface — Cognito will own user provisioning in later phases."""
+    Phase 1 product API surface — on a shared server ALLOW_SELF_REGISTRATION is
+    off and an admin creates accounts (app/auth/admin_router.py); Cognito will
+    own user provisioning in later phases."""
     settings = get_settings()
-    if settings.auth_provider != "dev":
+    if settings.auth_provider != "dev" or not settings.allow_self_registration:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not available")
 
     if db.query(User).filter(User.email == payload.email).first() is not None:
@@ -86,6 +90,9 @@ def register(request: Request, payload: RegisterRequest, db: Annotated[Session, 
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
         role="clinician",
+        # Dev and test accounts (and the scripted demo) skip the first-run
+        # tour; it is for people an admin invites. Replayable from the menu.
+        tour_completed_at=datetime.now(timezone.utc),
     )
     db.add(user)
     db.commit()
@@ -94,5 +101,45 @@ def register(request: Request, payload: RegisterRequest, db: Annotated[Session, 
 
 
 @router.get("/me", response_model=UserRead)
-def me(current_user: Annotated[AuthenticatedUser, Depends(get_current_user)]) -> AuthenticatedUser:
+def me(current_user: Annotated[AuthenticatedUser, Depends(get_signed_in_user)]) -> AuthenticatedUser:
     return current_user
+
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(_LOGIN_RATE_LIMIT)
+def change_password(
+    request: Request,
+    payload: ChangePasswordRequest,
+    current_user: Annotated[AuthenticatedUser, Depends(get_signed_in_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    """Also how a new user replaces the one-time password an admin gave them."""
+    user = db.get(User, uuid.UUID(current_user.id))
+    if user is None or not verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+    if payload.new_password == payload.current_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose a password you have not used here")
+
+    user.hashed_password = hash_password(payload.new_password)
+    user.must_change_password = False
+    record_event(
+        db,
+        event_type=AuditEventType.USER_PASSWORD_CHANGED,
+        actor_type=ActorType.CLINICIAN,
+        actor_id=user.id,
+        entity_type="User",
+        entity_id=user.id,
+    )
+    db.commit()
+
+
+@router.post("/tour-complete", status_code=status.HTTP_204_NO_CONTENT)
+def tour_complete(
+    current_user: Annotated[AuthenticatedUser, Depends(get_signed_in_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    """The dashboard's first-run guided tour was finished or skipped."""
+    db.query(User).filter(User.id == uuid.UUID(current_user.id), User.tour_completed_at.is_(None)).update(
+        {User.tour_completed_at: datetime.now(timezone.utc)}
+    )
+    db.commit()

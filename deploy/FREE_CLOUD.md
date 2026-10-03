@@ -60,20 +60,38 @@ wrangler offered to upload the whole repo (24,000+ files, over the free limit).
 Then set the backend's `CORS_ORIGINS` to that address (Render → Environment)
 and redeploy the backend.
 
-## 4. Check it
+## 4. The first admin
 
-From the repository on any computer:
+There is no sign-up on the cloud (`ALLOW_SELF_REGISTRATION=false`): an admin
+adds everyone from the dashboard's **Users** page. Create the first admin
+once, from the repository, against the cloud database — the one-time
+password goes straight to the clipboard, never the terminal:
 
 ```bash
-python3 deploy/smoke_test.py https://safehaven-backend.onrender.com https://safehaven-ai.pages.dev
+cd backend
+DATABASE_URL="$(cat ~/.safehaven-cloud/database_url)" \
+  .venv/bin/python -m app.auth.create_admin --email you@hospital.org --name "Your Name" | pbcopy
+```
+
+Sign in with it; the dashboard asks you to choose your own password, then
+shows a short guided tour.
+
+## 5. Check it
+
+From the repository on any computer, with the admin account:
+
+```bash
+SMOKE_ADMIN_EMAIL=you@hospital.org SMOKE_ADMIN_PASSWORD='…' \
+  python3 deploy/smoke_test.py https://safehaven-backend.onrender.com https://safehaven-ai.pages.dev
 ```
 
 Every line should say PASS (the script sends a browser-like user agent:
-Cloudflare answers Python's default one with 403) (it creates a test patient "Smoke Test" and a test
-band, which then goes silent and raises "band offline" — resolve it on the
-dashboard). Then open the dashboard, **Sign up** with your own account.
+Cloudflare answers Python's default one with 403) (it creates a clinician
+"Smoke Test", a test patient "Smoke Test" and a test band, which then goes
+silent and raises "band offline" — resolve it on the dashboard, and
+deactivate the smoke-test clinician on the Users page).
 
-## 5. Point the band at it
+## 6. Point the band at it
 
 In `firmware/include/wifi_secrets.h`:
 

@@ -9,6 +9,8 @@ interface AuthContextValue {
   isLoading: boolean
   login: (email: string, password: string) => Promise<void>
   logout: () => void
+  /** Re-read the signed-in user, e.g. after a password change or the tour. */
+  refreshUser: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -35,12 +37,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(me)
   }
 
+  async function refreshUser() {
+    setUser(await getCurrentUser())
+  }
+
   function logout() {
     clearToken()
     setUser(null)
   }
 
-  return <AuthContext.Provider value={{ user, isLoading, login, logout }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, isLoading, login, logout, refreshUser }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth(): AuthContextValue {

@@ -10,9 +10,14 @@ only, so it runs from any machine with Python.
 
 Creates test records (a clinician, a patient "Smoke Test", a band
 SMOKE-<time>). Run it against a demo server, not one with data you care about.
+
+A shared server has sign-up switched off (ALLOW_SELF_REGISTRATION=false): give
+an admin account in SMOKE_ADMIN_EMAIL / SMOKE_ADMIN_PASSWORD and the test
+creates its clinician the way an admin would, one-time password and all.
 """
 
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -58,7 +63,20 @@ for path in ("/", "/patients"):
 
 # Nurse: account, patient, band.
 email = f"smoke{STAMP}@example.com"
-call("POST", "/auth/register", {"email": email, "password": "supersecret123", "full_name": "Smoke Test"})
+admin_email, admin_password = os.environ.get("SMOKE_ADMIN_EMAIL"), os.environ.get("SMOKE_ADMIN_PASSWORD")
+if admin_email and admin_password:
+    code, body, _ = call("POST", "/auth/login", {"email": admin_email, "password": admin_password})
+    check(code == 200, "admin can sign in", body)
+    admin = body["access_token"] if code == 200 else None
+    code, created, _ = call("POST", "/admin/users", {"email": email, "full_name": "Smoke Test", "role": "clinician"}, admin)
+    check(code == 201, "admin creates a clinician", created)
+    otp = created["one_time_password"] if code == 201 else ""
+    code, body, _ = call("POST", "/auth/login", {"email": email, "password": otp})
+    first = body["access_token"] if code == 200 else None
+    code, _, _ = call("POST", "/auth/change-password", {"current_password": otp, "new_password": "supersecret123"}, first)
+    check(code == 204, "new clinician chooses a password", code)
+else:
+    call("POST", "/auth/register", {"email": email, "password": "supersecret123", "full_name": "Smoke Test"})
 code, body, _ = call("POST", "/auth/login", {"email": email, "password": "supersecret123"})
 check(code == 200, "clinician can sign in", body)
 nurse = body["access_token"] if code == 200 else None

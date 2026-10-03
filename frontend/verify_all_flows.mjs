@@ -68,7 +68,7 @@ await step('create + auto-analyze + auto-generate + approve an instruction', asy
 })
 
 await step('Medication Verification: identify patient by manual entry, confirm identity', async () => {
-  await page.click('text=Medication Verification')
+  await page.click('text=Medication check')
   await page.waitForSelector('[data-testid="patient-id-mode-enter"]', { timeout: 10000 })
   await page.click('[data-testid="patient-id-mode-enter"]')
   await page.fill('[data-testid="patient-id-manual-input"]', patientCode)
