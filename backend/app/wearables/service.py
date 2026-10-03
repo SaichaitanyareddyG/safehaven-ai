@@ -147,6 +147,7 @@ def to_read(device: WearableDevice, assignment: DeviceAssignment | None = None) 
         hardware_id=device.hardware_id,
         firmware_version=device.firmware_version,
         battery_percent=device.battery_percent,
+        charging=device.charging,
         last_seen_at=device.last_seen_at,
         created_at=device.created_at,
         enrolled=device.credential_hash is not None,
@@ -577,6 +578,7 @@ def assignment_to_read(db: Session, assignment: DeviceAssignment) -> DeviceAssig
         assigned_at=assignment.assigned_at,
         unassigned_at=assignment.unassigned_at,
         battery_percent=device.battery_percent,
+        device_charging=device.charging,
         last_seen_at=device.last_seen_at,
         device_status=device.status,
         device_online=not device_is_offline(device, assignment),
@@ -1247,6 +1249,7 @@ def record_heartbeat(
     device.last_seen_at = datetime.now(timezone.utc)
     device.battery_percent = payload.battery_percent
     device.firmware_version = payload.firmware_version
+    device.charging = payload.charging
 
     assignment = active_assignment_for_device(db, device.id)
     if assignment is not None:
@@ -1256,7 +1259,10 @@ def record_heartbeat(
             db, device, assignment.patient_id, AlertType.DEVICE_OFFLINE, "device_reconnected"
         )
 
-        low_battery = payload.battery_percent <= get_settings().device_low_battery_percent
+        # A band on its charger is being dealt with: no low-battery alert.
+        low_battery = (
+            payload.battery_percent <= get_settings().device_low_battery_percent and not payload.charging
+        )
         if low_battery:
             # Derived here as well as accepted as a device-sent event, so low
             # battery still surfaces if firmware never emits the event. The

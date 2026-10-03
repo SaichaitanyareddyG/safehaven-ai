@@ -31,6 +31,7 @@ class WearableDeviceRead(BaseModel):
     hardware_id: str | None
     firmware_version: str | None
     battery_percent: int | None
+    charging: bool = False
     last_seen_at: datetime | None
     created_at: datetime
 
@@ -87,6 +88,8 @@ class DeviceAssignmentRead(BaseModel):
 
     # Live device health, joined in so the assignment panel is one request.
     battery_percent: int | None
+    # On the charger: detection is paused, the patient is not monitored.
+    device_charging: bool = False
     last_seen_at: datetime | None
     device_status: DeviceStatus
     # Derived: has this device reported recently enough to be trusted?
@@ -221,6 +224,8 @@ class DeviceHeartbeatRequest(BaseModel):
     rssi: int | None = Field(default=None, ge=-120, le=0)
     sensor_ok: bool = True
     queue_depth: int = Field(default=0, ge=0)
+    # On the charger: the band has paused detection (off the wrist).
+    charging: bool = False
 
 
 class DeviceAssignmentView(BaseModel):

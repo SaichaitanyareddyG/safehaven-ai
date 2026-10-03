@@ -500,7 +500,7 @@ static void sampleBattery() {
     screenWake("charging");
   }
   wasCharging = charging;
-  if (battery.low() && !wasLow) {
+  if (battery.low() && !wasLow && !charging) {
     Serial.printf("[BATT] LOW: %d%%\r\n", battery.shown_pct());
     screenWake("battery low");
     if (!benchMode && assigned) {  // edge-triggered, once per crossing (plan §17)
@@ -516,6 +516,7 @@ static void sampleBattery() {
   h.batteryPct = battery.valid() ? battery.shown_pct() : 0;
   h.rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
   h.sensorOk = imuOk;
+  h.charging = onCharger;
   backendLink.setHealth(h);
 }
 
@@ -549,8 +550,9 @@ static void dumpBatteryLog() {
 // ── detection ────────────────────────────────────────────────────────────────
 static void setScreen(Screen s, const char *why);
 
+static bool detectionPaused();
 static void startCheck(const DetectedEvent &ev) {
-  if (battery.charging() || (lastPowerChangeMs && millis() - lastPowerChangeMs < POWER_CHANGE_QUIET_MS)) {
+  if (detectionPaused()) {
     Serial.printf("[CHECK] not asked - %s (peak %.2f g, tilt %.0f deg)\r\n",
                   battery.charging() ? "on the charger" : "charger just plugged in or out",
                   ev.metrics.peak_g, ev.metrics.tilt_delta_deg);
@@ -588,7 +590,26 @@ static void startCheck(const DetectedEvent &ev) {
                 ev.metrics.still_off_body ? "table-still" : "body-still/moving");
 }
 
+/// Charging mode: on the charger the band is off the wrist, so what the
+/// sensor sees is a hand plugging it in, not a patient. Detection events are
+/// dropped while charging and for POWER_CHANGE_QUIET_MS after unplugging
+/// (the band being put back on). The dashboard shows "Charging — not
+/// monitoring" from the heartbeat, so the nurse knows nobody is watched.
+static bool injecting = false;  // bench `inject`: a deliberate test event, never paused
+
+static bool detectionPaused() {
+  if (injecting) return false;
+  return onCharger || (lastPowerChangeMs && millis() - lastPowerChangeMs < POWER_CHANGE_QUIET_MS);
+}
+
 static void handleEvent(const DetectedEvent &ev) {
+  const bool sensed = ev.type == EventType::POSSIBLE_FALL || ev.type == EventType::FALL_CHECK ||
+                      ev.type == EventType::ABNORMAL_MOVEMENT || ev.type == EventType::UNEXPECTED_MOBILITY;
+  if (sensed && detectionPaused()) {
+    Serial.printf("[EVENT] %s ignored - %s\r\n", to_string(ev.type),
+                  onCharger ? "on the charger" : "just unplugged, being put back on");
+    return;
+  }
 #ifdef SH_TALK
   // A check decides for itself (startCheck): a soft one waits for the conversation.
   if (talkActive() && ev.type != EventType::FALL_CHECK) talkEnd("an event comes first");
@@ -779,6 +800,7 @@ static void serviceCheck() {
 /// Band off the wrist for NOT_WORN_ALERT_MS while assigned: the nurse is told
 /// once per removal; putting it back on re-arms it.
 static void serviceWear() {
+  if (onCharger) return;  // on the charger it is meant to be off the wrist
   if (core.wear().worn()) {
     notWornSent = false;
     return;
@@ -1473,7 +1495,8 @@ static void talkEnd(const char *why) {
 
 /// Can a conversation start now? (Assigned, linked, online, nothing urgent.)
 static bool talkAllowed() {
-  return screen == Screen::HOME && assigned && !benchMode && !alertActive && !checkActive && startupDone();
+  return screen == Screen::HOME && assigned && !benchMode && !alertActive && !checkActive && startupDone() &&
+         !onCharger;
 }
 
 static void talkError(const char *title, const char *text) {
@@ -2026,7 +2049,9 @@ static void injectEvent(const char *what) {
     return;
   }
   Serial.printf("[INJECT] %s\r\n", what);
+  injecting = true;  // a test event goes through even on the charger
   handleEvent(ev);
+  injecting = false;
 }
 #endif
 

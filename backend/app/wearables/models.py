@@ -84,6 +84,9 @@ class WearableDevice(Base):
     # sensor-data lake this module is not supposed to build.
     firmware_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     battery_percent: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # On its charger, as of the last heartbeat. A charging band is off the
+    # wrist and has paused detection: its patient is NOT being monitored.
+    charging: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)

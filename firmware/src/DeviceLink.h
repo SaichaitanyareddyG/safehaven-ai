@@ -98,6 +98,7 @@ class DeviceLink {
     int batteryPct = 0;
     int rssi = 0;
     bool sensorOk = true;
+    bool charging = false;  // on the charger: detection paused, patient not monitored
   };
 
   /// `caPem`: the CA that signed the backend's TLS certificate. An https://
@@ -532,6 +533,7 @@ class DeviceLink {
     req["battery_percent"] = h.batteryPct < 0 ? 0 : h.batteryPct > 100 ? 100 : h.batteryPct;
     req["firmware_version"] = fw_;
     if (h.rssi < 0 && h.rssi >= -120) req["rssi"] = h.rssi;
+    req["charging"] = h.charging;
     req["sensor_ok"] = h.sensorOk;
     req["queue_depth"] = depth;
     String body, resp;

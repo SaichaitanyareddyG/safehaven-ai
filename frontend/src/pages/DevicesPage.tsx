@@ -101,6 +101,11 @@ export function DevicesPage() {
 function DeviceState({ device }: { device: WearableDevice }) {
   if (device.status !== 'ACTIVE') return <Badge variant="outline">{device.status.toLowerCase()}</Badge>
   if (!device.enrolled) return <Badge variant="outline">Waiting to finish pairing</Badge>
+  if (device.assigned && device.charging) {
+    // Off the wrist and detection paused: say plainly that nobody is watched.
+    return <Badge variant="destructive">Charging — not monitoring</Badge>
+  }
+  if (device.charging) return <Badge variant="secondary">Charging</Badge>
   if (device.assigned) {
     return device.online ? (
       <Badge>Monitoring a patient</Badge>

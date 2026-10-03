@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
-import { BatteryLow, ShieldCheck, Wifi, WifiOff } from 'lucide-react'
+import { BatteryCharging, BatteryLow, ShieldCheck, Wifi, WifiOff } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { getPatientAssignment, unassignWearable } from '@/api/safety-monitoring'
@@ -109,6 +109,12 @@ export function WearableDevicePanel({
                   </>
                 )}
               </span>
+              {assignment.device_charging && (
+                <span className="flex items-center gap-1 font-medium text-amber-700" data-testid="wearable-charging">
+                  <BatteryCharging className="h-3 w-3" />
+                  Charging — not monitoring
+                </span>
+              )}
               {assignment.battery_percent !== null && (
                 <span
                   className={cn(

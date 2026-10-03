@@ -66,6 +66,8 @@ export interface WearableDevice {
   hardware_id: string | null
   firmware_version: string | null
   battery_percent: number | null
+  /** On its charger: detection paused, so its patient is NOT monitored. */
+  charging: boolean
   last_seen_at: string | null
   created_at: string
   /** Derived: holds a credential. */
@@ -96,6 +98,8 @@ export interface DeviceAssignment {
   last_seen_at: string | null
   device_status: 'ACTIVE' | 'DISABLED' | 'RETIRED'
   device_online: boolean
+  /** On its charger: detection paused, so this patient is NOT monitored. */
+  device_charging: boolean
 }
 
 export interface PatientAssignmentResponse {
