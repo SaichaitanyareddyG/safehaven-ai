@@ -218,7 +218,7 @@ function RolePill({ role, muted }: { role: Role; muted?: boolean }) {
     <span
       className={cn(
         'rounded-md px-2.5 py-1 text-[13px] font-semibold',
-        muted ? 'bg-muted text-muted-foreground' : role === 'admin' ? 'bg-[#0A2422] text-[#7FE0D6]' : 'bg-[#E3F4F1] text-[#0A5C55]',
+        muted ? 'bg-muted text-muted-foreground' : role === 'admin' ? 'bg-[#143440] text-[#7CC3DB]' : 'bg-[#E2F0F5] text-[#0B5068]',
       )}
     >
       {role === 'admin' ? 'Admin' : 'Clinician'}
@@ -231,7 +231,7 @@ function Status({ user }: { user: AdminUser }) {
     ? ['bg-[#9AA5A8]', '', 'Deactivated']
     : user.must_change_password
       ? ['bg-[#F59E3D]', 'text-[#7A4200]', 'Invited']
-      : ['bg-[#0E7C72]', 'text-[#0A5C55]', 'Active']
+      : ['bg-[#0F6383]', 'text-[#0B5068]', 'Active']
   return (
     <span className={cn('inline-flex items-center gap-1.5', text)}>
       <span className={cn('h-2 w-2 rounded-full', dot)} aria-hidden="true" />
@@ -269,7 +269,7 @@ function AddUserForm({ onCreated }: { onCreated: (r: InviteResponse) => void }) 
       }}
     >
       <h2 id="add-user-title" className="flex items-center gap-2 text-lg font-semibold">
-        <UserPlus className="h-5 w-5 text-[#0E7C72]" />
+        <UserPlus className="h-5 w-5 text-[#0F6383]" />
         Add a user
       </h2>
       <div className="space-y-2">
@@ -326,7 +326,7 @@ function RoleOption({
     <label
       className={cn(
         'flex cursor-pointer items-start gap-3 rounded-xl border-[1.5px] px-3.5 py-3',
-        checked ? 'border-[#0E7C72] bg-[#F1FAF8]' : 'border-input',
+        checked ? 'border-[#0F6383] bg-[#F2F8FA]' : 'border-input',
       )}
     >
       <input
@@ -335,7 +335,7 @@ function RoleOption({
         value={value}
         checked={checked}
         onChange={() => onChange(value)}
-        className="mt-0.5 h-4.5 w-4.5 accent-[#0E7C72]"
+        className="mt-0.5 h-4.5 w-4.5 accent-[#0F6383]"
       />
       <span className="flex flex-col">
         <span className="font-medium">{title}</span>
@@ -367,7 +367,7 @@ function InviteDialog({
       <DialogContent className="grid-cols-[minmax(0,1fr)]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            {emailed ? <Mail className="h-5 w-5 text-[#0E7C72]" /> : <MailWarning className="h-5 w-5 text-[#B45309]" />}
+            {emailed ? <Mail className="h-5 w-5 text-[#0F6383]" /> : <MailWarning className="h-5 w-5 text-[#B45309]" />}
             {emailed
               ? invite
                 ? `Invite sent to ${first}`
@@ -393,7 +393,7 @@ function InviteDialog({
           <p className="text-sm text-muted-foreground">
             {emailed ? 'You can also copy the link, if they can’t find the email:' : 'Their link:'}
           </p>
-          <div className="flex min-w-0 items-center gap-2 rounded-xl bg-[#F4F7F6] p-3">
+          <div className="flex min-w-0 items-center gap-2 rounded-xl bg-[#F3F7F8] p-3">
             <code className="min-w-0 flex-1 truncate font-mono text-sm select-all" data-testid="invite-link" title={link}>
               {link}
             </code>

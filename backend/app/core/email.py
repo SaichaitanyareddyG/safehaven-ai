@@ -73,45 +73,45 @@ def _layout(
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><title>{heading}</title></head>
-<body style="margin:0;padding:0;background:#EEF3F2">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#EEF3F2">{preheader}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#EEF3F2">
+<body style="margin:0;padding:0;background:#EEF3F5">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#EEF3F5">{preheader}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#EEF3F5">
 <tr><td align="center" style="padding:32px 12px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px">
 
-<tr><td style="background:#0A2422;border-radius:18px 18px 0 0;padding:26px 32px">
+<tr><td style="background:#143440;border-radius:18px 18px 0 0;padding:26px 32px">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
 <td style="vertical-align:middle;padding-right:12px"><img src="{logo}" width="34" height="34" alt="" style="display:block;border:0"></td>
-<td style="vertical-align:middle;font-family:{FONT};font-size:16px;font-weight:700;letter-spacing:4px;color:#7FE0D6">SAFEHAVEN AI</td>
+<td style="vertical-align:middle;font-family:{FONT};font-size:16px;font-weight:700;letter-spacing:4px;color:#7CC3DB">SAFEHAVEN AI</td>
 </tr></table>
 </td></tr>
-<tr><td style="background:#2EC4B6;height:4px;line-height:4px;font-size:0">&nbsp;</td></tr>
+<tr><td style="background:#7CC3DB;height:4px;line-height:4px;font-size:0">&nbsp;</td></tr>
 
 <tr><td style="background:#FFFFFF;padding:36px 32px 8px">
 <h1 style="margin:0 0 18px;font-family:{FONT};font-size:26px;line-height:1.25;font-weight:700;color:#0B0D0E">{heading}</h1>
 {body}
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:26px 0 14px"><tr>
-<td align="center" bgcolor="#2EC4B6" style="border-radius:12px">
-<a href="{href}" target="_blank" style="display:inline-block;padding:15px 30px;font-family:{FONT};font-size:16px;font-weight:700;color:#062320;text-decoration:none;border-radius:12px">{button}&nbsp;&rarr;</a>
+<td align="center" bgcolor="#0F6383" style="border-radius:12px">
+<a href="{href}" target="_blank" style="display:inline-block;padding:15px 30px;font-family:{FONT};font-size:16px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:12px">{button}&nbsp;&rarr;</a>
 </td></tr></table>
 <p style="margin:0 0 26px;font-family:{FONT};font-size:14px;line-height:1.5;color:#5B676A">{note}</p>
 <p style="margin:0 0 6px;font-family:{FONT};font-size:13px;line-height:1.5;color:#5B676A">Button not working? Copy this link into your browser:</p>
-<p style="margin:0 0 28px;font-family:{FONT};font-size:13px;line-height:1.5;word-break:break-all"><a href="{href}" style="color:#0E7C72">{href}</a></p>
+<p style="margin:0 0 28px;font-family:{FONT};font-size:13px;line-height:1.5;word-break:break-all"><a href="{href}" style="color:#0F6383">{href}</a></p>
 </td></tr>
 
 <tr><td style="background:#FFFFFF;padding:0 32px 32px">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid #E3E9E8"><tr><td style="padding-top:22px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid #E1E8EC"><tr><td style="padding-top:22px">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-<td style="vertical-align:top;padding-right:14px"><img src="{logo}" width="40" height="40" alt="SafeHaven" style="display:block;border:0;border-radius:10px;background:#0A2422;padding:6px"></td>
+<td style="vertical-align:top;padding-right:14px"><img src="{logo}" width="40" height="40" alt="SafeHaven" style="display:block;border:0;border-radius:10px;background:#143440;padding:6px"></td>
 <td style="vertical-align:top;font-family:{FONT}">
 <div style="font-size:15px;line-height:1.5;color:#2E3A3D">Warm regards,</div>
 <div style="font-size:15px;line-height:1.5;font-weight:700;color:#0B0D0E">The SafeHaven team</div>
-<div style="font-size:13px;line-height:1.5;color:#0E7C72">Calm, watchful care for every bed.</div>
+<div style="font-size:13px;line-height:1.5;color:#0F6383">Calm, watchful care for every bed.</div>
 </td></tr></table>
 </td></tr></table>
 </td></tr>
 
-<tr><td style="background:#F7FAF9;border-radius:0 0 18px 18px;padding:18px 32px;border-top:1px solid #E3E9E8">
+<tr><td style="background:#F6F9FA;border-radius:0 0 18px 18px;padding:18px 32px;border-top:1px solid #E1E8EC">
 <p style="margin:0;font-family:{FONT};font-size:12px;line-height:1.6;color:#6B7679">{reason}<br>
 SafeHaven never sends patient information by email, and will never ask for your password.</p>
 </td></tr>

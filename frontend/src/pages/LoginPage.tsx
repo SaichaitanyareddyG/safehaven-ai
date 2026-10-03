@@ -55,11 +55,11 @@ export function LoginPage() {
 
   const field =
     'h-[52px] w-full rounded-xl border-[1.5px] border-[#CBD4D3] bg-white px-4 text-base text-[#0B0D0E] outline-none ' +
-    'placeholder:text-[#7A8588] focus-visible:border-[#0E7C72] focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/30 ' +
+    'placeholder:text-[#7A8588] focus-visible:border-[#0F6383] focus-visible:ring-3 focus-visible:ring-[#4F93AD]/30 ' +
     'aria-invalid:border-red-600'
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#F4F7F6] lg:flex-row">
+    <div className="flex min-h-screen flex-col bg-[#F3F7F8] lg:flex-row">
       <BrandPanel />
 
       {/* Sign-in card */}
@@ -103,7 +103,7 @@ export function LoginPage() {
               </label>
               <Link
                 to="/forgot-password"
-                className="rounded text-sm font-medium text-[#0E7C72] underline-offset-4 hover:underline focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/40 focus-visible:outline-none"
+                className="rounded text-sm font-medium text-[#0F6383] underline-offset-4 hover:underline focus-visible:ring-3 focus-visible:ring-[#4F93AD]/40 focus-visible:outline-none"
               >
                 Forgot password?
               </Link>
@@ -122,7 +122,7 @@ export function LoginPage() {
                 onClick={() => setShowPassword((v) => !v)}
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
                 aria-pressed={showPassword}
-                className="absolute top-1 right-1 flex h-11 w-11 items-center justify-center rounded-lg text-[#4A5558] hover:bg-[#EEF3F2] focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/40 focus-visible:outline-none"
+                className="absolute top-1 right-1 flex h-11 w-11 items-center justify-center rounded-lg text-[#4A5558] hover:bg-[#EEF3F2] focus-visible:ring-3 focus-visible:ring-[#4F93AD]/40 focus-visible:outline-none"
               >
                 {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
               </button>
@@ -134,7 +134,7 @@ export function LoginPage() {
             type="submit"
             disabled={isSubmitting}
             data-testid="login-submit"
-            className="mt-1 h-[54px] rounded-xl bg-[#2EC4B6] text-[17px] font-semibold text-[#062320] transition-colors hover:bg-[#27B0A3] focus-visible:ring-3 focus-visible:ring-[#0E7C72]/50 focus-visible:outline-none disabled:opacity-60"
+            className="mt-1 h-[54px] rounded-xl bg-[#0F6383] text-[17px] font-semibold text-white transition-colors hover:bg-[#0C5571] focus-visible:ring-3 focus-visible:ring-[#0F6383]/40 focus-visible:outline-none disabled:opacity-60"
           >
             {isSubmitting ? 'Signing in…' : 'Sign in'}
           </button>

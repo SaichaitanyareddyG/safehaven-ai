@@ -55,10 +55,10 @@ export function ChangePasswordPage() {
 
   const field =
     'h-[52px] w-full rounded-xl border-[1.5px] border-[#CBD4D3] bg-white px-4 text-base text-[#0B0D0E] outline-none ' +
-    'focus-visible:border-[#0E7C72] focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/30 aria-invalid:border-red-600'
+    'focus-visible:border-[#0F6383] focus-visible:ring-3 focus-visible:ring-[#4F93AD]/30 aria-invalid:border-red-600'
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#F4F7F6] lg:flex-row">
+    <div className="flex min-h-screen flex-col bg-[#F3F7F8] lg:flex-row">
       <BrandPanel />
       <main className="relative -mt-10 flex flex-1 justify-center px-4 pb-8 lg:mt-0 lg:items-center lg:px-6 lg:py-12">
         <form
@@ -67,7 +67,7 @@ export function ChangePasswordPage() {
           noValidate
         >
           {!firstTime && (
-            <Link to="/patients" className="flex items-center gap-1.5 self-start text-sm font-medium text-[#0E7C72]">
+            <Link to="/patients" className="flex items-center gap-1.5 self-start text-sm font-medium text-[#0F6383]">
               <ArrowLeft className="h-4 w-4" />
               Back to the dashboard
             </Link>
@@ -119,7 +119,7 @@ export function ChangePasswordPage() {
             type="submit"
             disabled={isSubmitting}
             data-testid="change-password-submit"
-            className="mt-1 h-[54px] rounded-xl bg-[#2EC4B6] text-[17px] font-semibold text-[#062320] transition-colors hover:bg-[#27B0A3] focus-visible:ring-3 focus-visible:ring-[#0E7C72]/50 focus-visible:outline-none disabled:opacity-60"
+            className="mt-1 h-[54px] rounded-xl bg-[#0F6383] text-[17px] font-semibold text-white transition-colors hover:bg-[#0C5571] focus-visible:ring-3 focus-visible:ring-[#0F6383]/40 focus-visible:outline-none disabled:opacity-60"
           >
             {isSubmitting ? 'Saving…' : firstTime ? 'Save and continue' : 'Change password'}
           </button>

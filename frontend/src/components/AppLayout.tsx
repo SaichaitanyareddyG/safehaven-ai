@@ -64,18 +64,18 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const touring = tourRequested || (!!user && !user.tour_completed && !tourDismissed)
 
   return (
-    <div className="min-h-screen bg-[#F4F7F6] lg:flex">
+    <div className="min-h-screen bg-[#F3F7F8] lg:flex">
       {/* Phone top bar */}
-      <div className="sticky top-0 z-30 flex h-16 items-center gap-2.5 bg-[#0A2422] pr-2 pl-4 lg:hidden">
+      <div className="sticky top-0 z-30 flex h-16 items-center gap-2.5 bg-[#143440] pr-2 pl-4 lg:hidden">
         <Logo className="h-6.5 w-6.5" />
-        <span className="text-[15px] font-semibold tracking-[0.2em] text-[#7FE0D6]">SAFEHAVEN AI</span>
+        <span className="text-[15px] font-semibold tracking-[0.2em] text-[#7CC3DB]">SAFEHAVEN AI</span>
         <button
           type="button"
           onClick={() => setMenuOpen((v) => !v)}
           aria-label={menuOpen ? 'Close menu' : 'Open menu'}
           aria-expanded={menuOpen}
           aria-controls="side-nav"
-          className="ml-auto flex h-12 w-12 items-center justify-center rounded-xl text-[#DCE4E2] hover:bg-white/10 focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/50 focus-visible:outline-none"
+          className="ml-auto flex h-12 w-12 items-center justify-center rounded-xl text-[#E6F0F3] hover:bg-white/10 focus-visible:ring-3 focus-visible:ring-[#4F93AD]/50 focus-visible:outline-none"
         >
           {menuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
         </button>
@@ -129,7 +129,7 @@ function SideNav({
         if ((e.target as HTMLElement).closest('a')) onNavigate()
       }}
       className={cn(
-        'z-20 flex-col gap-6 bg-[#0A2422] px-3.5 py-6 text-[#DCE4E2]',
+        'z-20 flex-col gap-6 bg-[#143440] px-3.5 py-6 text-[#E6F0F3]',
         // Phone: a full-height sheet under the top bar. Desktop: a fixed column.
         open ? 'fixed inset-x-0 top-16 bottom-0 flex overflow-y-auto' : 'hidden',
         'lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-66 lg:shrink-0',
@@ -137,7 +137,7 @@ function SideNav({
     >
       <div className="hidden items-center gap-2.5 px-2.5 lg:flex">
         <Logo className="h-7.5 w-7.5" />
-        <span className="text-base font-semibold tracking-[0.2em] text-[#7FE0D6]">SAFEHAVEN AI</span>
+        <span className="text-base font-semibold tracking-[0.2em] text-[#7CC3DB]">SAFEHAVEN AI</span>
       </div>
 
       <NavSection title="Ward">
@@ -163,7 +163,7 @@ function SideNav({
 function NavSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="px-3 pb-1.5 text-xs font-semibold tracking-[0.12em] text-[#8FB3AE] uppercase">{title}</span>
+      <span className="px-3 pb-1.5 text-xs font-semibold tracking-[0.12em] text-[#9FB9C3] uppercase">{title}</span>
       {children}
     </div>
   )
@@ -172,8 +172,8 @@ function NavSection({ title, children }: { title: string; children: ReactNode })
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
     'flex min-h-12 items-center gap-3 rounded-[10px] px-3 text-[15px] font-medium transition-colors lg:min-h-[46px]',
-    'focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/50 focus-visible:outline-none',
-    isActive ? 'bg-[#144A45] text-white' : 'text-[#DCE4E2] hover:bg-white/6',
+    'focus-visible:ring-3 focus-visible:ring-[#4F93AD]/50 focus-visible:outline-none',
+    isActive ? 'bg-[#1F4B5A] text-white' : 'text-[#E6F0F3] hover:bg-white/6',
   )
 
 function NavItemLink({ item }: { item: NavItem }) {
@@ -182,7 +182,7 @@ function NavItemLink({ item }: { item: NavItem }) {
     <NavLink to={item.to} className={linkClass} data-testid={item.testId} data-tour={item.tour}>
       {({ isActive }) => (
         <>
-          <Icon className={cn('h-5 w-5', isActive ? 'text-[#7FE0D6]' : 'text-[#9FBFBA]')} aria-hidden="true" />
+          <Icon className={cn('h-5 w-5', isActive ? 'text-[#7CC3DB]' : 'text-[#9FB9C3]')} aria-hidden="true" />
           {item.label}
         </>
       )}
@@ -213,7 +213,7 @@ function AlertsNavItem() {
     <NavLink to="/safety-monitoring" className={linkClass} data-testid="safety-monitoring-nav" data-tour="alerts">
       {({ isActive }) => (
         <>
-          <Bell className={cn('h-5 w-5', isActive ? 'text-[#7FE0D6]' : 'text-[#9FBFBA]')} aria-hidden="true" />
+          <Bell className={cn('h-5 w-5', isActive ? 'text-[#7CC3DB]' : 'text-[#9FB9C3]')} aria-hidden="true" />
           Safety alerts
           {alerts.length > 0 && (
             <span
@@ -241,23 +241,23 @@ function UserMenu({ onStartTour }: { onStartTour: () => void }) {
   if (!user) return null
 
   return (
-    <div className="mt-auto border-t border-[#1E4B47] pt-4" data-tour="user-menu">
+    <div className="mt-auto border-t border-[#24505F] pt-4" data-tour="user-menu">
       <DropdownMenu>
         <DropdownMenuTrigger
-          className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-white/6 focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/50 focus-visible:outline-none"
+          className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-white/6 focus-visible:ring-3 focus-visible:ring-[#4F93AD]/50 focus-visible:outline-none"
           data-testid="user-menu"
         >
           <span
             aria-hidden="true"
-            className="flex h-9.5 w-9.5 shrink-0 items-center justify-center rounded-full bg-[#1E5A54] text-[15px] font-semibold text-[#CFF5F0]"
+            className="flex h-9.5 w-9.5 shrink-0 items-center justify-center rounded-full bg-[#1F4B5A] text-[15px] font-semibold text-[#E6F0F3]"
           >
             {user.full_name.trim().charAt(0).toUpperCase()}
           </span>
           <span className="flex min-w-0 flex-col">
-            <span className="truncate text-[15px] font-medium text-[#F2F4F3]">{user.full_name}</span>
-            <span className="text-[13px] text-[#9FBFBA]">{user.role === 'admin' ? 'Admin' : 'Clinician'}</span>
+            <span className="truncate text-[15px] font-medium text-[#F2F7F9]">{user.full_name}</span>
+            <span className="text-[13px] text-[#9FB9C3]">{user.role === 'admin' ? 'Admin' : 'Clinician'}</span>
           </span>
-          <ChevronUp className="ml-auto h-4 w-4 text-[#9FBFBA]" aria-hidden="true" />
+          <ChevronUp className="ml-auto h-4 w-4 text-[#9FB9C3]" aria-hidden="true" />
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="start" className="w-56">
           <DropdownMenuItem onSelect={onStartTour}>

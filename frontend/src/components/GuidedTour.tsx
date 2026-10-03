@@ -140,11 +140,11 @@ export function GuidedTour({ onClose }: { onClose: () => void }) {
       {spot ? (
         <div
           aria-hidden="true"
-          className="pointer-events-none fixed rounded-xl ring-3 ring-[#2EC4B6] transition-all duration-200"
+          className="pointer-events-none fixed rounded-xl ring-3 ring-[#4F93AD] transition-all duration-200"
           style={{ ...spot, boxShadow: '0 0 0 9999px rgba(6, 20, 19, 0.62)' }}
         />
       ) : (
-        <div aria-hidden="true" className="fixed inset-0 bg-[#061413]/60" />
+        <div aria-hidden="true" className="fixed inset-0 bg-[#0A1E26]/60" />
       )}
 
       <div
@@ -164,14 +164,14 @@ export function GuidedTour({ onClose }: { onClose: () => void }) {
         style={{ top: cardPos?.top, left: cardPos?.left, width: Math.min(CARD_WIDTH, window.innerWidth - 2 * GAP) }}
       >
         <div className="flex items-center gap-3">
-          <span className="text-[13px] font-semibold tracking-wide text-[#0E7C72]">
+          <span className="text-[13px] font-semibold tracking-wide text-[#0F6383]">
             {index + 1} of {steps.length}
           </span>
           <button
             type="button"
             onClick={() => void finish()}
             aria-label="Close the tour"
-            className="-mr-2 ml-auto flex h-10 w-10 items-center justify-center rounded-lg text-[#4A5558] hover:bg-[#EEF3F2] focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/40 focus-visible:outline-none"
+            className="-mr-2 ml-auto flex h-10 w-10 items-center justify-center rounded-lg text-[#4A5558] hover:bg-[#EEF3F2] focus-visible:ring-3 focus-visible:ring-[#4F93AD]/40 focus-visible:outline-none"
           >
             <X className="h-5 w-5" />
           </button>
@@ -185,7 +185,7 @@ export function GuidedTour({ onClose }: { onClose: () => void }) {
 
         <div className="flex gap-1.5 pt-1" aria-hidden="true">
           {steps.map((s, i) => (
-            <span key={s.title} className={cn('h-1.5 flex-1 rounded-full', i <= index ? 'bg-[#2EC4B6]' : 'bg-[#E3E9E8]')} />
+            <span key={s.title} className={cn('h-1.5 flex-1 rounded-full', i <= index ? 'bg-[#0F6383]' : 'bg-[#E3E9E8]')} />
           ))}
         </div>
 
@@ -194,7 +194,7 @@ export function GuidedTour({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               onClick={() => void finish()}
-              className="h-11 rounded-xl px-3 text-[15px] font-medium text-[#4A5558] hover:bg-[#EEF3F2] focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/40 focus-visible:outline-none"
+              className="h-11 rounded-xl px-3 text-[15px] font-medium text-[#4A5558] hover:bg-[#EEF3F2] focus-visible:ring-3 focus-visible:ring-[#4F93AD]/40 focus-visible:outline-none"
             >
               Skip tour
             </button>
@@ -202,7 +202,7 @@ export function GuidedTour({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               onClick={() => setIndex((i) => i - 1)}
-              className="h-11 rounded-xl px-3 text-[15px] font-medium text-[#4A5558] hover:bg-[#EEF3F2] focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/40 focus-visible:outline-none"
+              className="h-11 rounded-xl px-3 text-[15px] font-medium text-[#4A5558] hover:bg-[#EEF3F2] focus-visible:ring-3 focus-visible:ring-[#4F93AD]/40 focus-visible:outline-none"
             >
               Back
             </button>
@@ -211,7 +211,7 @@ export function GuidedTour({ onClose }: { onClose: () => void }) {
             type="button"
             data-testid="tour-next"
             onClick={() => (last ? void finish() : setIndex((i) => i + 1))}
-            className="ml-auto h-11 rounded-xl bg-[#2EC4B6] px-5 text-[15px] font-semibold text-[#062320] hover:bg-[#27B0A3] focus-visible:ring-3 focus-visible:ring-[#0E7C72]/50 focus-visible:outline-none"
+            className="ml-auto h-11 rounded-xl bg-[#0F6383] px-5 text-[15px] font-semibold text-white hover:bg-[#0C5571] focus-visible:ring-3 focus-visible:ring-[#0F6383]/40 focus-visible:outline-none"
           >
             {index === 0 ? 'Show me around' : last ? 'Done' : 'Next'}
           </button>

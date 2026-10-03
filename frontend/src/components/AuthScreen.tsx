@@ -6,12 +6,12 @@ import { BrandPanel } from '@/components/BrandPanel'
 /** Shared input look of the sign-in screens. */
 export const authField =
   'h-[52px] w-full rounded-xl border-[1.5px] border-[#CBD4D3] bg-white px-4 text-base text-[#0B0D0E] outline-none ' +
-  'placeholder:text-[#7A8588] focus-visible:border-[#0E7C72] focus-visible:ring-3 focus-visible:ring-[#2EC4B6]/30 ' +
+  'placeholder:text-[#7A8588] focus-visible:border-[#0F6383] focus-visible:ring-3 focus-visible:ring-[#4F93AD]/30 ' +
   'aria-invalid:border-red-600'
 
 export const authButton =
-  'mt-1 h-[54px] rounded-xl bg-[#2EC4B6] text-[17px] font-semibold text-[#062320] transition-colors hover:bg-[#27B0A3] ' +
-  'focus-visible:ring-3 focus-visible:ring-[#0E7C72]/50 focus-visible:outline-none disabled:opacity-60'
+  'mt-1 h-[54px] rounded-xl bg-[#0F6383] text-[17px] font-semibold text-white transition-colors hover:bg-[#0C5571] ' +
+  'focus-visible:ring-3 focus-visible:ring-[#0F6383]/40 focus-visible:outline-none disabled:opacity-60'
 
 /**
  * The frame of every signed-out screen besides sign-in itself (choose a
@@ -19,7 +19,7 @@ export const authButton =
  */
 export function AuthScreen({ children, onSubmit }: { children: ReactNode; onSubmit?: FormEventHandler<HTMLFormElement> }) {
   return (
-    <div className="flex min-h-screen flex-col bg-[#F4F7F6] lg:flex-row">
+    <div className="flex min-h-screen flex-col bg-[#F3F7F8] lg:flex-row">
       <BrandPanel />
       <main className="relative -mt-10 flex flex-1 justify-center px-4 pb-8 lg:mt-0 lg:items-center lg:px-6 lg:py-12">
         <form
