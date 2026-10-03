@@ -322,3 +322,49 @@ def test_a_medicine_without_a_documented_reason_is_marked_for_the_model():
     assert "NOT RECORDED" in marked[1]
     assert band_talk.mark_missing_reasons("This patient currently has no approved active instructions on file.") == (
         "This patient currently has no approved active instructions on file.")
+
+
+def test_api_mode_sends_speech_answer_and_voice_to_openai(monkeypatch):
+    """BAND_TALK_PROVIDER=openai: all three steps go through the OpenAI client
+    (no local service is called), with the band-talk models from settings."""
+    import types
+
+    from app.core.config import get_settings
+
+    calls = {}
+
+    class FakeClient:
+        class audio:
+            class transcriptions:
+                @staticmethod
+                def create(**kw):
+                    calls["stt"] = kw["model"]
+                    return types.SimpleNamespace(text=" What does this band do? ")
+
+            class speech:
+                @staticmethod
+                def create(**kw):
+                    calls["tts"] = (kw["model"], kw["response_format"])
+                    return types.SimpleNamespace(content=_wav())
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    calls["llm"] = kw["model"]
+                    calls["system"] = kw["messages"][0]["content"]
+                    return types.SimpleNamespace(
+                        choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="It watches for falls."))])
+
+    monkeypatch.setattr(get_settings(), "band_talk_provider", "openai")
+    monkeypatch.setattr(band_talk, "_openai", lambda: FakeClient)
+    monkeypatch.setattr(band_talk.httpx, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("local service called")))
+
+    assert band_talk.transcribe(b"wav") == "What does this band do?"
+    assert band_talk.ask_model("- Metoprolol", "What does this band do?") == "It watches for falls."
+    assert band_talk.to_band_audio(band_talk.synthesize("It watches for falls."))
+    s = get_settings()
+    assert calls["stt"] == s.band_talk_openai_stt_model
+    assert calls["llm"] == s.band_talk_openai_model
+    assert calls["tts"] == (s.band_talk_openai_tts_model, "wav")
+    assert "Metoprolol" in calls["system"]

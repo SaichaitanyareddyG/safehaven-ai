@@ -189,7 +189,25 @@ STT_PROMPT = (
 )
 
 
+def _openai():
+    from openai import OpenAI  # already a backend dependency (Modules 1-2)
+
+    return OpenAI(api_key=get_settings().openai_api_key, timeout=25)
+
+
+def _using_openai() -> bool:
+    return get_settings().band_talk_provider == "openai"
+
+
 def transcribe(wav: bytes) -> str:
+    if _using_openai():
+        r = _openai().audio.transcriptions.create(
+            model=get_settings().band_talk_openai_stt_model,
+            file=("speech.wav", wav, "audio/wav"),
+            language="en",
+            prompt=STT_PROMPT,
+        )
+        return str(r.text).strip()
     r = httpx.post(
         f"{get_settings().band_talk_stt_url}/inference",
         files={"file": ("speech.wav", wav, "audio/wav")},
@@ -202,6 +220,19 @@ def transcribe(wav: bytes) -> str:
 
 def ask_model(care_plan: str, question: str, history: list[dict[str, str]] | None = None) -> str:
     settings = get_settings()
+    if _using_openai():
+        model = settings.band_talk_openai_model
+        extra = {"reasoning_effort": "minimal"} if model.startswith(("gpt-5", "o")) else {}
+        r = _openai().chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": f"{BAND_TALK_SYSTEM_PROMPT}\n\nPatient's approved care plan:\n{care_plan}"},
+                *(history or []),
+                {"role": "user", "content": question},
+            ],
+            **extra,
+        )
+        return str(r.choices[0].message.content or "")
     r = httpx.post(
         f"{settings.band_talk_llm_url}/api/chat",
         json={
@@ -225,6 +256,16 @@ def ask_model(care_plan: str, question: str, history: list[dict[str, str]] | Non
 
 
 def synthesize(text: str) -> bytes:
+    if _using_openai():
+        settings = get_settings()
+        r = _openai().audio.speech.create(
+            model=settings.band_talk_openai_tts_model,
+            voice=settings.band_talk_openai_voice,
+            input=text,
+            response_format="wav",
+            instructions="Calm, warm and clear, at a gentle pace, for an older patient in a hospital bed.",
+        )
+        return r.content
     r = httpx.post(
         f"{get_settings().band_talk_tts_url}/synthesize",
         json={"text": text, "length_scale": 1.1},

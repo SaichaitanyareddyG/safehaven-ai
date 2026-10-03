@@ -75,6 +75,18 @@ class Settings(BaseSettings):
     # whisper.cpp's whisper-server (speech to text), Ollama (the answer) and
     # Piper's HTTP server (the voice). Model chosen by
     # scripts/compare_band_chat.py.
+    # "local": the three services below, nothing leaves the machine (default).
+    # "openai": OpenAI for speech, answer and voice — fast on a small server
+    # (an old laptop cannot run the model quickly), DEMO DATA ONLY: a standard
+    # OpenAI key is not covered by a HIPAA BAA. The fixed safety rules run on
+    # our server first either way.
+    band_talk_provider: str = "local"
+    # Measured 2026-10-03, median of 3: speech 0.96 s, answer 0.88 s, voice
+    # 1.78 s. The "nano" answer models mis-tagged ordinary questions.
+    band_talk_openai_stt_model: str = "gpt-4o-mini-transcribe"
+    band_talk_openai_model: str = "gpt-4.1-mini"
+    band_talk_openai_tts_model: str = "gpt-4o-mini-tts"
+    band_talk_openai_voice: str = "sage"
     band_talk_stt_url: str = "http://127.0.0.1:8178"
     band_talk_tts_url: str = "http://127.0.0.1:5005"
     band_talk_llm_url: str = "http://localhost:11434"
