@@ -115,6 +115,41 @@ def _timing_preserved(source: str, generated: str) -> bool:
     return all(generated_counts[token] >= count for token, count in source_counts.items())
 
 
+# "after food" / "before meals" / "on an empty stomach": how a dose relates to
+# eating. The source often carries it inside timing ("morning and evening
+# after food") while re-extraction of a faithful patient text files it under
+# with_food instead and leaves timing as "in the morning and in the evening".
+# Same instruction — but timing compared as changed and blocked it.
+_MEAL_RE = re.compile(
+    r"\b(after|before|with|without)\s+(?:food|meals?|eating)\b|\bon an empty stomach\b", re.IGNORECASE
+)
+
+
+def meal_phrases(text: object) -> set[str]:
+    """The meal relations in a phrase, normalized: {"after", "empty stomach"}."""
+    if not isinstance(text, str):
+        return set()
+    return {(m.group(1) or "empty stomach").lower() for m in _MEAL_RE.finditer(text)}
+
+
+def _strip_meals(text: str) -> str:
+    return _MEAL_RE.sub(" ", text)
+
+
+def _timing_moved_meal_to_with_food(source: str, generated: str, original_facts: dict, generated_facts: dict) -> bool:
+    """Timing differs only because its meal phrase now lives in with_food:
+    the source timing has one, the generated timing has none, with_food was
+    stated and agrees on both sides, and the rest of the timing is preserved.
+    Which meal relation (after vs before) is then checked directly in the
+    generated text by scan_for_preserved_meal_timing, never assumed."""
+    if not meal_phrases(source) or meal_phrases(generated):
+        return False
+    with_food = original_facts.get("with_food")
+    if with_food is None or generated_facts.get("with_food") != with_food:
+        return False
+    return _timing_preserved(_strip_meals(source), generated)
+
+
 def _equal(a: object, b: object) -> bool:
     if isinstance(a, bool) or isinstance(b, bool):
         return a == b
@@ -170,13 +205,27 @@ def compare_facts(
         if source_missing and not generated_missing:
             differences.append(FactDifference(field_name, source_value, generated_value, "ADDED"))
         elif not source_missing and generated_missing:
+            # The mirror of _timing_moved_meal_to_with_food: re-extraction kept
+            # the meal phrase in timing and left with_food empty. Not lost if
+            # the generated timing still says every meal relation the source
+            # timing did (and scan_for_preserved_meal_timing checks the text).
+            source_meals = meal_phrases(original_facts.get("timing"))
+            if (
+                field_name == "with_food"
+                and source_meals
+                and source_meals <= meal_phrases(generated_facts.get("timing"))
+            ):
+                continue
             differences.append(FactDifference(field_name, source_value, generated_value, "MISSING"))
         elif not _equal(source_value, generated_value):
             if (
                 field_name == "timing"
                 and isinstance(source_value, str)
                 and isinstance(generated_value, str)
-                and _timing_preserved(source_value, generated_value)
+                and (
+                    _timing_preserved(source_value, generated_value)
+                    or _timing_moved_meal_to_with_food(source_value, generated_value, original_facts, generated_facts)
+                )
             ):
                 continue
             differences.append(FactDifference(field_name, source_value, generated_value, "CHANGED"))
@@ -224,6 +273,16 @@ def _warning_preserved(warning: str, generated_text: str) -> bool:
     return all(generated_numbers[n] >= count for n, count in warning_numbers.items())
 
 
+def scan_for_preserved_meal_timing(original_facts: dict, generated_text: str) -> list[str]:
+    """Layer A (meals): every meal relation in the source timing ("after
+    food", "before meals", "on an empty stomach") must still be said, the
+    same way, in the generated text — so "after food" becoming "before food"
+    is caught directly, whatever re-extraction did with the field. Returns
+    the relations that went missing."""
+    said = meal_phrases(generated_text)
+    return sorted(meal_phrases(original_facts.get("timing")) - said)
+
+
 def scan_for_preserved_warnings(original_facts: dict, generated_text: str) -> list[str]:
     """Layer A (warnings): every explicit source warning's words/numbers must
     still appear (see _warning_preserved) in the generated text. A direct
@@ -250,6 +309,11 @@ def validate_fact_preservation(
     ):
         differences.append(FactDifference("dose_value", original_normalized_facts.get("dose_value"), None, "MISSING"))
         messages.append("The medication dose number could not be found in the generated text.")
+
+    for relation in scan_for_preserved_meal_timing(original_normalized_facts, generated_text):
+        differences.append(FactDifference("timing", relation, None, "MISSING"))
+        label = "on an empty stomach" if relation == "empty stomach" else f"{relation} food"
+        messages.append(f"The generated text no longer says to take it {label!r}.")
 
     for warning in scan_for_preserved_warnings(original_normalized_facts, generated_text):
         differences.append(FactDifference("warnings", warning, None, "MISSING"))

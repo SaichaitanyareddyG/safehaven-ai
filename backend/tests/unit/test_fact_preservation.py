@@ -395,3 +395,66 @@ def test_validate_fails_when_warning_dropped_even_if_structured_diff_matches():
     )
     assert result.passed is False
     assert any(d.field == "warnings" for d in result.differences)
+
+
+# ---------------------------------------------------------------------------
+# Meal relation moved from timing to with_food (real false block, 2026-10-03)
+# ---------------------------------------------------------------------------
+
+
+def _dolo(**overrides) -> dict:
+    return _medication_facts(
+        medication_name="DOLO", dose_value=250.0, frequency="twice daily", timing="morning and evening after food",
+        with_food=True, **overrides,
+    )
+
+
+def test_meal_phrase_moved_into_with_food_is_not_a_changed_timing():
+    source = _dolo()
+    regenerated = {**source, "timing": "in the morning and in the evening"}
+    assert compare_facts(InstructionType.MEDICATION, source, regenerated) == []
+    result = validate_fact_preservation(
+        InstructionType.MEDICATION, source,
+        "Take DOLO 250 mg by mouth twice daily in the morning and in the evening after food for 3 days.",
+        InstructionType.MEDICATION, regenerated, [],
+    )
+    assert result.passed, result.messages
+
+
+def test_after_food_becoming_before_food_is_still_caught():
+    source = _dolo()
+    regenerated = {**source, "timing": "in the morning and in the evening"}
+    result = validate_fact_preservation(
+        InstructionType.MEDICATION, source,
+        "Take DOLO 250 mg by mouth twice daily in the morning and in the evening before food.",
+        InstructionType.MEDICATION, regenerated, [],
+    )
+    assert not result.passed
+    assert any(d.field == "timing" and d.type == "MISSING" for d in result.differences)
+
+
+def test_meal_move_needs_with_food_to_agree():
+    source = _dolo()
+    regenerated = {**source, "timing": "in the morning and in the evening", "with_food": None}
+    diffs = compare_facts(InstructionType.MEDICATION, source, regenerated)
+    assert any(d.field == "timing" and d.type == "CHANGED" for d in diffs)
+
+
+def test_dropped_time_of_day_is_still_caught_even_with_meal_move():
+    source = _dolo()
+    regenerated = {**source, "timing": "in the morning"}
+    diffs = compare_facts(InstructionType.MEDICATION, source, regenerated)
+    assert any(d.field == "timing" and d.type == "CHANGED" for d in diffs)
+
+
+def test_meal_phrase_kept_in_timing_with_with_food_empty_is_not_missing():
+    source = _dolo()
+    regenerated = {**source, "timing": "in the morning and evening after food", "with_food": None}
+    assert compare_facts(InstructionType.MEDICATION, source, regenerated) == []
+
+
+def test_with_food_missing_without_the_meal_phrase_is_still_caught():
+    source = _dolo()
+    regenerated = {**source, "timing": "in the morning and evening", "with_food": None}
+    diffs = compare_facts(InstructionType.MEDICATION, source, regenerated)
+    assert any(d.field == "with_food" and d.type == "MISSING" for d in diffs)

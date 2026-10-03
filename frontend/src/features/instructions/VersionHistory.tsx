@@ -15,7 +15,9 @@ export function VersionHistory({ versions }: { versions: InstructionVersionRead[
     <div>
       <h3 className="mb-3 text-sm font-semibold tracking-tight">Version history</h3>
       <Tabs defaultValue={String(sorted[0].version_number)}>
-        <TabsList>
+        {/* Scrolls sideways on a phone instead of widening the whole page. */}
+        <div className="-mx-1 overflow-x-auto px-1 pb-1">
+        <TabsList className="w-max">
           {sorted.map((version) => (
             <TabsTrigger key={version.id} value={String(version.version_number)}>
               v{version.version_number}
@@ -25,6 +27,7 @@ export function VersionHistory({ versions }: { versions: InstructionVersionRead[
             </TabsTrigger>
           ))}
         </TabsList>
+        </div>
         {sorted.map((version) => (
           <TabsContent key={version.id} value={String(version.version_number)} className="space-y-4">
             <div className="rounded-lg border bg-background p-4 text-sm">

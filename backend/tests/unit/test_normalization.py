@@ -238,3 +238,29 @@ def test_injected_route_adverbs_normalize_to_the_product_form():
     ]:
         facts, _ = normalize_facts(InstructionType.MEDICATION, {"route": spoken})
         assert facts["route"] == expected, f"{spoken} should normalize to {expected}"
+
+
+def _frequency(value):
+    facts, _ = normalize_facts(InstructionType.MEDICATION, {"frequency": value})
+    return facts["frequency"]
+
+
+def test_times_of_day_frequency_wordings_compare_equal():
+    # Real case: the patient text said "in the morning and in the evening" for
+    # "morning and evening", and was blocked as a changed frequency.
+    same = {
+        _frequency("morning and evening"),
+        _frequency("in the morning and in the evening"),
+        _frequency("every morning and evening"),
+        _frequency("Evening and morning"),
+    }
+    assert same == {"morning and evening"}
+    assert _frequency("morning, noon and night") == "morning, noon and night"
+
+
+def test_times_of_day_frequency_still_catches_real_changes():
+    assert _frequency("morning and night") != _frequency("morning and evening")
+    assert _frequency("morning, afternoon and evening") != _frequency("morning and evening")
+    # Not a plain list of times: left exactly as written.
+    assert _frequency("twice daily, morning and evening") == "twice daily, morning and evening"
+    assert _frequency("every 6 hours") == "every 6 hours"

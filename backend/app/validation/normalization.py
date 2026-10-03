@@ -95,6 +95,39 @@ class NormalizationChange:
     normalized_value: object
 
 
+# A frequency given as two or more times of day ("morning and evening") is
+# worded freely by the model when it rewrites or back-translates: "in the
+# morning and in the evening", "every morning and evening", "morning & night".
+# Same doses at the same times, but exact matching called it a changed
+# frequency and blocked a faithful patient text. Only the filler words below
+# are dropped; every time-of-day word must survive, in the same set, or the
+# value is left as it was (so morning -> night, or a dropped time, still
+# compares as different).
+_DAY_ORDER = ("morning", "noon", "afternoon", "evening", "night", "bedtime")
+_TIMES_FILLER = {"in", "the", "at", "and", "every", "each", "daily", "a", "day", "then", "also"}
+
+
+def _canonical_times_of_day(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    words = re.findall(r"[a-z]+", value.lower())
+    times = [w for w in words if w not in _TIMES_FILLER]
+    if len(times) < 2 or len(set(times)) != len(times) or any(w not in _DAY_ORDER for w in times):
+        return None
+    ordered = sorted(times, key=_DAY_ORDER.index)
+    return ", ".join(ordered[:-1]) + " and " + ordered[-1]
+
+
+def _normalize_times_of_day_frequency(facts: dict) -> tuple[dict, NormalizationChange | None]:
+    value = facts.get("frequency")
+    canonical = _canonical_times_of_day(value)
+    if canonical is None or canonical == value:
+        return facts, None
+    updated = dict(facts)
+    updated["frequency"] = canonical
+    return updated, NormalizationChange("frequency", value, canonical)
+
+
 def _split_once_daily_from_timing(facts: dict) -> tuple[dict, NormalizationChange | None]:
     frequency = facts.get("frequency")
     timing = facts.get("timing")
@@ -164,6 +197,10 @@ def _normalize_medication(facts: dict) -> tuple[dict, list[NormalizationChange]]
         changes.append(change)
 
     facts, change = _normalize_lookup(facts, "frequency", _FREQUENCY_MAP)
+    if change:
+        changes.append(change)
+
+    facts, change = _normalize_times_of_day_frequency(facts)
     if change:
         changes.append(change)
 

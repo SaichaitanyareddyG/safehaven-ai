@@ -2,7 +2,7 @@ import { AlertTriangle, BookOpen, ShieldCheck } from 'lucide-react'
 
 import { ValidationStatusBadge } from '@/components/StatusBadge'
 import { cn } from '@/lib/utils'
-import { formatFactValue } from '@/lib/instruction-field-labels'
+import { fieldLabel, formatFactValue } from '@/lib/instruction-field-labels'
 import type { PatientOutputRead } from '@/types/instructions'
 
 // AMA/CDC guidance targets roughly a 5th-6th grade reading level for patient
@@ -73,8 +73,8 @@ export function PatientOutputPanel({ output }: { output: PatientOutputRead }) {
                 <tbody>
                   {output.validation_diff.map((diff, i) => (
                     <tr key={i} className="text-red-800 dark:text-red-300">
-                      <td className="py-1 pr-3 font-medium">{diff.field}</td>
-                      <td className="py-1 pr-3">{diff.type}</td>
+                      <td className="py-1 pr-3 font-medium">{fieldLabel(diff.field)}</td>
+                      <td className="py-1 pr-3">{diff.type.charAt(0) + diff.type.slice(1).toLowerCase()}</td>
                       <td className="py-1 pr-3">{formatFactValue(diff.source)}</td>
                       <td className="py-1">{formatFactValue(diff.generated)}</td>
                     </tr>

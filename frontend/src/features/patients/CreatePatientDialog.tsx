@@ -87,7 +87,7 @@ export function CreatePatientDialog() {
           <DialogDescription>A patient code (e.g. P1001) will be assigned automatically.</DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={handleSubmit((values) => mutation.mutate(values))} noValidate>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="first_name">First name</Label>
               <Input id="first_name" {...register('first_name')} />
@@ -99,10 +99,16 @@ export function CreatePatientDialog() {
               {errors.last_name && <p className="text-sm text-destructive">{errors.last_name.message}</p>}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="date_of_birth">Date of birth</Label>
-              <Input id="date_of_birth" type="date" {...register('date_of_birth')} />
+              {/* iOS gives a date field its own size and look; keep it the same box as the others. */}
+              <Input
+                id="date_of_birth"
+                type="date"
+                className="block min-w-0 appearance-none text-left [&::-webkit-date-and-time-value]:text-left"
+                {...register('date_of_birth')}
+              />
               {errors.date_of_birth && (
                 <p className="text-sm text-destructive">{errors.date_of_birth.message}</p>
               )}

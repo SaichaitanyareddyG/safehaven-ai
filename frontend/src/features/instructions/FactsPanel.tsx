@@ -1,8 +1,15 @@
-import { AlertTriangle, Check } from 'lucide-react'
+import { AlertTriangle, Check, Info } from 'lucide-react'
 
 import { CompletenessBadge } from '@/components/StatusBadge'
 import { cn } from '@/lib/utils'
-import { FIELD_LABELS_BY_TYPE, INSTRUCTION_TYPE_LABEL, formatFactValue } from '@/lib/instruction-field-labels'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  FIELD_HELP,
+  FIELD_LABELS_BY_TYPE,
+  INSTRUCTION_TYPE_LABEL,
+  fieldLabel,
+  formatFactValue,
+} from '@/lib/instruction-field-labels'
 import type { StructuredExtractionRead } from '@/types/instructions'
 
 export function FactsPanel({ extraction }: { extraction: StructuredExtractionRead }) {
@@ -57,8 +64,18 @@ export function FactsPanel({ extraction }: { extraction: StructuredExtractionRea
                 data-testid="fact-value"
               >
                 {!isMissing && !isAmbiguous && <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />}
-                {(requiresClarification || isAmbiguous) && <AlertTriangle className="h-3.5 w-3.5" />}
-                {formatFactValue(value)}
+                {(requiresClarification || isAmbiguous) && FIELD_HELP[key] ? (
+                  <FieldHelp field={key} label={label}>
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    {formatFactValue(value)}
+                    <Info className="h-3.5 w-3.5 opacity-70" />
+                  </FieldHelp>
+                ) : (
+                  <>
+                    {(requiresClarification || isAmbiguous) && <AlertTriangle className="h-3.5 w-3.5" />}
+                    {formatFactValue(value)}
+                  </>
+                )}
               </dd>
             </div>
           )
@@ -76,8 +93,41 @@ export function FactsPanel({ extraction }: { extraction: StructuredExtractionRea
               <li key={i}>{message}</li>
             ))}
           </ul>
+          {/* What each missing word means, and how to add it — not everyone knows what "route" is. */}
+          <div className="mt-3 space-y-2 border-t border-amber-200 pt-3 dark:border-amber-900">
+            {extraction.clarification_required_fields
+              .filter((key) => FIELD_HELP[key])
+              .map((key) => (
+                <p key={key} className="text-sm text-amber-900 dark:text-amber-200">
+                  <span className="font-semibold">{fieldLabel(key)}:</span> {FIELD_HELP[key].meaning}{' '}
+                  <span className="italic">Add it, {FIELD_HELP[key].add}</span>
+                </p>
+              ))}
+          </div>
         </div>
       )}
     </div>
+  )
+}
+
+/** Tap a field that needs clarifying to see what it means and how to add it. */
+function FieldHelp({ field, label, children }: { field: string; label: string; children: React.ReactNode }) {
+  const help = FIELD_HELP[field]
+  return (
+    <Popover>
+      <PopoverTrigger
+        className="-my-1.5 -mr-2 flex min-h-9 items-center gap-1.5 rounded-md px-2 underline decoration-dotted underline-offset-4 hover:bg-amber-50 focus-visible:ring-3 focus-visible:ring-amber-400/50 focus-visible:outline-none dark:hover:bg-amber-950"
+        aria-label={`${label}: not specified. What does this mean?`}
+      >
+        {children}
+      </PopoverTrigger>
+      <PopoverContent align="end" className="space-y-2">
+        <p className="font-semibold">{label}</p>
+        <p className="text-muted-foreground">{help.meaning}</p>
+        <p>
+          <span className="font-medium">Add it to the instruction</span>, {help.add}
+        </p>
+      </PopoverContent>
+    </Popover>
   )
 }
