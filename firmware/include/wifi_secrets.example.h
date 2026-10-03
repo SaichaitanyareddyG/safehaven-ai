@@ -21,3 +21,7 @@
 // https://<address>:8443 with backend/scripts/dev_tls.sh (writes backend_ca.h).
 // Plain http:// works only in the bench build (env:m5sticks3-bench).
 #define SH_BACKEND_URL ""
+
+// Hosted backend (Render / Tailscale Funnel): trust the public roots instead
+// of the development CA in backend_ca.h.
+// #define SH_BACKEND_USE_PUBLIC_ROOTS

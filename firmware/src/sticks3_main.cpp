@@ -60,11 +60,15 @@
 // The CA that signed the backend's certificate, as SH_BACKEND_CA (a PEM
 // string). Generated for the dev backend by backend/scripts/dev_tls.sh;
 // git-ignored because it is specific to one machine.
-#if __has_include("backend_ca.h")
+// A hosted backend (Render, Tailscale Funnel...) instead: define
+// SH_BACKEND_USE_PUBLIC_ROOTS in wifi_secrets.h and the band trusts the public
+// roots in public_roots.h (Let's Encrypt and Google Trust Services).
+#if __has_include("backend_ca.h") && !defined(SH_BACKEND_USE_PUBLIC_ROOTS)
 #include "backend_ca.h"
 #endif
 #ifndef SH_BACKEND_CA
-#define SH_BACKEND_CA nullptr
+#include "public_roots.h"
+#define SH_BACKEND_CA SH_PUBLIC_ROOTS_PEM
 #endif
 #ifndef SH_BACKEND_URL
 #define SH_BACKEND_URL ""

@@ -1,0 +1,31 @@
+# Render Blueprint: the SafeHaven backend on Render's free plan.
+# Render dashboard -> New -> Blueprint -> pick this repository.
+# Database: Supabase (free); dashboard: Cloudflare Pages. See deploy/FREE_CLOUD.md.
+# DEMO DATA ONLY — nothing on these free tiers is HIPAA covered.
+services:
+  - type: web
+    name: safehaven-backend
+    runtime: docker
+    plan: free
+    region: singapore          # closest to the team in India; demo data only
+    dockerfilePath: ./deploy/backend.Dockerfile
+    dockerContext: .
+    healthCheckPath: /docs
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL        # Supabase -> Connect -> Session pooler (add ?sslmode=require)
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS        # the Cloudflare Pages address, e.g. https://safehaven.pages.dev
+        sync: false
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: LLM_PROVIDER
+        value: openai
+      - key: OPENAI_MODEL
+        value: gpt-5-mini
+      - key: BAND_TALK_PROVIDER
+        value: openai
+      - key: HOSPITAL_TIMEZONE
+        value: Asia/Kolkata

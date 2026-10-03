@@ -11,4 +11,5 @@ COPY backend/scripts ./scripts
 EXPOSE 8000
 # Migrate, then serve. --proxy-headers: behind Tailscale Funnel / a proxy the
 # client address and https scheme come from forwarded headers.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]
+# PORT: set by hosts like Render; 8000 otherwise (docker-compose).
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]

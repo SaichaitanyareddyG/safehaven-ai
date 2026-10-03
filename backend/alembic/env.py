@@ -25,7 +25,9 @@ if config.config_file_name is not None:
 # at TEST_DATABASE_URL) must not be overridden here.
 configured_url = config.get_main_option("sqlalchemy.url")
 if not configured_url or configured_url.startswith("driver://"):
-    config.set_main_option("sqlalchemy.url", get_settings().database_url)
+    # "%" doubled: alembic's config is a ConfigParser, and a URL-encoded
+    # password (e.g. a hosted database's "%40") would be read as interpolation.
+    config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 
