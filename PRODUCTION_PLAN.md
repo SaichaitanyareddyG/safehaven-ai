@@ -63,7 +63,7 @@ Found while preparing this plan — each is a small, contained change.
 
 | # | Change | Why |
 |---|---|---|
-| C1 | **Offline sweep on a schedule** (EventBridge every minute → one-off task) | Today "band offline" alerts are only checked when a dashboard polls; with no dashboard open, a dead band raises nothing |
+| C1 | **Offline sweep on a schedule** (EventBridge every minute → one-off task) | ✅ for the prototype: an in-process job sweeps every 30 s (`wearables/sweeper.py`). With two backend tasks it moves to one scheduled job |
 | C2 | **Rate limits in a shared store** (Redis/ElastiCache, or at the ALB/WAF) | The limiter counts per process; with 2 tasks each allows the full limit |
 | C3 | **Talk conversation memory in a shared store** (Redis with a 3-minute TTL) | It lives in one process today; a follow-up question landing on the other task would lose the context |
 | C4 | **Roles** (nurse, charge nurse, pharmacist, prescriber, admin) | Single "clinician" role today (gap analysis item 13) |

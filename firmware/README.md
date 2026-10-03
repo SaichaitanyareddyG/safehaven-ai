@@ -98,6 +98,18 @@ The screen sleeps after 15 s (the LCD backlight is the main UI power cost);
 setup, alerts and charging keep it on. Detection never pauses for the screen
 or Wi-Fi, and the **microphone is disabled** at boot — nothing listens.
 
+### On the charger
+
+With USB power present (read every second; the charger's status pin
+flickers on this board, the USB voltage does not) the band is in **charging
+mode**: no fall, check, movement, "not worn" or low-battery events, no Talk,
+screen dark unless a button is pressed; the same for 30 s after unplugging
+while it is put back on. It keeps checking in with `charging: true`, and
+the dashboard shows **"Charging — not monitoring"**. The charging screen
+shows the time to full, learned from how fast the level rises (the PMIC
+reports no current), after the first few minutes. Bench `inject` still
+works on USB.
+
 ### Talk to SafeHaven (bench build only)
 
 A voice assistant on the band, built only into `env:m5sticks3-bench`
