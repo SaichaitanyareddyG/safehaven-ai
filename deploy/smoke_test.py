@@ -21,10 +21,12 @@ import urllib.request
 API, WEB = sys.argv[1].rstrip("/"), sys.argv[2].rstrip("/")
 STAMP = str(int(time.time()))
 FAILED = []
+# Cloudflare answers Python's default "Python-urllib" user agent with 403.
+UA = "Mozilla/5.0 (compatible; SafeHaven-smoke-test/1.0)"
 
 
 def call(method, path, body=None, token=None, raw=False):
-    req = urllib.request.Request(API + path, method=method)
+    req = urllib.request.Request(API + path, method=method, headers={"User-Agent": UA})
     if body is not None:
         req.data = json.dumps(body).encode()
         req.add_header("Content-Type", "application/json")
@@ -49,7 +51,7 @@ print(f"SafeHaven smoke test: api {API}, dashboard {WEB}")
 # Dashboard is served, and a deep link falls back to the app.
 for path in ("/", "/patients"):
     try:
-        with urllib.request.urlopen(WEB + path, timeout=15) as r:
+        with urllib.request.urlopen(urllib.request.Request(WEB + path, headers={"User-Agent": UA}), timeout=15) as r:
             check(r.status == 200 and b'id="root"' in r.read(), f"dashboard serves {path}")
     except Exception as e:  # noqa: BLE001
         check(False, f"dashboard serves {path}", str(e))
@@ -91,7 +93,7 @@ code, audio, headers = call("POST", "/device-api/talk?format=pcm", {"text": "Wha
 reply = urllib.request.unquote(headers.get("X-Talk-Reply", headers.get("x-talk-reply", "")))
 check(code == 200 and len(audio) > 8000 and reply, "voice assistant answers with speech",
       f"HTTP {code}, {len(audio) if isinstance(audio, bytes) else 0} bytes")
-print(f"        reply in {time.time() - t0:.1f} s: {reply!r}")
+print(f"        reply in {time.time() - t0:.1f} s (server: {headers.get('X-Talk-Timings', headers.get('x-talk-timings', '?'))}): {reply!r}")
 
 # Charging is shown to staff.
 call("POST", "/device-api/heartbeat", {"battery_percent": 60, "firmware_version": "smoke", "charging": True}, band)

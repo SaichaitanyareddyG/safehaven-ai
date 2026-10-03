@@ -1,0 +1,10 @@
+# The nurse dashboard as static files on Cloudflare (Workers static assets,
+# free plan). Build first with the backend address baked in:
+#   VITE_API_BASE_URL=https://<backend> npm run build && npx wrangler deploy
+name = "safehaven-dashboard"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "./dist"
+# Unknown paths are React routes: serve index.html.
+not_found_handling = "single-page-application"

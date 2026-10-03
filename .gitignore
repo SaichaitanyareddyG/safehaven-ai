@@ -30,3 +30,6 @@ firmware/include/backend_ca.h
 deploy/.env
 deploy/.env.*
 !deploy/.env.example
+
+# Cloudflare wrangler working files
+.wrangler/

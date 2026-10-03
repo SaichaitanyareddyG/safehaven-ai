@@ -1,8 +1,15 @@
 # SafeHaven on free cloud services
 
+**Live since 2026-10-03:** backend https://safehaven-backend-kl64.onrender.com
+(Render, Singapore), dashboard https://safehaven-dashboard.safehaven-ai.workers.dev
+(Cloudflare), database on Supabase (Sydney). Smoke test PASS on every step;
+voice assistant 6.7 s for a typed question (server 5.5 s, most of it the
+OpenAI voice); a silent band raised "band offline" 151 s after its last
+check-in with no dashboard open.
+
 ```
 Band ──HTTPS──► Render (backend, free)  ──► Supabase (PostgreSQL, free)
-Nurse ─HTTPS──► Cloudflare Pages (dashboard, free)    └──► OpenAI APIs (AI)
+Nurse ─HTTPS──► Cloudflare (dashboard, free)    └──► OpenAI APIs (AI)
 ```
 
 **$0** apart from OpenAI usage (cents a day while testing). **Demo data
@@ -34,22 +41,24 @@ time.
    `https://safehaven-backend.onrender.com`. Open `<address>/docs` — the API
    page means it is up.
 
-## 3. Cloudflare Pages — the dashboard (10 min)
+## 3. Cloudflare — the dashboard (5 min)
 
-1. dash.cloudflare.com → sign in → **Workers & Pages → Create → Pages →
-   Connect to Git** → choose `safehaven-ai`.
-2. Build settings:
-   | Setting | Value |
-   |---|---|
-   | Framework preset | None |
-   | Root directory | `frontend` |
-   | Build command | `npm ci --legacy-peer-deps && npm run build` |
-   | Build output directory | `dist` |
-   | Environment variable `VITE_API_BASE_URL` | the Render address from step 2 |
-   | Environment variable `NODE_VERSION` | `22` |
-3. **Save and deploy**. The address is like `https://safehaven-ai.pages.dev`.
-4. Back in **Render → safehaven-backend → Environment**, set `CORS_ORIGINS` to
-   that Pages address (no trailing slash) and save; Render restarts it.
+Cloudflare Pages is now part of Workers; the dashboard is published as
+Workers static assets (free) from `frontend/wrangler.toml`:
+
+```bash
+npx wrangler login                                   # once; approve in the browser
+cd frontend
+VITE_API_BASE_URL=https://<render-address> npm run build
+npx wrangler deploy                                  # uploads only frontend/dist
+```
+
+The address is printed, e.g. `https://safehaven-dashboard.<account>.workers.dev`.
+Run `wrangler deploy` from `frontend/` only: started at the repository root,
+wrangler offered to upload the whole repo (24,000+ files, over the free limit).
+
+Then set the backend's `CORS_ORIGINS` to that address (Render → Environment)
+and redeploy the backend.
 
 ## 4. Check it
 
@@ -59,7 +68,8 @@ From the repository on any computer:
 python3 deploy/smoke_test.py https://safehaven-backend.onrender.com https://safehaven-ai.pages.dev
 ```
 
-Every line should say PASS (it creates a test patient "Smoke Test" and a test
+Every line should say PASS (the script sends a browser-like user agent:
+Cloudflare answers Python's default one with 403) (it creates a test patient "Smoke Test" and a test
 band, which then goes silent and raises "band offline" — resolve it on the
 dashboard). Then open the dashboard, **Sign up** with your own account.
 
