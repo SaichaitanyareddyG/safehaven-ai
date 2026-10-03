@@ -1,0 +1,7 @@
+# Serve the dashboard; any unknown path is a React route -> index.html.
+:8080 {
+	root * /srv
+	encode gzip
+	try_files {path} /index.html
+	file_server
+}
