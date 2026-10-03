@@ -8,7 +8,7 @@ services:
     runtime: docker
     plan: free
     region: singapore          # closest to the team in India; demo data only
-    dockerfilePath: ./deploy/backend.Dockerfile
+    dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /docs
     autoDeploy: true

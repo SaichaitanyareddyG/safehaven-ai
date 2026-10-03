@@ -1,4 +1,5 @@
-# SafeHaven backend: FastAPI + database migrations. Built from the repo root.
+# SafeHaven backend: FastAPI + database migrations (repo root = build context;
+# at the root so hosts that expect ./Dockerfile, e.g. the Render CLI, find it).
 FROM python:3.13-slim
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
