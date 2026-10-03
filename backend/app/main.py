@@ -1,3 +1,6 @@
+import asyncio
+import contextlib
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
@@ -19,13 +22,27 @@ from app.instructions.router import router as instructions_router
 from app.medication_verification.router import router as medication_verification_router
 from app.wearables.device_router import router as wearable_device_api_router
 from app.wearables.router import router as wearables_router
+from app.wearables.sweeper import run_offline_sweeper
 from app.patient_access.router import router as patient_access_router
 from app.patient_chat.router import router as patient_chat_router
 from app.patients.router import router as patients_router
 
 settings = get_settings()
 
-app = FastAPI(title="SafeHaven AI", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # A silent band must alert whether or not a dashboard is open.
+    task = None
+    if settings.offline_sweep_interval_seconds > 0:
+        task = asyncio.create_task(run_offline_sweeper(settings.offline_sweep_interval_seconds))
+    yield
+    if task is not None:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+app = FastAPI(title="SafeHaven AI", version="0.1.0", lifespan=lifespan)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

@@ -17,6 +17,9 @@ from pathlib import Path
 #     the utc_hospital fixture in tests/unit/test_medication_verification_engine.py).
 os.environ["LLM_PROVIDER"] = "mock"
 os.environ["HOSPITAL_TIMEZONE"] = "UTC"
+# The background offline sweep uses its own session on the configured
+# database, not the test transaction: off for the suite (tested directly).
+os.environ["OFFLINE_SWEEP_INTERVAL_SECONDS"] = "0"
 
 import pytest
 from alembic import command

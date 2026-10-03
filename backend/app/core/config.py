@@ -117,6 +117,9 @@ class Settings(BaseSettings):
     # scheduler in this codebase and Module 3 should not be the first thing
     # to introduce one.
     device_offline_after_seconds: int = 120
+    # How often the background job looks for silent bands (main.py lifespan).
+    # 0 turns it off — the test suite does, so it never touches a real DB.
+    offline_sweep_interval_seconds: int = 30
     # Edge-triggered via the operational dedupe, so a battery sitting at 19%
     # raises one alert rather than one per heartbeat.
     device_low_battery_percent: int = 20

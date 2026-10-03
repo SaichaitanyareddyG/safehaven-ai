@@ -1120,19 +1120,12 @@ def device_is_offline(device: WearableDevice, assignment: DeviceAssignment | Non
 def sweep_offline_devices(db: Session) -> list[SafetyAlert]:
     """Raise DEVICE_OFFLINE for assigned devices that have gone silent.
 
-    ⚠️ A write on a read path, which is unusual enough to justify.
-
-    There is no scheduler anywhere in this codebase — no Celery, no APScheduler,
-    no Redis — and main.py has no lifespan hook. Rather than make Module 3 the
-    first feature to introduce a background worker, offline status is derived
-    on read and THE DASHBOARD POLL IS THE SWEEP: the nurse queue refreshes every
-    few seconds, and each refresh looks for newly-silent devices.
-
-    The trade-off, stated plainly: if nobody has the dashboard open, the
-    DEVICE_OFFLINE row is created late. `last_seen_at` still records the true
-    last contact, so no information is lost — only the alert's created_at is
-    late. For a prototype that is a fair exchange for adding zero
-    infrastructure; a lifespan asyncio sweep is the upgrade if it matters.
+    Runs in two places: every `offline_sweep_interval_seconds` from the
+    app's lifespan (wearables/sweeper.py), so a silent band alerts even when
+    no dashboard is open — before that job existed it did not — and on the
+    dashboard's own reads, so the fleet view and the alert queue never
+    disagree. Both are safe together: the dedupe below allows one open
+    DEVICE_OFFLINE alert per patient.
 
     One indexed query plus at most one insert per newly-offline device, so it
     stays cheap enough to run on every poll.
