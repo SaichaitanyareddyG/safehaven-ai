@@ -430,11 +430,9 @@ def test_approved_instruction_cannot_be_clarified(client):
 
 
 def test_patient_output_attempt_history_is_immutable(client, db_session):
-    """No endpoint can trigger a second attempt on the same version through
-    normal flow today (status leaves PROCESSING after any generate call) — this
-    directly exercises generate_patient_output() twice via the service layer,
-    resetting status between calls the way a future retry mechanism would,
-    proving attempt_number increments and the first attempt's row is untouched."""
+    """Every attempt is its own row: Generate (which retries once by itself)
+    and then Try again add attempts 1-2 and 3-4, and the first attempt's row
+    is never touched."""
     headers = _register_and_login(client)
     patient = _create_active_patient(client, headers)
     analyzed = _create_and_analyze(
@@ -445,32 +443,86 @@ def test_patient_output_attempt_history_is_immutable(client, db_session):
 
     first = instructions_service.generate_patient_output(db_session, instruction_id, actor_id)
     assert first.status == InstructionStatus.NEEDS_REVIEW
-
-    first_output = (
+    outputs = (
         db_session.query(PatientOutput)
         .filter(PatientOutput.instruction_version_id == first.current_version_id)
-        .one()
+        .order_by(PatientOutput.attempt_number)
+        .all()
     )
-    assert first_output.attempt_number == 1
-    first_output_id = first_output.id
-    first_text = first_output.patient_text_en
+    assert [o.attempt_number for o in outputs] == [1, 2]
+    first_output_id, first_text = outputs[0].id, outputs[0].patient_text_en
 
-    # Reset back to PROCESSING the way analyze() would leave it, to simulate a
-    # retry (no such endpoint exists yet — see report).
-    transition(first, InstructionStatus.PROCESSING)
-    db_session.commit()
-
-    second = instructions_service.generate_patient_output(db_session, instruction_id, actor_id)
-
+    second = instructions_service.retry_patient_output(db_session, instruction_id, actor_id)
+    assert second.status == InstructionStatus.NEEDS_REVIEW
     outputs = (
         db_session.query(PatientOutput)
         .filter(PatientOutput.instruction_version_id == second.current_version_id)
         .order_by(PatientOutput.attempt_number)
         .all()
     )
-    assert [o.attempt_number for o in outputs] == [1, 2]
+    assert [o.attempt_number for o in outputs] == [1, 2, 3, 4]
     unchanged_first = next(o for o in outputs if o.id == first_output_id)
     assert unchanged_first.patient_text_en == first_text  # first attempt untouched
+
+
+def test_a_blocked_first_attempt_is_retried_automatically(client, db_session, monkeypatch):
+    """The AI's wording failing the safety check once should not reach the
+    nurse: the second automatic attempt passes and the instruction is ready."""
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    analyzed = _create_and_analyze(
+        client, headers, patient["id"], _with_fixture(MEDICATION_TEXT, "GENERATION_CHANGED_DOSE")
+    )
+    real_run_generation = instructions_service.run_generation
+    calls = []
+
+    def flaky(provider, original_text, facts, instruction_type):
+        calls.append(1)
+        text = original_text if len(calls) == 1 else original_text.split(" __FIXTURE__:")[0]
+        return real_run_generation(provider, text, facts, instruction_type)
+
+    monkeypatch.setattr(instructions_service, "run_generation", flaky)
+    body = _generate(client, headers, analyzed["id"]).json()
+    assert body["status"] == "READY_FOR_APPROVAL"
+    assert len(calls) == 2
+    version_id = uuid.UUID(body["current_version"]["id"])
+    statuses = [
+        o.validation_status
+        for o in db_session.query(PatientOutput)
+        .filter(PatientOutput.instruction_version_id == version_id)
+        .order_by(PatientOutput.attempt_number)
+    ]
+    assert statuses == [ValidationStatus.FAILED, ValidationStatus.PASSED]
+
+
+def test_try_again_endpoint_only_for_blocked_text(client, db_session):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    blocked = _create_and_analyze(
+        client, headers, patient["id"], _with_fixture(MEDICATION_TEXT, "GENERATION_CHANGED_DOSE")
+    )
+    assert _generate(client, headers, blocked["id"]).json()["status"] == "NEEDS_REVIEW"
+    resp = client.post(f"/instructions/{blocked['id']}/retry-generation", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    # Ready for approval: nothing to retry.
+    fine = _create_and_analyze(client, headers, patient["id"], MEDICATION_TEXT)
+    _generate(client, headers, fine["id"])
+    assert client.post(f"/instructions/{fine['id']}/retry-generation", headers=headers).status_code == 409
+
+
+def test_try_again_stops_after_several_attempts(client, db_session):
+    headers = _register_and_login(client)
+    patient = _create_active_patient(client, headers)
+    blocked = _create_and_analyze(
+        client, headers, patient["id"], _with_fixture(MEDICATION_TEXT, "GENERATION_CHANGED_DOSE")
+    )
+    _generate(client, headers, blocked["id"])  # attempts 1-2
+    assert client.post(f"/instructions/{blocked['id']}/retry-generation", headers=headers).status_code == 200  # 3-4
+    assert client.post(f"/instructions/{blocked['id']}/retry-generation", headers=headers).status_code == 200  # 5-6
+    resp = client.post(f"/instructions/{blocked['id']}/retry-generation", headers=headers)
+    assert resp.status_code == 409
+    assert "clarification" in resp.json()["detail"]
 
 
 def test_patient_output_attempt_number_is_unique_per_version(client, db_session):

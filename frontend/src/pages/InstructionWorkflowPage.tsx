@@ -22,12 +22,14 @@ import {
   GenerateButton,
   MedicationStatusControl,
   RejectDialog,
+  TryAgainButton,
 } from '@/features/instructions/InstructionActions'
 import { PatientOutputPanel } from '@/features/instructions/PatientOutputPanel'
 import { TranslationsPanel } from '@/features/instructions/TranslationsPanel'
 import { VersionHistory } from '@/features/instructions/VersionHistory'
 import { ANALYZE_STEPS, GENERATE_STEPS, TRANSLATE_STEPS } from '@/lib/ai-processing-steps'
 import { ApiError } from '@/lib/api-client'
+import { describeReviewReason } from '@/lib/review-reason'
 import type { Language } from '@/types/patients'
 
 export function InstructionWorkflowPage() {
@@ -177,12 +179,15 @@ export function InstructionWorkflowPage() {
       </div>
 
       {instruction.review_reason && (
-        <Alert className="mb-6 border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950">
-          <AlertTitle className="text-amber-800 dark:text-amber-300">Needs clinician attention</AlertTitle>
-          <AlertDescription className="text-amber-700 dark:text-amber-400">
-            {instruction.review_reason}
-          </AlertDescription>
-        </Alert>
+        <ReviewReasonAlert
+          reason={instruction.review_reason}
+          canTryAgain={
+            instruction.status === 'NEEDS_REVIEW' &&
+            extraction?.completeness_status === 'PASSED' &&
+            latestOutput?.validation_status === 'FAILED'
+          }
+          instructionId={instruction.id}
+        />
       )}
 
       {instruction.status === 'APPROVED' && (
@@ -255,10 +260,22 @@ export function InstructionWorkflowPage() {
         {instruction.status === 'NEEDS_REVIEW' && (
           <Card>
             <CardHeader className="pb-2">
-              <p className="text-sm font-medium">Clinician clarification</p>
+              <p className="text-sm font-medium">
+                {instruction.review_reason && describeReviewReason(instruction.review_reason).aiProblem
+                  ? 'Or reword the instruction'
+                  : 'Clinician clarification'}
+              </p>
             </CardHeader>
             <CardContent>
-              <ClarificationForm instructionId={instruction.id} originalText={version?.raw_text ?? ''} />
+              <ClarificationForm
+                instructionId={instruction.id}
+                originalText={version?.raw_text ?? ''}
+                label={
+                  instruction.review_reason && describeReviewReason(instruction.review_reason).aiProblem
+                    ? 'Only needed if Try again keeps being blocked'
+                    : undefined
+                }
+              />
             </CardContent>
           </Card>
         )}
@@ -288,5 +305,26 @@ export function InstructionWorkflowPage() {
         <VersionHistory versions={instruction.versions} />
       </div>
     </AppLayout>
+  )
+}
+
+function ReviewReasonAlert({
+  reason,
+  canTryAgain,
+  instructionId,
+}: {
+  reason: string
+  canTryAgain: boolean
+  instructionId: string
+}) {
+  const text = describeReviewReason(reason)
+  return (
+    <Alert className="mb-6 border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950">
+      <AlertTitle className="text-amber-800 dark:text-amber-300">{text.title}</AlertTitle>
+      <AlertDescription className="space-y-3 text-amber-700 dark:text-amber-400">
+        <p>{text.body}</p>
+        {canTryAgain && text.aiProblem && <TryAgainButton instructionId={instructionId} />}
+      </AlertDescription>
+    </Alert>
   )
 }

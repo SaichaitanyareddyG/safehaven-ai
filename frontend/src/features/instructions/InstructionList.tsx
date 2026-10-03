@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { listPatientInstructions } from '@/api/instructions'
 import { InstructionStatusBadge } from '@/components/StatusBadge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { shortReviewReason } from '@/lib/review-reason'
 
 export function InstructionList({ patientId }: { patientId: string }) {
   const navigate = useNavigate()
@@ -52,7 +53,7 @@ export function InstructionList({ patientId }: { patientId: string }) {
             <p className="mt-1 text-xs text-muted-foreground">
               Created {formatDistanceToNow(new Date(instruction.created_at), { addSuffix: true })}
               {instruction.review_reason && (
-                <span className="text-amber-700 dark:text-amber-400"> · {instruction.review_reason}</span>
+                <span className="text-amber-700 dark:text-amber-400"> · {shortReviewReason(instruction.review_reason)}</span>
               )}
             </p>
           </div>

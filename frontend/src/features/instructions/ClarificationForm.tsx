@@ -16,7 +16,15 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>
 
-export function ClarificationForm({ instructionId, originalText }: { instructionId: string; originalText: string }) {
+export function ClarificationForm({
+  instructionId,
+  originalText,
+  label = 'Revise the instruction to add the missing information',
+}: {
+  instructionId: string
+  originalText: string
+  label?: string
+}) {
   const queryClient = useQueryClient()
 
   const {
@@ -44,7 +52,7 @@ export function ClarificationForm({ instructionId, originalText }: { instruction
   return (
     <form className="space-y-3" onSubmit={handleSubmit((values) => mutation.mutate(values))} noValidate>
       <div className="space-y-2">
-        <Label htmlFor="clarification">Revise the instruction to add the missing information</Label>
+        <Label htmlFor="clarification">{label}</Label>
         <Textarea id="clarification" rows={4} {...register('text')} data-testid="clarification-textarea" />
         {errors.text && <p className="text-sm text-destructive">{errors.text.message}</p>}
       </div>

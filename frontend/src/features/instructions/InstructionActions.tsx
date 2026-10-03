@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle2, Sparkles, WandSparkles, XCircle } from 'lucide-react'
+import { CheckCircle2, RotateCcw, Sparkles, WandSparkles, XCircle } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
@@ -11,6 +11,7 @@ import {
   approveInstruction,
   generatePatientOutput,
   rejectInstruction,
+  retryPatientOutput,
   updateClinicalStatus,
 } from '@/api/instructions'
 import { AiProcessingOverlay } from '@/components/AiProcessingOverlay'
@@ -82,6 +83,19 @@ export function GenerateButton({ instructionId }: { instructionId: string }) {
         {mutation.isPending ? 'Generating…' : 'Generate Patient-Friendly Version'}
       </Button>
       <AiProcessingOverlay title="Generating Patient-Friendly Version" steps={GENERATE_STEPS} active={mutation.isPending} />
+    </>
+  )
+}
+
+export function TryAgainButton({ instructionId }: { instructionId: string }) {
+  const mutation = useInstructionMutation(instructionId, retryPatientOutput, 'Patient-friendly version written again')
+  return (
+    <>
+      <Button onClick={() => mutation.mutate()} disabled={mutation.isPending} data-testid="try-again-button">
+        <RotateCcw className="h-4 w-4" />
+        {mutation.isPending ? 'Trying again…' : 'Try again'}
+      </Button>
+      <AiProcessingOverlay title="Writing the patient version again" steps={GENERATE_STEPS} active={mutation.isPending} />
     </>
   )
 }

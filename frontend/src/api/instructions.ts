@@ -85,6 +85,11 @@ export function generatePatientOutput(instructionId: string): Promise<CareInstru
   return apiRequest<CareInstructionDetail>(`/instructions/${instructionId}/generate`, { method: 'POST' })
 }
 
+/** SafeHaven blocked its own patient text: write it again from the same version. */
+export function retryPatientOutput(instructionId: string): Promise<CareInstructionDetail> {
+  return apiRequest<CareInstructionDetail>(`/instructions/${instructionId}/retry-generation`, { method: 'POST' })
+}
+
 export function approveInstruction(instructionId: string): Promise<CareInstructionRead> {
   return apiRequest<CareInstructionRead>(`/instructions/${instructionId}/approve`, { method: 'POST' })
 }

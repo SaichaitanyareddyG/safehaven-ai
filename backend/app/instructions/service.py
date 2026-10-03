@@ -397,6 +397,14 @@ def _apply_extraction_result(
 # ---------------------------------------------------------------------------
 
 
+# How many times one press of Generate (or Try again) lets the AI write the
+# patient text before showing a nurse that it was blocked.
+GENERATION_AUTO_ATTEMPTS = 2
+# Try again stops being offered past this many attempts on one version: by
+# then the instruction itself probably needs rewording.
+GENERATION_MAX_ATTEMPTS_PER_VERSION = 6
+
+
 def generate_patient_output(db: Session, instruction_id: uuid.UUID, actor_id: uuid.UUID) -> CareInstruction:
     instruction = (
         db.query(CareInstruction).filter(CareInstruction.id == instruction_id).with_for_update().first()
@@ -436,6 +444,57 @@ def generate_patient_output(db: Session, instruction_id: uuid.UUID, actor_id: uu
     )
 
 
+def retry_patient_output(db: Session, instruction_id: uuid.UUID, actor_id: uuid.UUID) -> CareInstruction:
+    """"Try again" after SafeHaven blocked its own patient text: the facts were
+    complete, only the AI's wording failed the safety check — so the nurse
+    should not have to resubmit the same instruction. Same version, new
+    attempt, same full validation. Only from that state, and only a few
+    times per version."""
+    instruction = (
+        db.query(CareInstruction).filter(CareInstruction.id == instruction_id).with_for_update().first()
+    )
+    if instruction is None:
+        raise InstructionNotFoundError(str(instruction_id))
+    if instruction.status != InstructionStatus.NEEDS_REVIEW:
+        raise InvalidTransitionError(instruction.status, InstructionStatus.PROCESSING)
+
+    version_id = instruction.current_version_id
+    extraction = (
+        db.query(StructuredExtraction).filter(StructuredExtraction.instruction_version_id == version_id).first()
+    )
+    latest = (
+        db.query(PatientOutput)
+        .filter(PatientOutput.instruction_version_id == version_id)
+        .order_by(PatientOutput.attempt_number.desc())
+        .first()
+    )
+    if (
+        extraction is None
+        or extraction.completeness_status != CompletenessStatus.PASSED
+        or latest is None
+        or latest.validation_status != ValidationStatus.FAILED
+    ):
+        raise GenerationNotAllowedError(
+            "Try again is only for a patient text SafeHaven blocked; this instruction needs a clarification instead"
+        )
+    if latest.attempt_number >= GENERATION_MAX_ATTEMPTS_PER_VERSION:
+        raise GenerationNotAllowedError(
+            "SafeHaven has tried several times. Please reword the instruction with Submit clarification."
+        )
+
+    transition(instruction, InstructionStatus.PROCESSING)
+    instruction.review_reason = None
+    original_text = db.get(InstructionVersion, version_id).raw_text
+    instruction_type = extraction.instruction_type
+    normalized_facts = extraction.normalized_facts
+    next_attempt_number = latest.attempt_number + 1
+    db.commit()
+
+    return _run_generation_and_apply(
+        db, instruction_id, version_id, next_attempt_number, original_text, normalized_facts, instruction_type, actor_id
+    )
+
+
 def _run_generation_and_apply(
     db: Session,
     instruction_id: uuid.UUID,
@@ -460,26 +519,37 @@ def _run_generation_and_apply(
             db, instruction_id, version_id, attempt_number, instruction_type, normalized_facts, attempt, None, actor_id
         )
 
-    attempt = run_generation(provider, original_text, normalized_facts, instruction_type)
+    # A blocked patient text is almost always the AI wording something
+    # differently, not a problem with the clinician's instruction — so try
+    # once more by itself before asking a nurse to do anything. Every attempt
+    # is kept as its own PatientOutput row (attempt_number), so the record
+    # still shows what was blocked and why; only the last attempt decides
+    # the instruction's status.
+    for retry in range(GENERATION_AUTO_ATTEMPTS):
+        attempt = run_generation(provider, original_text, normalized_facts, instruction_type)
 
-    # A second, independent AI call — re-extracting the text the first call just
-    # generated — is the core of Layer B fact-preservation (see
-    # validation/fact_preservation.py): never ask the LLM whether its own output
-    # is safe, always re-derive facts from it the same way a real instruction
-    # would be analyzed, then compare deterministically.
-    reextraction_attempt = run_extraction(provider, attempt.patient_text) if attempt.succeeded else None
+        # A second, independent AI call — re-extracting the text the first call
+        # just generated — is the core of Layer B fact-preservation (see
+        # validation/fact_preservation.py): never ask the LLM whether its own
+        # output is safe, always re-derive facts from it the same way a real
+        # instruction would be analyzed, then compare deterministically.
+        reextraction_attempt = run_extraction(provider, attempt.patient_text) if attempt.succeeded else None
 
-    return _apply_generation_result(
-        db,
-        instruction_id,
-        version_id,
-        attempt_number,
-        instruction_type,
-        normalized_facts,
-        attempt,
-        reextraction_attempt,
-        actor_id,
-    )
+        instruction = _apply_generation_result(
+            db,
+            instruction_id,
+            version_id,
+            attempt_number + retry,
+            instruction_type,
+            normalized_facts,
+            attempt,
+            reextraction_attempt,
+            actor_id,
+            may_retry=retry < GENERATION_AUTO_ATTEMPTS - 1,
+        )
+        if instruction is not None:
+            return instruction
+    raise AssertionError("unreachable: the last attempt always returns")  # pragma: no cover
 
 
 def _build_failed_patient_output(
@@ -511,7 +581,11 @@ def _apply_generation_result(
     attempt: GenerationAttempt,
     reextraction_attempt: ExtractionAttempt | None,
     actor_id: uuid.UUID,
-) -> CareInstruction:
+    may_retry: bool = False,
+) -> CareInstruction | None:
+    """Records the attempt. Returns the instruction once its status is
+    decided, or None when this attempt failed and the caller will retry
+    (the attempt is kept, the status stays PROCESSING)."""
     instruction = (
         db.query(CareInstruction).filter(CareInstruction.id == instruction_id).with_for_update().first()
     )
@@ -526,6 +600,9 @@ def _apply_generation_result(
     if not attempt.succeeded:
         output = _build_failed_patient_output(version_id_at_start, attempt_number, attempt)
         db.add(output)
+        if may_retry and not is_stale:
+            db.commit()
+            return None
         if is_stale:
             db.commit()
             db.refresh(instruction)
@@ -586,6 +663,10 @@ def _apply_generation_result(
         db.commit()
         db.refresh(instruction)
         return instruction
+
+    if not result.passed and may_retry:
+        db.commit()
+        return None
 
     record_event(
         db,

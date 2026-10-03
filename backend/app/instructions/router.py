@@ -199,6 +199,22 @@ def generate_patient_output(
         raise _conflict(str(exc)) from exc
 
 
+@router.post("/instructions/{instruction_id}/retry-generation", response_model=CareInstructionDetail)
+def retry_generation(
+    instruction_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CareInstructionDetail:
+    """NEEDS_REVIEW because SafeHaven blocked its own patient text -> write it
+    again from the same version, fully re-validated. No resubmitting."""
+    try:
+        return service.retry_patient_output(db, instruction_id, actor_id=uuid.UUID(current_user.id))
+    except InstructionNotFoundError as exc:
+        raise _not_found("Instruction not found") from exc
+    except (InvalidTransitionError, GenerationNotAllowedError) as exc:
+        raise _conflict(str(exc)) from exc
+
+
 @router.post("/instructions/{instruction_id}/approve", response_model=CareInstructionRead)
 def approve_instruction(
     instruction_id: uuid.UUID,
