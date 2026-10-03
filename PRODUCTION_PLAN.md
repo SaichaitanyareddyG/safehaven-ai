@@ -5,6 +5,10 @@ ward, 10–30 bands, real patients, real nurses. Not a multi-hospital SaaS —
 that comes after a pilot proves the value (per the project's
 prototype-scale-first rule).
 
+Decided 2026-10-03: **US market** (HIPAA, FDA), and the voice assistant is
+**English only** for the pilot; Telugu and other languages come later (the
+findings on Telugu are kept in D3).
+
 Status of what exists today (2026-10-03): all three modules run locally;
 Module 3's band is working hardware with HTTPS, fall detection measured at
 98–100% of falls caught on public datasets, and an on-device voice assistant
@@ -16,10 +20,10 @@ on a bench build. Everything below is what stands between that and a ward.
 
 | # | Decision | Recommendation | Why it matters |
 |---|---|---|---|
-| D1 | **Which country's rules** — US (HIPAA, FDA) or India (DPDP Act 2023, CDSCO, ABDM) | Decide before anything else | It changes the hosting region, the contracts, the device rules and the consent wording. The gap analysis so far assumes US hospitals |
-| D2 | **Cloud** | AWS, one region, with a signed **BAA** (US) or equivalent data-processing agreement | The code is already shaped for it (Cognito-ready auth, Postgres, S3-style static frontend) |
+| D1 | **Which country's rules** | ✅ **Decided 2026-10-03: United States** — HIPAA for patient data, FDA for the device question, a US AWS region | Sets the hosting region, the contracts (BAA), the device route (D4) and the consent wording |
+| D2 | **Cloud** | AWS, one US region, with a signed **BAA** | The code is already shaped for it (Cognito-ready auth, Postgres, S3-style static frontend) |
 | D3 | **Where the AI runs** | **Managed AI inside the same AWS account** (Bedrock for the model, Transcribe for speech, Polly for voice), all covered by the AWS BAA | Better answers than a small local model and no servers to keep alive. The all-local stack stays for development and as a hospital-premises option (see §4). **Telugu caveat:** Transcribe handles Telugu only as slower batch jobs, and Polly has no Telugu voice — Telugu would keep whisper (translate mode) and the Piper Padmavathi voice (CC-BY-4.0) as a small service of our own; Hindi and Indian English are in Polly |
-| D4 | **Is the band a medical device?** | Get a regulatory opinion before the pilot; run the pilot as a supervised study (ethics/IRB approval, "assistive, not a replacement for observation") | Fall alerting that nurses rely on can count as a medical device (FDA in the US, CDSCO in India). This decides how the pilot is framed and what it may claim |
+| D4 | **Is the band a medical device?** | Get an FDA regulatory opinion before the pilot; run the pilot as a supervised study (IRB approval, "assistive, not a replacement for observation") | Fall alerting that nurses rely on can count as a medical device under FDA rules. This decides how the pilot is framed and what it may claim |
 | D5 | **Microphone on the ward** ("Talk to SafeHaven") | Pilot it on consenting patients only, push-to-talk, nothing stored | Needs hospital approval and patient consent; the deployable firmware has no microphone until then |
 | D6 | **Band hardware for the pilot** | M5StickS3 is fine for a supervised pilot; plan a cleanable, sealed enclosure | It is a development board: not water-resistant, not built for hospital cleaning agents |
 
@@ -91,8 +95,8 @@ alternative.
 
 ## 5. Security and compliance checklist
 
-- [ ] BAA / data-processing agreement signed with AWS (and any other vendor that sees PHI)
-- [ ] HIPAA security risk assessment (or DPDP equivalent) written and owned
+- [ ] BAA signed with AWS (and any other vendor that sees PHI)
+- [ ] HIPAA security risk assessment written and owned
 - [ ] Encryption in transit everywhere (done for bands; ALB/CloudFront TLS) and at rest (RDS, S3, backups)
 - [ ] MFA for all staff logins; access reviewed monthly; accounts removed on staff exit
 - [ ] Audit log retention policy (the app already audits every safety action without PHI)
