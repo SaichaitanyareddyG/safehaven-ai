@@ -3,7 +3,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { Check, Copy, Mail, MailWarning, Search, Send, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 
-import { createUser, listUsers, sendPasswordLink, updateUser } from '@/api/admin-users'
+import { createUser, listUsers, removeInvite, sendPasswordLink, updateUser } from '@/api/admin-users'
 import { AppLayout } from '@/components/AppLayout'
 import { Button } from '@/components/ui/button'
 import {
@@ -143,6 +143,7 @@ function UserRow({
     },
   })
   const linkLabel = user.must_change_password ? 'Resend invite' : 'Send password reset link'
+  const neverJoined = user.must_change_password && !user.last_login_at
 
   return (
     <TableRow data-testid="user-row" className={cn(!user.is_active && 'text-muted-foreground')}>
@@ -200,7 +201,7 @@ function UserRow({
               onClick={onDeactivate}
               className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
             >
-              Deactivate
+              {neverJoined ? 'Remove invite' : 'Deactivate'}
             </Button>
           </div>
         ) : (
@@ -421,36 +422,41 @@ function InviteDialog({
 
 function DeactivateDialog({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
   const queryClient = useQueryClient()
-  const deactivate = useMutation({
-    mutationFn: (id: string) => updateUser(id, { is_active: false }),
+  // Someone who never joined has no history: remove them outright. Anyone
+  // who has used SafeHaven is only ever deactivated (the record keeps them).
+  const neverJoined = !!user && user.must_change_password && !user.last_login_at
+  const action = useMutation({
+    mutationFn: (id: string) => (neverJoined ? removeInvite(id) : updateUser(id, { is_active: false }).then(() => undefined)),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: USERS_QUERY_KEY })
       onClose()
     },
   })
   if (!user) return null
+  const first = user.full_name.split(' ')[0]
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Deactivate {user.full_name}?</DialogTitle>
+          <DialogTitle>{neverJoined ? `Remove ${first}'s invite?` : `Deactivate ${user.full_name}?`}</DialogTitle>
           <DialogDescription>
-            They are signed out straight away and can't sign in again. Their past actions stay in the records. You can
-            reactivate them later.
+            {neverJoined
+              ? `${first} never signed in, so the account is deleted completely and the invite link stops working. You can invite them again any time.`
+              : "They are signed out straight away and can't sign in again. Their past actions stay in the records. You can reactivate them later."}
           </DialogDescription>
         </DialogHeader>
-        {deactivate.isError && (
+        {action.isError && (
           <p className="text-sm text-destructive">
-            {deactivate.error instanceof Error ? deactivate.error.message : 'Could not deactivate'}
+            {action.error instanceof Error ? action.error.message : 'Could not do that'}
           </p>
         )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="destructive" onClick={() => deactivate.mutate(user.id)} disabled={deactivate.isPending}>
-            Deactivate
+          <Button variant="destructive" onClick={() => action.mutate(user.id)} disabled={action.isPending}>
+            {neverJoined ? 'Remove invite' : 'Deactivate'}
           </Button>
         </DialogFooter>
       </DialogContent>

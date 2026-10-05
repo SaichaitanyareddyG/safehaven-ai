@@ -222,3 +222,28 @@ def test_email_without_a_key_reports_a_problem_instead_of_raising(monkeypatch):
     monkeypatch.setattr(get_settings(), "resend_api_key", "")
     result = email_module.send_email("a@example.com", "s", "t", "<p>h</p>")
     assert result.sent is False and result.problem
+
+
+def test_an_unused_invite_can_be_removed(client, admin, db_session):
+    created = _create(client, admin)
+    resp = client.delete(f"/admin/users/{created['user']['id']}", headers=admin)
+    assert resp.status_code == 204
+    assert all(u["id"] != created["user"]["id"] for u in client.get("/admin/users", headers=admin).json())
+    # The link died with the account.
+    assert client.get(f"/auth/password-link/{_token(created['link'])}").status_code == 410
+
+
+def test_someone_who_joined_can_only_be_deactivated(client, admin):
+    created = _create(client, admin)
+    _accept(client, created["link"])
+    resp = client.delete(f"/admin/users/{created['user']['id']}", headers=admin)
+    assert resp.status_code == 409
+    assert "deactivated" in resp.json()["detail"]
+
+
+def test_admin_cannot_remove_themselves_and_clinicians_cannot_remove_anyone(client, admin):
+    me = client.get("/auth/me", headers=admin).json()
+    assert client.delete(f"/admin/users/{me['id']}", headers=admin).status_code == 400
+    nurse = _register_and_login(client, "nurse.x@example.com")
+    created = _create(client, admin)
+    assert client.delete(f"/admin/users/{created['user']['id']}", headers=nurse).status_code == 403

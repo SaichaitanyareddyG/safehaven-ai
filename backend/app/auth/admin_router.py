@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.audit.models import ActorType, AuditEventType
+from app.audit.models import ActorType, AuditEvent, AuditEventType
 from app.audit.service import record_event
 from app.auth.dependencies import require_admin
 from app.auth.models import ROLE_ADMIN, User
@@ -134,3 +134,23 @@ def send_password_link(user_id: uuid.UUID, admin: Admin, db: Db) -> InviteRespon
     purpose = PURPOSE_INVITE if user.must_change_password else PURPOSE_RESET
     _audit(db, admin, AuditEventType.USER_PASSWORD_RESET, user, purpose=purpose)
     return _send_link(db, user, purpose)
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_invite(user_id: uuid.UUID, admin: Admin, db: Db) -> None:
+    """Delete someone who was invited but never joined — a wrong address, a
+    typo. Anyone who has ever signed in is only ever deactivated: audit rows
+    and acknowledged alerts must keep a real person behind them."""
+    user = _get_user(db, user_id)
+    if str(user.id) == admin.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot remove yourself")
+    acted = db.query(AuditEvent.id).filter(AuditEvent.actor_id == user.id).first() is not None
+    if not user.must_change_password or user.last_login_at is not None or acted:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This person has used SafeHaven, so their account can only be deactivated, not deleted",
+        )
+    # The record of the invite and its removal stays, without the person.
+    _audit(db, admin, AuditEventType.USER_INVITE_REMOVED, user, role=user.role)
+    db.delete(user)
+    db.commit()

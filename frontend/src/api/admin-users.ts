@@ -17,3 +17,8 @@ export function updateUser(id: string, payload: AdminUserUpdate): Promise<AdminU
 export function sendPasswordLink(id: string): Promise<InviteResponse> {
   return apiRequest<InviteResponse>(`/admin/users/${id}/send-link`, { method: 'POST' })
 }
+
+/** Only for an invite nobody used; anyone who joined can only be deactivated. */
+export function removeInvite(id: string): Promise<void> {
+  return apiRequest<void>(`/admin/users/${id}`, { method: 'DELETE' })
+}
