@@ -283,6 +283,10 @@ class DeviceLink {
   static constexpr uint32_t kHeartbeatMs = 30000;
   static constexpr uint32_t kUrgentHeartbeatMs = 5000;
   static constexpr uint32_t kRetryMs = 10000;
+  // Each failed send costs a full secure handshake (radio + processor flat
+  // out for seconds). While the server stays unreachable, retries slow down:
+  // 10 s, 20 s, 40 s … capped at 2 min; back to 10 s after any success.
+  static constexpr uint32_t kRetryMaxMs = 120000;
   static constexpr int kEnrollRetries = 6;
   static constexpr uint32_t kPairingPollMs = 3000;
 
@@ -457,7 +461,12 @@ class DeviceLink {
           heartbeat();
         }
         if (secret_[0] && millis() >= nextQueueTry) {
-          if (!drainQueue()) nextQueueTry = millis() + kRetryMs;
+          if (drainQueue()) {
+            retryMs_ = kRetryMs;
+          } else {
+            nextQueueTry = millis() + retryMs_;
+            retryMs_ = retryMs_ * 2 > kRetryMaxMs ? kRetryMaxMs : retryMs_ * 2;
+          }
         }
       }
       vTaskDelay(pdMS_TO_TICKS(200));
@@ -476,6 +485,9 @@ class DeviceLink {
     } else if (!http.begin(url)) {
       return -1;
     }
+    // Keep the secure connection open between requests when the server allows
+    // it: a heartbeat then costs one small exchange, not a new handshake.
+    http.setReuse(true);
     http.setTimeout(6000);
     http.setConnectTimeout(4000);
     http.addHeader("Content-Type", "application/json");
@@ -782,6 +794,7 @@ class DeviceLink {
   const char* caPem_ = nullptr;
   bool tls_ = false;
   WiFiClientSecure tlsClient_;  // used only from the network task
+  uint32_t retryMs_ = kRetryMs;
   std::atomic<TalkStatus> talkStatus_{TalkStatus::IDLE};
   volatile bool talkAbandoned_ = false;
   const uint8_t* talkWav_ = nullptr;

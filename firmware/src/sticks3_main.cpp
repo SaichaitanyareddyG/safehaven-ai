@@ -93,6 +93,7 @@ static const unsigned long STARTING_MAX_MS = 25000;  // then show monitoring any
 static const unsigned long HOME_CHECK_MS = 250;      // redraw only if changed
 static const unsigned long TEST_FRAME_MS = 100;
 static const unsigned long HEARTBEAT_INTERVAL_MS = 30000;
+static const unsigned long LOOP_REST_MS = 10;  // < the 20 ms sensor period
 static const unsigned long BATTERY_SAMPLE_MS = 5000;
 static const unsigned long BATTERY_LOG_MS = 60000;
 static const unsigned long WIFI_RETRY_MS = 30000;
@@ -241,6 +242,23 @@ static const unsigned long CHECK_VOICE_EVERY_MS = 10000;
 static unsigned long lastCheckVoiceMs = 0;
 enum class Say : uint8_t { FALL, CHECK, CHECK_OK, NO_ANSWER, HELP, NURSE_TOLD, NURSE_COMING };
 
+// Battery: the speaker's amplifier and audio chip draw power whenever the
+// speaker is "on", even in silence, and it is used only for prompts and alarm
+// beeps. It is switched off after a few quiet seconds and back on (a few ms)
+// just before the next sound. Battery log 2026-10-05: ~45 %/h with the screen
+// off; this was one of the steady drains.
+static bool speakerAwake = true;
+static unsigned long speakerQuietSinceMs = 0;
+static const unsigned long SPEAKER_SLEEP_AFTER_MS = 3000;
+static void applySpeakerVolumes();
+static void speakerWake() {
+  speakerQuietSinceMs = millis();
+  if (speakerAwake) return;
+  M5.Speaker.begin();
+  applySpeakerVolumes();
+  speakerAwake = true;
+}
+
 static void say(Say what) {
   const uint8_t *d = nullptr;
   size_t n = 0;
@@ -253,6 +271,7 @@ static void say(Say what) {
     case Say::NURSE_TOLD:   d = voice::kNURSE_TOLD;   n = sizeof(voice::kNURSE_TOLD); break;
     case Say::NURSE_COMING: d = voice::kNURSE_COMING; n = sizeof(voice::kNURSE_COMING); break;
   }
+  speakerWake();
   M5.Speaker.playRaw(d, n, voice::kSampleRate, false, 1, VOICE_CHANNEL, true);
 }
 
@@ -262,7 +281,14 @@ static bool speaking() { return M5.Speaker.isPlaying(VOICE_CHANNEL) > 0; }
 // 2-3 kHz tone at full level drowned out the spoken prompts (bench, 2026-10-02).
 static const int TONE_CHANNEL = 0;
 static const uint8_t TONE_CHANNEL_VOLUME = 160;
-static void beep(float hz, uint32_t ms) { M5.Speaker.tone(hz, ms, TONE_CHANNEL); }
+static void applySpeakerVolumes() {
+  M5.Speaker.setVolume(SPEAKER_VOLUME);
+  M5.Speaker.setChannelVolume(TONE_CHANNEL, TONE_CHANNEL_VOLUME);
+}
+static void beep(float hz, uint32_t ms) {
+  speakerWake();
+  M5.Speaker.tone(hz, ms, TONE_CHANNEL);
+}
 
 // TEST screen data: |a| history (2.4 s at 50 Hz) and the fall-candidate mirror.
 static const int GRAPH_N = 120;
@@ -335,6 +361,7 @@ static void assign(MonitoringProfile profile, const char *source) {
 static void stopAttention(const char *why);
 #ifdef SH_TALK
 static bool talkActive();
+static bool talkMicOwnsAudio();
 static void talkEnd(const char *why);
 static unsigned long talkFrameMs();
 // A soft "collapse" while talking is usually the wrist raised to the mouth.
@@ -417,7 +444,10 @@ static void startWifi() {
   if (!wifiConfigured()) return;
   lastWifiAttemptMs = millis();
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(true);  // modem sleep between beacons
+  // Deepest modem sleep: the radio wakes only every few beacons (the default
+  // listen interval) instead of every one. A heartbeat or an alert just waits
+  // a few hundred ms for the radio, which detection never notices.
+  WiFi.setSleep(WIFI_PS_MAX_MODEM);
   if (wifiCfg.enterprise) {
     // No RADIUS CA is pinned yet: the band cannot tell the hospital's network
     // from an impostor with the same name. Hospital IT's CA belongs here
@@ -432,12 +462,15 @@ static void startWifi() {
                 wifiCfg.fromNvs ? "over USB" : "in wifi_secrets.h");
 }
 
+static uint8_t wifiFailures = 0;
+
 // Non-blocking: detection must keep running while Wi-Fi comes and goes.
 static void serviceWifi() {
   if (!wifiConfigured()) return;
   const bool up = WiFi.status() == WL_CONNECTED;
   if (up && !wifiAnnounced) {
     wifiAnnounced = true;
+    wifiFailures = 0;
     Serial.print("WiFi connected, Device IP: ");
     Serial.print(WiFi.localIP());
     Serial.printf(", RSSI %d dBm\r\n", WiFi.RSSI());
@@ -447,7 +480,12 @@ static void serviceWifi() {
       wifiAnnounced = false;
       Serial.println("WiFi lost - retrying");
     }
-    if (millis() - lastWifiAttemptMs > WIFI_RETRY_MS) {
+    // Each attempt scans and associates (the radio at full power), so a
+    // network that stays away is retried less and less often: 30 s, 60 s,
+    // then every 2 min. Back to 30 s once connected.
+    const unsigned long wait = WIFI_RETRY_MS << (wifiFailures < 2 ? wifiFailures : 2);
+    if (millis() - lastWifiAttemptMs > wait) {
+      if (wifiFailures < 8) ++wifiFailures;
       WiFi.disconnect();
       startWifi();
     }
@@ -847,6 +885,21 @@ static void serviceNurseResponse() {
 /// Tone in step with the pulse; silent after the fast phase so a fall at
 /// night does not sound for an hour. A single calm chime once the backend
 /// confirms the nurse was notified.
+static void serviceSpeakerPower() {
+#ifdef SH_TALK
+  if (talkActive() || talkMicOwnsAudio()) return;  // the microphone owns the audio chip
+#endif
+  if (!speakerAwake) return;
+  if (M5.Speaker.isPlaying()) {
+    speakerQuietSinceMs = millis();
+    return;
+  }
+  if (millis() - speakerQuietSinceMs > SPEAKER_SLEEP_AFTER_MS) {
+    M5.Speaker.end();
+    speakerAwake = false;
+  }
+}
+
 static void serviceSound() {
   const unsigned long now = millis();
   if (attentionActive) {
@@ -1322,8 +1375,8 @@ void setup() {
   cfg.internal_mic = false;
 #endif
   M5.begin(cfg);
-  M5.Speaker.setVolume(SPEAKER_VOLUME);
-  M5.Speaker.setChannelVolume(TONE_CHANNEL, TONE_CHANNEL_VOLUME);
+  applySpeakerVolumes();
+  speakerQuietSinceMs = millis();
   M5.Display.setRotation(0);  // portrait, 135 x 240
   M5.Display.setBrightness(BRIGHTNESS_HOME);
   setCpuFrequencyMhz(CPU_MHZ);
@@ -1449,6 +1502,7 @@ static char talkTitle[32] = "", talkText[200] = "";
 
 static int16_t *talkPcm() { return (int16_t *)(talkBuf + 44); }
 static bool talkActive() { return talkPhase != TalkPhase::OFF; }
+static bool talkMicOwnsAudio() { return talkSpeakerOff; }
 
 static void talkBoost(bool on);
 static void talkSet(TalkPhase p, const char *title, const char *text = "") {
@@ -1465,8 +1519,9 @@ static void talkSpeakerOn() {
   if (!talkSpeakerOff) return;
   M5.Mic.end();
   M5.Speaker.begin();
-  M5.Speaker.setVolume(SPEAKER_VOLUME);
-  M5.Speaker.setChannelVolume(TONE_CHANNEL, TONE_CHANNEL_VOLUME);
+  applySpeakerVolumes();
+  speakerAwake = true;
+  speakerQuietSinceMs = millis();
   talkSpeakerOff = false;
 }
 
@@ -1474,7 +1529,7 @@ static void talkSpeakerOn() {
 /// sleep, sending ~200 KB over TLS took 5-6 s on the bench.
 static void talkBoost(bool on) {
   setCpuFrequencyMhz(on ? 240 : CPU_MHZ);
-  WiFi.setSleep(!on);
+  WiFi.setSleep(on ? WIFI_PS_NONE : WIFI_PS_MAX_MODEM);
 }
 
 static void talkEnd(const char *why) {
@@ -1522,6 +1577,7 @@ static void talkBegin(bool followUp = false) {
   }
   if (!talkBuf) talkBuf = (uint8_t *)ps_malloc(44 + TALK_MAX_SAMPLES * sizeof(int16_t));
   M5.Speaker.end();
+  speakerAwake = false;
   talkSpeakerOff = true;
   if (!talkBuf || !M5.Mic.begin()) {
     talkError("Can't talk now", "The microphone did not start.");
@@ -2247,6 +2303,19 @@ void loop() {
     setScreen(Screen::HOME, "10 min without a button press");
   }
   serviceScreen();
+
+  serviceSpeakerPower();
+
+  // Rest between passes instead of spinning: the motion sensor is read 50
+  // times a second (every 20 ms), so a 10 ms pause never misses a sample, and
+  // the processor idles (much lower current) instead of looping flat out.
+  // Full speed only while the live test graph or a conversation is on screen.
+#ifdef SH_TALK
+  const bool busyUi = screen == Screen::TEST || talkActive();
+#else
+  const bool busyUi = screen == Screen::TEST;
+#endif
+  delay(busyUi ? 1 : LOOP_REST_MS);
 
   if (now - lastHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {
     lastHeartbeatMs = now;
