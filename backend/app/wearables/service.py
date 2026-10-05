@@ -1111,9 +1111,13 @@ def device_is_offline(device: WearableDevice, assignment: DeviceAssignment | Non
     if assignment is None:
         return False
     reference = device.last_seen_at or assignment.assigned_at
-    cutoff = datetime.now(timezone.utc) - timedelta(
-        seconds=get_settings().device_offline_after_seconds
+    settings = get_settings()
+    allowance = (
+        settings.device_offline_while_charging_seconds
+        if device.charging
+        else settings.device_offline_after_seconds
     )
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=allowance)
     return reference < cutoff
 
 

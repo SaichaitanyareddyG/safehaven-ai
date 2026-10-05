@@ -144,6 +144,11 @@ class Settings(BaseSettings):
     # scheduler in this codebase and Module 3 should not be the first thing
     # to introduce one.
     device_offline_after_seconds: int = 120
+    # A band whose last check-in said "on the charger" turns its radio off to
+    # charge faster and checks in every ~5 min. It is not monitoring anyway
+    # (the dashboard says so), so it gets this longer allowance before it
+    # counts as offline. Unplugged, it is back on the normal threshold at once.
+    device_offline_while_charging_seconds: int = 600
     # How often the background job looks for silent bands (main.py lifespan).
     # 0 turns it off — the test suite does, so it never touches a real DB.
     offline_sweep_interval_seconds: int = 30

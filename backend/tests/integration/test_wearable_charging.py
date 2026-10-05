@@ -65,3 +65,40 @@ def test_older_bands_without_the_flag_still_check_in(client):
     _, _, device = _assigned_band(client)
     r = client.post("/device-api/heartbeat", json={"battery_percent": 80, "firmware_version": "0.5.0"}, headers=device)
     assert r.status_code == 200
+
+
+def test_a_charging_band_may_stay_quiet_longer_before_it_counts_as_offline(client, db_session):
+    """On the charger the band turns its radio off and checks in every ~5 min."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.wearables.models import WearableDevice
+
+    headers, _, device = _assigned_band(client)
+    _beat(client, device, 60, True)
+    band = db_session.query(WearableDevice).filter(WearableDevice.device_code == "SH-WEAR-001").one()
+
+    def offline_alerts():
+        alerts = client.get("/safety-alerts", headers=headers).json()["results"]
+        return [a for a in alerts if a["alert_type"] == "DEVICE_OFFLINE"]
+
+    band.last_seen_at = datetime.now(timezone.utc) - timedelta(minutes=5)  # 5 min quiet, charging
+    db_session.flush()
+    assert offline_alerts() == []
+
+    band.last_seen_at = datetime.now(timezone.utc) - timedelta(minutes=11)  # past the charging allowance
+    db_session.flush()
+    assert len(offline_alerts()) == 1
+
+
+def test_unplugged_band_is_back_on_the_normal_offline_threshold(client, db_session):
+    from datetime import datetime, timedelta, timezone
+
+    from app.wearables.models import WearableDevice
+
+    headers, _, device = _assigned_band(client)
+    _beat(client, device, 60, False)
+    band = db_session.query(WearableDevice).filter(WearableDevice.device_code == "SH-WEAR-001").one()
+    band.last_seen_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    db_session.flush()
+    alerts = client.get("/safety-alerts", headers=headers).json()["results"]
+    assert [a for a in alerts if a["alert_type"] == "DEVICE_OFFLINE"] != []

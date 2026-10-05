@@ -464,9 +464,61 @@ static void startWifi() {
 
 static uint8_t wifiFailures = 0;
 
+// ── charging quietly ─────────────────────────────────────────────────────────
+// The charger's current is fixed in hardware (the PM1 has no setting) and the
+// Wi-Fi radio was taking most of it: on the charger the band charged at a few
+// percent an hour. It is not monitoring while charging anyway, so there the
+// radio goes off between check-ins (one every CHARGE_CHECKIN_MS, enough for
+// the dashboard to keep showing "Charging — not monitoring"; the backend
+// allows a charging band 10 min). Unplugged, the radio comes straight back.
+static const unsigned long CHARGE_CHECKIN_MS = 5UL * 60 * 1000;
+static const unsigned long CHARGE_CHECKIN_MAX_MS = 60000;  // give up on one wake after this
+static bool radioResting = false;
+static unsigned long radioWokeMs = 0, nextChargeCheckinMs = 0;
+static uint32_t heartbeatsAtWake = 0;
+
+static void radioRest() {
+  if (radioResting) return;
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  radioResting = true;
+  wifiAnnounced = false;
+  Serial.println("[POWER] on the charger - radio off until the next check-in");
+}
+
+static void radioWake(const char *why) {
+  radioResting = false;
+  radioWokeMs = millis();
+  heartbeatsAtWake = backendLink.heartbeatsAnswered();
+  startWifi();
+  backendLink.requestHeartbeat();
+  Serial.printf("[POWER] radio on (%s)\r\n", why);
+}
+
+static bool chargeQuietWanted();
+static void serviceChargeRadio() {
+  if (!wifiConfigured()) return;
+  const unsigned long now = millis();
+  if (!chargeQuietWanted()) {
+    if (radioResting) radioWake("off the charger");
+    return;
+  }
+  if (radioResting) {
+    if ((long)(now - nextChargeCheckinMs) >= 0) radioWake("charging check-in");
+    return;
+  }
+  // Radio on while charging: rest once the server has had this check-in (or
+  // after a minute of trying), then wake again in 5 min.
+  const bool answered = backendLink.heartbeatsAnswered() != heartbeatsAtWake;
+  if (answered || now - radioWokeMs > CHARGE_CHECKIN_MAX_MS) {
+    nextChargeCheckinMs = now + CHARGE_CHECKIN_MS;
+    radioRest();
+  }
+}
+
 // Non-blocking: detection must keep running while Wi-Fi comes and goes.
 static void serviceWifi() {
-  if (!wifiConfigured()) return;
+  if (!wifiConfigured() || radioResting) return;
   const bool up = WiFi.status() == WL_CONNECTED;
   if (up && !wifiAnnounced) {
     wifiAnnounced = true;
@@ -2266,9 +2318,24 @@ static void handleSerial() {
   }
 }
 
+// Only when nothing needs the network: paired, nothing waiting to send, no
+// alert, check or conversation in progress. An unpaired band on the charger
+// keeps its radio on so staff can pair it from the dashboard.
+static bool chargeQuietWanted() {
+  if (!onCharger || benchMode) return false;
+  const LinkStatus ls = backendLink.status();
+  if (!ls.enrolled || ls.credentialRejected || ls.queueDepth > 0) return false;
+  if (alertActive || attentionActive || checkActive) return false;
+#ifdef SH_TALK
+  if (talkActive()) return false;
+#endif
+  return true;
+}
+
 void loop() {
   M5.update();
   pumpSensor();  // first, every pass: detection never waits for the UI
+  serviceChargeRadio();
   serviceWifi();
   serviceAssignment();
   handleButtons();

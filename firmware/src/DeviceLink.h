@@ -213,6 +213,11 @@ class DeviceLink {
   /// While an alert is on the band, check in every few seconds so a nurse's
   /// acknowledgement shows quickly ("A nurse is coming").
   void setUrgent(bool urgent) { urgent_ = urgent; }
+  /// Check in as soon as the network allows (e.g. the radio was just turned
+  /// back on after a quiet spell on the charger).
+  void requestHeartbeat() { hbNow_ = true; }
+  /// Counts heartbeats the server answered (200): the caller can wait for one.
+  uint32_t heartbeatsAnswered() const { return hbAnswered_; }
 
   void requestEnroll(const char* code) {
     xSemaphoreTake(lock_, portMAX_DELAY);
@@ -455,9 +460,10 @@ class DeviceLink {
         if (!secret_[0] && !code[0]) servicePairing();
 
         const uint32_t interval = urgent_ ? kUrgentHeartbeatMs : kHeartbeatMs;
-        if (secret_[0] && (firstHeartbeat || millis() - lastHeartbeat >= interval)) {
+        if (secret_[0] && (firstHeartbeat || hbNow_ || millis() - lastHeartbeat >= interval)) {
           lastHeartbeat = millis();
           firstHeartbeat = false;
+          hbNow_ = false;
           heartbeat();
         }
         if (secret_[0] && millis() >= nextQueueTry) {
@@ -588,6 +594,7 @@ class DeviceLink {
     xSemaphoreTake(lock_, portMAX_DELAY);
     st_.heartbeatOk = true;
     st_.credentialRejected = false;
+    hbAnswered_ = hbAnswered_ + 1;
     // Server time at the midpoint of the round trip.
     const uint64_t serverMs = doc["server_time_ms"] | (uint64_t)0;
     if (serverMs) {
@@ -816,6 +823,8 @@ class DeviceLink {
   char pollToken_[64] = "";
   uint32_t lastPairingPoll_ = 0;
   volatile bool urgent_ = false;
+  volatile bool hbNow_ = false;
+  volatile uint32_t hbAnswered_ = 0;
   uint32_t bootId_ = 0;
   Health health_;
   LinkStatus st_;
