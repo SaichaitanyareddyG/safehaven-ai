@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useAuth } from '@/lib/auth-context'
@@ -34,6 +35,7 @@ const USERS_QUERY_KEY = ['admin-users']
 export function UsersPage() {
   const { user: me } = useAuth()
   const [search, setSearch] = useState('')
+  const [adding, setAdding] = useState(false)
   const [issued, setIssued] = useState<{ response: InviteResponse; reason: 'created' | 'resent' } | null>(null)
   const [confirming, setConfirming] = useState<AdminUser | null>(null)
   const { data, isLoading } = useQuery({ queryKey: USERS_QUERY_KEY, queryFn: listUsers })
@@ -44,13 +46,19 @@ export function UsersPage() {
 
   return (
     <AppLayout>
-      <div className="mb-6 flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
-        <p className="text-sm text-muted-foreground">Who can sign in to this ward dashboard. Only admins see this page.</p>
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
+          <p className="text-sm text-muted-foreground">Who can sign in to this ward dashboard. Only admins see this page.</p>
+        </div>
+        <Button onClick={() => setAdding(true)} data-testid="add-user" className="self-start">
+          <UserPlus className="h-4 w-4" />
+          Add user
+        </Button>
       </div>
 
-      <div className="flex flex-wrap items-start gap-6">
-        <section aria-label="All users" className="min-w-0 flex-[999_1_560px] overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
+      <div>
+        <section aria-label="All users" className="min-w-0 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
           <div className="flex flex-wrap items-center gap-3 border-b px-5 py-4">
             <span className="font-semibold">
               {data ? `${data.length} user${data.length === 1 ? '' : 's'}` : 'Users'}
@@ -110,8 +118,18 @@ export function UsersPage() {
           )}
         </section>
 
-        <AddUserForm onCreated={(response) => setIssued({ response, reason: 'created' })} />
       </div>
+
+      <Dialog open={adding} onOpenChange={setAdding}>
+        <DialogContent>
+          <AddUserForm
+            onCreated={(response) => {
+              setAdding(false)
+              setIssued({ response, reason: 'created' })
+            }}
+          />
+        </DialogContent>
+      </Dialog>
 
       <InviteDialog issued={issued} onClose={() => setIssued(null)} />
       <DeactivateDialog user={confirming} onClose={() => setConfirming(null)} />
@@ -162,16 +180,15 @@ function UserRow({
         {isMe || !user.is_active ? (
           <RolePill role={user.role} muted={!user.is_active} />
         ) : (
-          <select
-            aria-label={`Role for ${user.full_name}`}
-            value={user.role}
-            disabled={changeRole.isPending}
-            onChange={(e) => changeRole.mutate(e.target.value as Role)}
-            className="h-9 rounded-lg border border-input bg-white px-2 text-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
-          >
-            <option value="clinician">Clinician</option>
-            <option value="admin">Admin</option>
-          </select>
+          <Select value={user.role} onValueChange={(role) => changeRole.mutate(role as Role)} disabled={changeRole.isPending}>
+            <SelectTrigger size="sm" className="w-[120px]" aria-label={`Role for ${user.full_name}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="clinician">Clinician</SelectItem>
+              <SelectItem value="admin">Admin</SelectItem>
+            </SelectContent>
+          </Select>
         )}
       </TableCell>
       <TableCell>
@@ -275,7 +292,7 @@ function AddUserForm({ onCreated }: { onCreated: (r: InviteResponse) => void }) 
   return (
     <form
       aria-labelledby="add-user-title"
-      className="flex min-w-0 flex-[1_1_320px] flex-col gap-4 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-black/5"
+      className="flex min-w-0 flex-col gap-4"
       onSubmit={(e) => {
         e.preventDefault()
         if (valid) create.mutate()

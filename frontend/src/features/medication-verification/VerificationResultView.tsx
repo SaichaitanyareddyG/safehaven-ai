@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import type { NotGivenReason, VerifyResponse } from '@/types/medication-verification'
 
@@ -205,19 +206,18 @@ export function VerificationResultView({
       {notGivenOpen && (
         <div className="space-y-3 rounded-lg border p-4" data-testid="not-given-panel">
           <Label htmlFor="not-given-reason">Why was this dose not given?</Label>
-          <select
-            id="not-given-reason"
-            className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-            value={notGivenReason}
-            onChange={(e) => setNotGivenReason(e.target.value as NotGivenReason)}
-            data-testid="not-given-reason-select"
-          >
-            {NOT_GIVEN_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <Select value={notGivenReason} onValueChange={(value) => setNotGivenReason(value as NotGivenReason)}>
+            <SelectTrigger id="not-given-reason" className="w-full" data-testid="not-given-reason-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {NOT_GIVEN_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Input
             placeholder="Anything worth noting (optional)"
             value={notGivenNote}

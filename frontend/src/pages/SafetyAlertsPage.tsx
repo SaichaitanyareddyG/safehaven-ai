@@ -41,15 +41,15 @@ export function SafetyAlertsPage() {
 
   return (
     <AppLayout>
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Safety Monitoring</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Safety alerts</h1>
           <p className="text-sm text-muted-foreground">
             Wearable alerts across every monitored patient. Updates every{' '}
             {ALERT_POLL_INTERVAL_MS / 1000} seconds.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
         {desktop.permission !== 'unsupported' && (
           <Button
             variant="outline"

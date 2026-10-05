@@ -116,7 +116,7 @@ export function MedicationVerificationPage() {
     <AppLayout>
       <div className="mx-auto max-w-lg">
         <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-2xl font-bold tracking-tight">Medication Verification</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Medication check</h1>
           {step !== 'scan-patient' && (
             <Button variant="ghost" size="sm" onClick={reset} data-testid="start-over-button">
               <RotateCcw className="h-4 w-4" />

@@ -77,7 +77,8 @@ export function SafetyAlertCard({ alert }: { alert: SafetyAlert }) {
       data-alert-type={alert.alert_type}
       data-priority={alert.priority}
     >
-      <div className="flex items-start justify-between gap-4">
+      {/* On a phone the actions go under the alert, so its words keep the full width. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="flex min-w-0 gap-3">
           <Icon
             className={cn(
@@ -127,7 +128,7 @@ export function SafetyAlertCard({ alert }: { alert: SafetyAlert }) {
           </div>
         </div>
 
-        <div className="flex shrink-0 gap-2">
+        <div className="flex flex-wrap gap-2 pl-8 sm:shrink-0 sm:pl-0">
           <Button asChild variant="outline" size="sm">
             <Link to={`/patients/${alert.patient_id}`}>View patient</Link>
           </Button>
