@@ -39,6 +39,9 @@
 #include <M5Unified.h>
 #include <WiFi.h>
 #include <esp_timer.h>
+#ifdef SH_LOW_POWER
+#include <esp_pm.h>
+#endif
 #include <sys/time.h>
 #include <time.h>
 
@@ -1408,6 +1411,22 @@ static void recoverSystemI2c() {
 }
 
 // ── Arduino entry points ─────────────────────────────────────────────────────
+#ifdef SH_LOW_POWER
+// Automatic light sleep (env:m5sticks3-lowpower only). The CPU drops to
+// 40 MHz when idle and light-sleeps between IMU samples; Wi-Fi stays
+// associated in modem sleep (WIFI_PS_MAX_MODEM, set in startWifi()), waking
+// for beacons. 40 MHz (the crystal) is the lowest minimum Wi-Fi allows.
+static void startPowerManagement() {
+  esp_pm_config_esp32s3_t pm = {};
+  pm.max_freq_mhz = 80;
+  pm.min_freq_mhz = 40;
+  pm.light_sleep_enable = true;
+  const esp_err_t err = esp_pm_configure(&pm);
+  Serial.printf("[POWER] light sleep %s (CPU %d-%d MHz)\r\n", err == ESP_OK ? "on" : esp_err_to_name(err),
+                pm.min_freq_mhz, pm.max_freq_mhz);
+}
+#endif
+
 void setup() {
   if (bootRetriesMagic != BOOT_RETRIES_MAGIC || esp_reset_reason() == ESP_RST_POWERON ||
       bootRetries < 0 || bootRetries > MAX_BOOT_RETRIES) {
@@ -1508,6 +1527,9 @@ void setup() {
   sampleBattery();
   wasCharging = battery.charging();  // no charging splash for the state we booted in
   startWifi();
+#ifdef SH_LOW_POWER
+  startPowerManagement();
+#endif
   serviceAssignment();
   Serial.println("Buttons: any click wakes the screen or closes an alert.  Hold BOTH 3 s: staff "
                  "TEST screen.  Screen sleeps after 15 s.");
@@ -2397,7 +2419,21 @@ void loop() {
 #else
   const bool busyUi = screen == Screen::TEST;
 #endif
+#ifdef SH_LOW_POWER
+  // Sleep right up to the next 20 ms IMU slot instead of a fixed 10 ms: with
+  // power management on, the idle task light-sleeps for most of that wait.
+  // pumpSensor() still takes every due slot (it catches up after any stall),
+  // so detection sees exactly the same samples.
+  if (busyUi || !imuOk) {
+    delay(busyUi ? 1 : LOOP_REST_MS);
+  } else {
+    const uint64_t due = imu.nextDueMs(), nowMono = monoNow();
+    const uint32_t rest = due > nowMono ? (uint32_t)min<uint64_t>(due - nowMono, kSampleStepMs) : 0;
+    if (rest) delay(rest);
+  }
+#else
   delay(busyUi ? 1 : LOOP_REST_MS);
+#endif
 
   if (now - lastHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {
     lastHeartbeatMs = now;

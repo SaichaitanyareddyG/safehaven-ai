@@ -47,6 +47,9 @@ class Bmi270Sensor : public ISensorProvider {
 
   bool healthy() const override { return ok_; }
 
+  /// Monotonic ms at which the next 20 ms slot falls due (for sleeping).
+  uint64_t nextDueMs() { return schedule_.next(); }
+
  private:
   SampleSchedule schedule_;
   bool ok_ = false;
