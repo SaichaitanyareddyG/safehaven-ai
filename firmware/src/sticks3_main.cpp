@@ -1426,7 +1426,12 @@ void setup() {
 #else
   cfg.internal_mic = false;
 #endif
+  // The PM1's 5 V boost feeds only the external Grove port, which the band
+  // never uses. M5Unified switches it on by default (output_power = true):
+  // a converter running from the battery all day. Off.
+  cfg.output_power = false;
   M5.begin(cfg);
+  M5.Power.setExtOutput(false);
   applySpeakerVolumes();
   speakerQuietSinceMs = millis();
   M5.Display.setRotation(0);  // portrait, 135 x 240
@@ -2293,6 +2298,16 @@ static void runCommand(char *line) {
 #endif
   } else if (!strcmp(line, "status")) {
     printStatus();
+  } else if (!strcmp(line, "power")) {
+    bool chg = false;
+    const bool chgKnown = M5.Power.M5pm1.getBatteryCharge(&chg);
+    Serial.printf("[POWER] battery %d mV, usb %d mV, charging %s, charger enabled %s, 5V boost %s, cpu %lu MHz\r\n",
+                  M5.Power.getBatteryVoltage(), M5.Power.getVBUSVoltage(),
+                  M5.Power.isCharging() == m5::Power_Class::is_charging ? "yes" : "no",
+                  chgKnown ? (chg ? "yes" : "NO") : "?", M5.Power.getExtOutput() ? "ON" : "off",
+                  (unsigned long)getCpuFrequencyMhz());
+  } else if (!strcmp(line, "beep")) {
+    beep(TONE_ALARM_HZ, 300);
   } else if (!strcmp(line, "d")) {
     dumpBatteryLog();
   } else if (!strcmp(line, "c") && fsOk) {
