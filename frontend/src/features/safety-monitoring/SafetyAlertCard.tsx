@@ -72,7 +72,16 @@ export function SafetyAlertCard({ alert }: { alert: SafetyAlert }) {
 
   return (
     <div
-      className={cn('rounded-lg border bg-background p-4', CARD_ACCENT[alert.priority])}
+      className={cn(
+        'rounded-lg border bg-background p-4',
+        // Only an open alert shouts. Acknowledged keeps its priority edge
+        // without the tint (someone is on it); resolved goes quiet.
+        alert.status === 'OPEN'
+          ? CARD_ACCENT[alert.priority]
+          : alert.status === 'ACKNOWLEDGED'
+            ? CARD_ACCENT[alert.priority].replace(/\s(?:dark:)?bg-\S+/g, '')
+            : 'border-l-4 border-l-muted-foreground/30',
+      )}
       data-testid="safety-alert-card"
       data-alert-type={alert.alert_type}
       data-priority={alert.priority}
@@ -102,11 +111,11 @@ export function SafetyAlertCard({ alert }: { alert: SafetyAlert }) {
               </Link>{' '}
               ({alert.patient_code})
               {alert.room_number ? ` · Room ${alert.room_number}` : ' · Room not recorded'} ·{' '}
-              {alert.device_code}
+              <span className="whitespace-nowrap">{alert.device_code}</span>
             </p>
 
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <AlertPriorityBadge priority={alert.priority} />
+              {alert.status !== 'RESOLVED' && <AlertPriorityBadge priority={alert.priority} />}
               <AlertStatusBadge status={alert.status} />
               <span>{formatDistanceToNow(new Date(alert.created_at), { addSuffix: true })}</span>
               {/* One alert is one episode. Showing the fold count keeps the
@@ -149,7 +158,7 @@ export function SafetyAlertCard({ alert }: { alert: SafetyAlert }) {
               nurse to wonder whether the first click registered. */}
           {alert.status !== 'RESOLVED' && (
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               disabled={busy}
               onClick={() => resolve.mutate()}

@@ -34,6 +34,8 @@ export interface PatientCareInstructionView {
   instruction_type: InstructionType | null
   text_by_language: Partial<Record<Language, string>>
   approved_at: string
+  /** MEDICATION only: the medicine's name as the clinician wrote it. */
+  medication_name: string | null
   why: WhyExplanation | null
   past_reason: 'STOPPED' | 'COMPLETED' | null
 }

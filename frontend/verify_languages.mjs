@@ -86,8 +86,10 @@ await step('patient page renders Spanish by default and offers all 11 languages'
   await page.goto(`${APP}/care?token=${careToken}`)
   await page.waitForSelector('[data-testid="care-instruction-text"], [data-testid="current-medication-summary"]', { timeout: 15000 })
 
+  await page.click('[data-testid="care-language-select"]')
   const buttons = await page.locator('[data-testid^="care-language-button-"]').count()
-  if (buttons !== 11) throw new Error(`expected 11 language buttons, got ${buttons}`)
+  if (buttons !== 11) throw new Error(`expected 11 language options, got ${buttons}`)
+  await page.keyboard.press('Escape')
 
   await page.click('[data-testid="understand-medicine-button"]')
   const spanish = await page.locator('[data-testid="care-instruction-text"]').innerText()
@@ -96,6 +98,7 @@ await step('patient page renders Spanish by default and offers all 11 languages'
 })
 
 await step('switching to Arabic renders RTL', async () => {
+  await page.click('[data-testid="care-language-select"]')
   await page.click('[data-testid="care-language-button-arabic"]')
   const el = page.locator('[data-testid="care-instruction-text"]')
   const arabic = await el.innerText()

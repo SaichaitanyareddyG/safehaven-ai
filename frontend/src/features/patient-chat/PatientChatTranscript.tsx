@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, Globe, ShieldAlert } from 'lucide-react'
 
+import { formatDateTime } from '@/lib/format'
 import { getPatientChat } from '@/api/patient-chat'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
@@ -37,13 +38,13 @@ function TranscriptRow({ message }: { message: ChatMessage }) {
     <div className={cn('rounded-lg border p-3', isPatient ? 'bg-muted/30' : 'bg-background')}>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span className="font-semibold uppercase tracking-wide">{isPatient ? 'Patient' : 'Assistant'}</span>
-        <span>{new Date(message.created_at).toLocaleString()}</span>
+        <span>{formatDateTime(message.created_at)}</span>
       </div>
       <p className="mt-1 text-sm">{message.text}</p>
       <div className="mt-1.5 flex gap-3">
         {message.emergency_flagged && (
           <span className="flex items-center gap-1 text-xs font-medium text-destructive">
-            <ShieldAlert className="h-3 w-3" /> Emergency gate fired
+            <ShieldAlert className="h-3 w-3" /> Emergency advice given
           </span>
         )}
         {message.redirect_flagged && (

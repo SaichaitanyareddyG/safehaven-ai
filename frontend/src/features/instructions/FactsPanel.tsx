@@ -88,22 +88,24 @@ export function FactsPanel({ extraction }: { extraction: StructuredExtractionRea
             <AlertTriangle className="h-4 w-4" />
             Clarification needed
           </p>
-          <ul className="mt-1 list-inside list-disc text-sm text-amber-700 dark:text-amber-400">
-            {extraction.validation_messages.map((message, i) => (
-              <li key={i}>{message}</li>
-            ))}
-          </ul>
-          {/* What each missing word means, and how to add it — not everyone knows what "route" is. */}
-          <div className="mt-3 space-y-2 border-t border-amber-200 pt-3 dark:border-amber-900">
-            {extraction.clarification_required_fields
-              .filter((key) => FIELD_HELP[key])
-              .map((key) => (
-                <p key={key} className="text-sm text-amber-900 dark:text-amber-200">
+          {/* One plain line per missing detail: what it means and how to add it
+              (not everyone knows what "route" is). The backend's own wording
+              is only a fallback for a field with no help text. */}
+          <ul className="mt-2 space-y-2 text-sm text-amber-900 dark:text-amber-200">
+            {extraction.clarification_required_fields.map((key) =>
+              FIELD_HELP[key] ? (
+                <li key={key}>
                   <span className="font-semibold">{fieldLabel(key)}:</span> {FIELD_HELP[key].meaning}{' '}
                   <span className="italic">Add it, {FIELD_HELP[key].add}</span>
-                </p>
-              ))}
-          </div>
+                </li>
+              ) : (
+                <li key={key}>
+                  <span className="font-semibold">{fieldLabel(key)}</span> is missing or unclear — add it to the
+                  instruction.
+                </li>
+              ),
+            )}
+          </ul>
         </div>
       )}
     </div>

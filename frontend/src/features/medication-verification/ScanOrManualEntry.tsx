@@ -43,7 +43,7 @@ export function ScanOrManualEntry({
           type="button"
           onClick={() => setMode('scan')}
           className={cn(
-            'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+            'flex min-h-10 items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
             mode === 'scan' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted',
           )}
           data-testid={`${testIdPrefix}-mode-scan`}
@@ -55,7 +55,7 @@ export function ScanOrManualEntry({
           type="button"
           onClick={() => setMode('enter')}
           className={cn(
-            'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+            'flex min-h-10 items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
             mode === 'enter' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted',
           )}
           data-testid={`${testIdPrefix}-mode-enter`}
@@ -66,7 +66,7 @@ export function ScanOrManualEntry({
       </div>
 
       {mode === 'scan' ? (
-        <BarcodeScanner onDecode={onSubmit} />
+        <BarcodeScanner onDecode={onSubmit} onError={() => setMode('enter')} />
       ) : (
         <div className="flex gap-2">
           <Input

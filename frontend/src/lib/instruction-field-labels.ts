@@ -53,12 +53,12 @@ export const FIELD_LABELS_BY_TYPE: Record<InstructionType, [key: string, label: 
  * nurse taps a "needs clarification" warning.
  */
 export const FIELD_HELP: Record<string, { meaning: string; add: string }> = {
-  medication_name: { meaning: 'Which medicine — brand or generic name.', add: 'e.g. "Paracetamol 500 mg…"' },
+  medication_name: { meaning: 'Which medicine — brand or generic name.', add: 'e.g. "Take [medicine name] 500 mg…"' },
   dose_value: { meaning: 'How much in one dose, as a number.', add: 'e.g. "…500 mg…"' },
   dose_unit: { meaning: 'The unit of the dose: mg, mL, tablets, puffs…', add: 'e.g. "…250 mg…" or "…2 tablets…"' },
   route: {
     meaning: 'How the medicine goes into the body: by mouth (oral), injection, inhaled, on the skin, eye or ear drops…',
-    add: 'e.g. "Take DOLO 250 mg by mouth…"',
+    add: 'e.g. "Take [medicine] 10 mg by mouth…"',
   },
   frequency: { meaning: 'How often: once daily, twice daily, every 6 hours, morning and evening…', add: 'e.g. "…twice daily…"' },
   timing: { meaning: 'When in the day, or in relation to meals or sleep.', add: 'e.g. "…after breakfast and dinner…"' },

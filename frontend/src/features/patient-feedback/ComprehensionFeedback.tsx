@@ -5,7 +5,6 @@ import { useState } from 'react'
 import { sendComprehensionFeedback, sendTeachBack } from '@/api/patient-feedback'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { cn } from '@/lib/utils'
 import type { ComprehensionResponse, TeachBackResult } from '@/types/patient-feedback'
 
 const FACT_LABELS: Record<string, string> = {
@@ -49,17 +48,16 @@ export function ComprehensionFeedback({ token, instructionId }: { token: string;
 
   return (
     <div className="mt-5 border-t pt-4" data-testid="comprehension-feedback">
-      <p className="text-sm font-medium text-muted-foreground">Did this explanation help?</p>
+      <p className="text-lg font-medium">Did this explanation help?</p>
       <div className="mt-2 flex flex-wrap gap-2">
         {OPTIONS.map(({ value, label, icon: Icon }) => (
           <Button
             key={value}
             type="button"
             variant={selected === value ? 'default' : 'outline'}
-            size="sm"
+            size="lg"
             disabled={mutation.isPending}
             onClick={() => mutation.mutate(value)}
-            className={cn(selected && selected !== value && 'opacity-50')}
             data-testid="comprehension-feedback-button"
             data-response={value}
           >
@@ -70,14 +68,14 @@ export function ComprehensionFeedback({ token, instructionId }: { token: string;
       </div>
 
       {selected && selected !== 'UNDERSTOOD' && (
-        <p className="mt-2 text-sm text-muted-foreground" data-testid="comprehension-feedback-confirmation">
+        <p className="mt-2 text-base text-muted-foreground" data-testid="comprehension-feedback-confirmation">
           {CONFIRMATION_TEXT[selected]}
         </p>
       )}
 
       {selected === 'UNDERSTOOD' && !teachBackResult && (
         <div className="mt-3 space-y-2" data-testid="teach-back-prompt">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-base text-muted-foreground">
             Just to double check — in your own words, what do you take and why?
           </p>
           <Textarea
@@ -89,7 +87,7 @@ export function ComprehensionFeedback({ token, instructionId }: { token: string;
           />
           <Button
             type="button"
-            size="sm"
+            size="lg"
             disabled={teachBackMutation.isPending || !teachBackText.trim()}
             onClick={() => teachBackMutation.mutate()}
             data-testid="teach-back-submit"
@@ -102,12 +100,12 @@ export function ComprehensionFeedback({ token, instructionId }: { token: string;
       {teachBackResult && (
         <div className="mt-3 space-y-1" data-testid="teach-back-result">
           {teachBackResult.passed ? (
-            <p className="text-sm font-medium text-green-700 dark:text-green-500">
+            <p className="text-base font-medium text-green-700 dark:text-green-500">
               That's exactly right — well explained.
             </p>
           ) : (
             <>
-              <p className="text-sm font-medium text-amber-700 dark:text-amber-500">
+              <p className="text-base font-medium text-amber-700 dark:text-amber-500">
                 Thanks — let's double check a couple things. Your answer didn't mention{' '}
                 {teachBackResult.missing_facts.map((f) => FACT_LABELS[f] ?? f).join(', ')}.
               </p>

@@ -69,24 +69,33 @@ export function DevicesPage() {
               <TableHead>Band</TableHead>
               <TableHead>State</TableHead>
               <TableHead>Battery</TableHead>
-              <TableHead>Last check-in</TableHead>
-              <TableHead>Firmware</TableHead>
+              <TableHead className="hidden sm:table-cell">Last check-in</TableHead>
+              <TableHead className="hidden md:table-cell">Firmware</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {devices.map((d) => (
               <TableRow key={d.id} data-testid="device-row">
-                <TableCell className="font-medium">{d.device_code}</TableCell>
+                <TableCell className="font-medium">
+                  {d.device_code}
+                  <span className="block text-xs font-normal text-muted-foreground sm:hidden">
+                    {d.last_seen_at ? `Seen ${formatDistanceToNow(new Date(d.last_seen_at), { addSuffix: true })}` : 'Never seen'}
+                  </span>
+                </TableCell>
                 <TableCell>
                   <DeviceState device={d} />
                 </TableCell>
-                <TableCell>{d.battery_percent != null ? `${d.battery_percent}%` : '—'}</TableCell>
-                <TableCell>
+                <TableCell
+                  className={d.battery_percent != null && d.battery_percent <= 20 ? 'font-medium text-amber-700' : undefined}
+                >
+                  {d.battery_percent != null ? `${d.battery_percent}%` : '—'}
+                </TableCell>
+                <TableCell className="hidden sm:table-cell">
                   {d.last_seen_at
                     ? formatDistanceToNow(new Date(d.last_seen_at), { addSuffix: true })
                     : 'Never'}
                 </TableCell>
-                <TableCell className="text-muted-foreground">{d.firmware_version ?? '—'}</TableCell>
+                <TableCell className="hidden text-muted-foreground md:table-cell">{d.firmware_version ?? '—'}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -99,7 +108,9 @@ export function DevicesPage() {
 }
 
 function DeviceState({ device }: { device: WearableDevice }) {
-  if (device.status !== 'ACTIVE') return <Badge variant="outline">{device.status.toLowerCase()}</Badge>
+  if (device.status !== 'ACTIVE') {
+    return <Badge variant="outline">{device.status === 'RETIRED' ? 'Retired' : 'Switched off'}</Badge>
+  }
   if (!device.enrolled) return <Badge variant="outline">Waiting to finish pairing</Badge>
   if (device.assigned && device.charging) {
     // Off the wrist and detection paused: say plainly that nobody is watched.

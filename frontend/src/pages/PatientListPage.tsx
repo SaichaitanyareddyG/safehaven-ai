@@ -3,6 +3,8 @@ import { Search } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { formatDate } from '@/lib/format'
+import { LANGUAGE_LABEL } from '@/lib/language-labels'
 import { listPatients } from '@/api/patients'
 import { AppLayout } from '@/components/AppLayout'
 import { AdmissionStatusBadge } from '@/components/StatusBadge'
@@ -44,7 +46,7 @@ export function PatientListPage() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search by name or patient code…"
+            placeholder="Name or patient code"
             className="pl-8"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -52,7 +54,7 @@ export function PatientListPage() {
           />
         </div>
         <Select value={status} onValueChange={(value) => setStatus(value as AdmissionStatus | 'ALL')}>
-          <SelectTrigger className="w-40" data-testid="patient-status-filter">
+          <SelectTrigger className="w-36 shrink-0" data-testid="patient-status-filter">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -68,10 +70,11 @@ export function PatientListPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Patient</TableHead>
-              <TableHead>Code</TableHead>
-              <TableHead>Date of birth</TableHead>
+              {/* On a phone: name (with code), room and status — the rest is on the patient's page. */}
+              <TableHead className="hidden sm:table-cell">Code</TableHead>
+              <TableHead className="hidden md:table-cell">Date of birth</TableHead>
               <TableHead>Room</TableHead>
-              <TableHead>Language</TableHead>
+              <TableHead className="hidden md:table-cell">Language</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
@@ -108,11 +111,16 @@ export function PatientListPage() {
               >
                 <TableCell className="font-medium">
                   {patient.first_name} {patient.last_name}
+                  <span className="block text-xs font-normal text-muted-foreground sm:hidden">{patient.patient_code}</span>
                 </TableCell>
-                <TableCell className="text-muted-foreground">{patient.patient_code}</TableCell>
-                <TableCell className="text-muted-foreground">{patient.date_of_birth}</TableCell>
+                <TableCell className="hidden text-muted-foreground sm:table-cell">{patient.patient_code}</TableCell>
+                <TableCell className="hidden text-muted-foreground md:table-cell">
+                  {formatDate(patient.date_of_birth)}
+                </TableCell>
                 <TableCell className="text-muted-foreground">{patient.room_number ?? '—'}</TableCell>
-                <TableCell className="text-muted-foreground">{patient.preferred_language}</TableCell>
+                <TableCell className="hidden text-muted-foreground md:table-cell">
+                  {LANGUAGE_LABEL[patient.preferred_language] ?? patient.preferred_language}
+                </TableCell>
                 <TableCell>
                   <AdmissionStatusBadge status={patient.admission_status} />
                 </TableCell>

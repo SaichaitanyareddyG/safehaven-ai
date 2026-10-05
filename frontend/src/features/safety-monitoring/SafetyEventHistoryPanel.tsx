@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { format } from 'date-fns'
 import { Activity, BatteryLow, BellRing, CircleAlert, ClockAlert, Footprints, MessageSquareMore, MessageSquareWarning, PersonStanding, Watch } from 'lucide-react'
 
+import { Button } from '@/components/ui/button'
+import { formatDateTime, formatTime } from '@/lib/format'
 import { listPatientSafetyEvents } from '@/api/safety-monitoring'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { SensorEvent, SensorEventType } from '@/types/safety-monitoring'
@@ -41,7 +43,10 @@ const EVENT_LABELS: Record<SensorEventType, string> = {
  * a weak impact was recorded and correctly suppressed is how you build trust
  * that the silence means something.
  */
+const PAGE = 20
+
 export function SafetyEventHistoryPanel({ patientId }: { patientId: string }) {
+  const [shown, setShown] = useState(PAGE)
   const { data, isLoading, isError } = useQuery({
     queryKey: ['patient-safety-events', patientId],
     queryFn: () => listPatientSafetyEvents(patientId),
@@ -62,9 +67,14 @@ export function SafetyEventHistoryPanel({ patientId }: { patientId: string }) {
       <p className="text-xs text-muted-foreground">
         Everything the wearable reported, including events that did not raise an alert.
       </p>
-      {data.results.map((event) => (
+      {data.results.slice(0, shown).map((event) => (
         <EventRow key={event.id} event={event} />
       ))}
+      {data.results.length > shown && (
+        <Button variant="outline" size="sm" onClick={() => setShown((n) => n + PAGE)}>
+          Show more ({data.results.length - shown} older)
+        </Button>
+      )}
     </div>
   )
 }
@@ -84,13 +94,12 @@ function EventRow({ event }: { event: SensorEvent }) {
         <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
           <p className="text-sm font-medium">{EVENT_LABELS[event.event_type]}</p>
-          <p className="text-xs text-muted-foreground">
-            {format(new Date(event.occurred_at), 'd MMM yyyy, HH:mm:ss')}
+          <p className="text-xs text-muted-foreground" title={Array.isArray(stages) && stages.length > 0 ? `Signals: ${stages.join(', ')}` : undefined}>
+            {formatDateTime(event.occurred_at)}
             {/* The evidence behind the event, so a reviewer can see WHY rather
                 than trusting a label. This is the Module 3 analogue of Module
                 2's per-check detail. */}
-            {typeof score === 'number' && score > 0 && ` · score ${score}/4`}
-            {Array.isArray(stages) && stages.length > 0 && ` · ${stages.join(', ')}`}
+            {typeof score === 'number' && score > 0 && ` · ${score >= 3 ? 'strong' : 'weak'} fall signal`}
           </p>
         </div>
       </div>
@@ -99,7 +108,7 @@ function EventRow({ event }: { event: SensorEvent }) {
         <span
           className="flex shrink-0 items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400"
           data-testid="safety-event-delayed"
-          title={`Detected ${format(new Date(event.occurred_at), 'HH:mm:ss')}, received ${format(new Date(event.received_at), 'HH:mm:ss')}`}
+          title={`Detected ${formatTime(event.occurred_at)}, received ${formatTime(event.received_at)}`}
         >
           <ClockAlert className="h-3 w-3" />
           Delayed

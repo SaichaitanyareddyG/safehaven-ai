@@ -83,13 +83,13 @@ export function UsersPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <Table className="min-w-[640px]">
+              <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="pl-5">Name</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Last sign-in</TableHead>
+                    <TableHead className="hidden sm:table-cell">Role</TableHead>
+                    <TableHead className="hidden sm:table-cell">Status</TableHead>
+                    <TableHead className="hidden md:table-cell">Last sign-in</TableHead>
                     <TableHead className="pr-5 text-right">
                       <span className="sr-only">Actions</span>
                     </TableHead>
@@ -165,18 +165,21 @@ function UserRow({
 
   return (
     <TableRow data-testid="user-row" className={cn(!user.is_active && 'text-muted-foreground')}>
-      <TableCell className="pl-5">
+      <TableCell className="pl-4 whitespace-normal sm:pl-5">
         <div className="flex min-w-0 flex-col">
           <span className="font-medium text-foreground">
             {user.full_name}
             {isMe && <span className="font-normal text-muted-foreground"> (you)</span>}
           </span>
-          <span className="block max-w-[260px] truncate text-sm text-muted-foreground" title={user.email}>
+          <span className="block max-w-[120px] truncate text-sm text-muted-foreground sm:max-w-[260px]" title={user.email}>
             {user.email}
+          </span>
+          <span className="flex items-center gap-2 text-xs text-muted-foreground sm:hidden">
+            {user.role === 'admin' ? 'Admin' : 'Clinician'} · <Status user={user} />
           </span>
         </div>
       </TableCell>
-      <TableCell>
+      <TableCell className="hidden sm:table-cell">
         {isMe || !user.is_active ? (
           <RolePill role={user.role} muted={!user.is_active} />
         ) : (
@@ -191,13 +194,13 @@ function UserRow({
           </Select>
         )}
       </TableCell>
-      <TableCell>
+      <TableCell className="hidden sm:table-cell">
         <Status user={user} />
       </TableCell>
-      <TableCell>
+      <TableCell className="hidden md:table-cell">
         {user.last_login_at ? formatDistanceToNow(new Date(user.last_login_at), { addSuffix: true }) : 'Never'}
       </TableCell>
-      <TableCell className="pr-5 text-right">
+      <TableCell className="pr-3 text-right sm:pr-5">
         {isMe ? (
           <span className="text-muted-foreground">—</span>
         ) : user.is_active ? (

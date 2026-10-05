@@ -62,6 +62,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const [tourDismissed, setTourDismissed] = useState(false)
   // A new user's first visit shows the tour once; anyone can replay it.
   const touring = tourRequested || (!!user && !user.tour_completed && !tourDismissed)
+  // On a phone the menu is folded away; the tour points at menu items, so it
+  // is opened for the tour (otherwise the cards point at nothing).
+  const isPhone = typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches
+  const menuVisible = menuOpen || (touring && isPhone)
 
   return (
     <div className="min-h-screen bg-[#F3F7F8] lg:flex">
@@ -83,7 +87,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
       {user && (
         <SideNav
-          open={menuOpen}
+          open={menuVisible}
           onNavigate={() => setMenuOpen(false)}
           onStartTour={() => {
             setMenuOpen(false)

@@ -74,7 +74,7 @@ export function SetPasswordPage() {
         <Link to="/forgot-password" className={`${authButton} flex items-center justify-center`}>
           Send me a new link
         </Link>
-        <Link to="/login" className="self-center text-sm font-medium text-[#0E7C72] underline-offset-4 hover:underline">
+        <Link to="/login" className="self-center text-sm font-medium text-[#0F6383] underline-offset-4 hover:underline py-2">
           Back to sign in
         </Link>
       </AuthScreen>

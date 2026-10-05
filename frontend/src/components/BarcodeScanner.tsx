@@ -8,7 +8,14 @@ import { useEffect, useRef, useState } from 'react'
  * (see MODULE_2_DESIGN_REPORT.md section 7: one library, one format is the
  * simplest reliable prototype approach).
  */
-export function BarcodeScanner({ onDecode }: { onDecode: (text: string) => void }) {
+export function BarcodeScanner({
+  onDecode,
+  onError,
+}: {
+  onDecode: (text: string) => void
+  /** No camera (denied, missing, or a headless browser): let the caller switch to typing. */
+  onError?: () => void
+}) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -27,7 +34,8 @@ export function BarcodeScanner({ onDecode }: { onDecode: (text: string) => void 
         }
       })
       .catch(() => {
-        setError('Camera unavailable — check browser permissions.')
+        setError('Camera unavailable — allow camera access for this site, or type the code instead.')
+        onError?.()
       })
 
     return () => {

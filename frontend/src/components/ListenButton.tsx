@@ -9,13 +9,13 @@ export function ListenButton({ text, language, token }: { text: string; language
 
   if (status === 'error') {
     return (
-      <div className="flex items-center gap-2">
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <VolumeX className="h-4 w-4" />
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="flex items-center gap-2 text-base text-muted-foreground">
+          <VolumeX className="h-5 w-5" />
           Audio isn't available right now.
         </p>
-        <Button variant="ghost" size="sm" onClick={play} data-testid="listen-retry-button">
-          <RotateCcw className="h-4 w-4" />
+        <Button variant="ghost" size="lg" onClick={play} data-testid="listen-retry-button">
+          <RotateCcw className="h-5 w-5" />
           Try again
         </Button>
       </div>
@@ -24,8 +24,8 @@ export function ListenButton({ text, language, token }: { text: string; language
 
   if (status === 'loading') {
     return (
-      <Button variant="outline" size="sm" disabled data-testid="listen-button">
-        <Loader2 className="h-4 w-4 animate-spin" />
+      <Button variant="outline" size="lg" disabled data-testid="listen-button">
+        <Loader2 className="h-5 w-5 animate-spin" />
         Loading audio…
       </Button>
     )
@@ -33,32 +33,32 @@ export function ListenButton({ text, language, token }: { text: string; language
 
   if (status === 'idle') {
     return (
-      <Button variant="outline" size="sm" onClick={play} data-testid="listen-button">
-        <Play className="h-4 w-4" />
+      <Button size="lg" onClick={play} data-testid="listen-button">
+        <Play className="h-5 w-5" />
         Listen
       </Button>
     )
   }
 
   return (
-    <div className="flex items-center gap-2" data-testid="listen-controls">
+    <div className="flex flex-wrap items-center gap-2" data-testid="listen-controls">
       {status === 'speaking' ? (
-        <Button variant="outline" size="sm" onClick={pause} data-testid="listen-pause-button">
-          <Pause className="h-4 w-4" />
+        <Button variant="outline" size="lg" onClick={pause} data-testid="listen-pause-button">
+          <Pause className="h-5 w-5" />
           Pause
         </Button>
       ) : (
-        <Button variant="outline" size="sm" onClick={resume} data-testid="listen-resume-button">
-          <Play className="h-4 w-4" />
+        <Button variant="outline" size="lg" onClick={resume} data-testid="listen-resume-button">
+          <Play className="h-5 w-5" />
           Resume
         </Button>
       )}
-      <Button variant="outline" size="sm" onClick={stop} data-testid="listen-stop-button">
-        <Square className="h-4 w-4" />
+      <Button variant="outline" size="lg" onClick={stop} data-testid="listen-stop-button">
+        <Square className="h-5 w-5" />
         Stop
       </Button>
-      <Button variant="ghost" size="sm" onClick={replay} data-testid="listen-replay-button">
-        <RotateCcw className="h-4 w-4" />
+      <Button variant="outline" size="lg" onClick={replay} data-testid="listen-replay-button">
+        <RotateCcw className="h-5 w-5" />
         Replay
       </Button>
     </div>

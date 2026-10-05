@@ -101,7 +101,8 @@ export default function App() {
             <Route path="*" element={<Navigate to="/patients" replace />} />
           </Routes>
         </Router>
-        <Toaster />
+        {/* Top centre: an urgent alert must not hide in a corner, least of all on a phone. */}
+        <Toaster richColors position="top-center" closeButton />
       </AuthProvider>
     </QueryClientProvider>
   )

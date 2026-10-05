@@ -238,7 +238,15 @@ def test_response_is_minimal_no_internal_fields(client):
         "allergies",
     }
     instruction_view = body["instructions"][0]
-    assert set(instruction_view.keys()) == {"id", "instruction_type", "text_by_language", "approved_at", "why", "past_reason"}
+    assert set(instruction_view.keys()) == {
+        "id",
+        "instruction_type",
+        "text_by_language",
+        "approved_at",
+        "medication_name",
+        "why",
+        "past_reason",
+    }
     # `id` is deliberately present (an opaque reference, needed by the
     # comprehension-feedback endpoint) — everything else stays absent: no
     # patient_id, no provider/model metadata, no validation internals.

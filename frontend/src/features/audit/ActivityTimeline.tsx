@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, CheckCircle2, Info, User } from 'lucide-react'
 
+import { formatDateTime } from '@/lib/format'
 import { listPatientAuditEvents } from '@/api/audit'
 import { Skeleton } from '@/components/ui/skeleton'
 import { auditEventCategory, auditEventDescription } from '@/lib/audit-event-labels'
@@ -31,7 +32,7 @@ function TimelineRow({ event }: { event: AuditEvent }) {
       <div className="pb-4">
         <p className={cn('text-sm font-medium', isWarning && 'text-destructive')}>{auditEventDescription(event)}</p>
         <p className="text-xs text-muted-foreground">
-          {new Date(event.created_at).toLocaleString()} · {event.actor_type.charAt(0) + event.actor_type.slice(1).toLowerCase()}
+          {formatDateTime(event.created_at)} · {event.actor_type.charAt(0) + event.actor_type.slice(1).toLowerCase()}
         </p>
       </div>
     </li>

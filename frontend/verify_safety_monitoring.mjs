@@ -383,6 +383,7 @@ await step('SCENARIO 7: discharge ends monitoring automatically', async () => {
   await page.goto(`${APP}/patients/${patientId}`)
   await page.waitForSelector('[data-testid="wearable-assignment-row"]', { timeout: 15000 })
   await page.click('[data-testid="discharge-button"]')
+  await page.click('[data-testid="discharge-confirm"]')
   await page.waitForSelector('[data-testid="no-wearable-assigned"]', { timeout: 15000 })
 
   const assignment = await api(`/patients/${patientId}/wearable-assignment`)

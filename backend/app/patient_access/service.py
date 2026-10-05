@@ -37,8 +37,7 @@ from app.reference.condition_explainers import lookup_condition_explainer
 from app.reference.medication_purpose import lookup_medication_purpose
 
 _GENERAL_PURPOSE_DISCLAIMER = (
-    "This is general reference information, not reviewed by your care team, and may not be fully accurate for you. "
-    "Please consult your doctor for confirmation."
+    "This is general information about this medicine. Your nurse or doctor can tell you why it was given to you."
 )
 
 # Fields holding "why" per instruction type — MedicationFacts/MobilityFacts/
@@ -339,6 +338,11 @@ def get_care_plan(db: Session, raw_token: str) -> PatientCarePlanResponse:
             instruction_type=version.extraction.instruction_type if version.extraction else None,
             text_by_language=text_by_language,
             approved_at=instruction.approved_at,
+            medication_name=(
+                version.extraction.normalized_facts.get("medication_name")
+                if version.extraction and version.extraction.instruction_type == InstructionType.MEDICATION
+                else None
+            ),
             why=resolve_why(version.extraction),
         )
 

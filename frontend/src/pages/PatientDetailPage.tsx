@@ -1,12 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, LogOut } from 'lucide-react'
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
+import { formatDate } from '@/lib/format'
+import { LANGUAGE_LABEL } from '@/lib/language-labels'
 import { getPatient, updatePatient } from '@/api/patients'
 import { AppLayout } from '@/components/AppLayout'
 import { AdmissionStatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -38,6 +42,7 @@ export function PatientDetailPage() {
     enabled: !!patientId,
   })
 
+  const [confirmingDischarge, setConfirmingDischarge] = useState(false)
   const dischargeMutation = useMutation({
     mutationFn: () => updatePatient(patientId!, { admission_status: 'DISCHARGED' }),
     onSuccess: () => {
@@ -100,7 +105,7 @@ export function PatientDetailPage() {
           <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
             <div>
               <dt className="text-muted-foreground">Date of birth</dt>
-              <dd className="font-medium">{patient.date_of_birth}</dd>
+              <dd className="font-medium">{formatDate(patient.date_of_birth)}</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Room</dt>
@@ -108,20 +113,48 @@ export function PatientDetailPage() {
             </div>
             <div>
               <dt className="text-muted-foreground">Preferred language</dt>
-              <dd className="font-medium">{patient.preferred_language}</dd>
+              <dd className="font-medium">{LANGUAGE_LABEL[patient.preferred_language] ?? patient.preferred_language}</dd>
             </div>
             <div className="flex items-end">
               {patient.admission_status === 'ACTIVE' && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={dischargeMutation.isPending}
-                  onClick={() => dischargeMutation.mutate()}
-                  data-testid="discharge-button"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Discharge
-                </Button>
+                <Dialog open={confirmingDischarge} onOpenChange={setConfirmingDischarge}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setConfirmingDischarge(true)}
+                    data-testid="discharge-button"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Discharge
+                  </Button>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>
+                        Discharge {patient.first_name} {patient.last_name}?
+                      </DialogTitle>
+                      <DialogDescription>
+                        Their wrist band stops monitoring, their care link stops working, and no new instructions can be
+                        added. Their records stay.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setConfirmingDischarge(false)}>
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        disabled={dischargeMutation.isPending}
+                        onClick={() => {
+                          setConfirmingDischarge(false)
+                          dischargeMutation.mutate()
+                        }}
+                        data-testid="discharge-confirm"
+                      >
+                        Discharge
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               )}
             </div>
           </dl>
@@ -144,7 +177,9 @@ export function PatientDetailPage() {
       </Card>
 
       <Tabs defaultValue="instructions">
-        <TabsList>
+        {/* Scrolls sideways on a phone instead of widening the whole page. */}
+        <div className="-mx-1 overflow-x-auto px-1 pb-1">
+        <TabsList className="w-max">
           <TabsTrigger value="instructions" data-testid="patient-tab-instructions">
             Instructions
           </TabsTrigger>
@@ -161,6 +196,7 @@ export function PatientDetailPage() {
             Patient Chat
           </TabsTrigger>
         </TabsList>
+        </div>
         <TabsContent value="instructions" data-testid="patient-tab-panel-instructions">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-semibold tracking-tight">Instructions</h2>

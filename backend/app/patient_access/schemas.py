@@ -91,6 +91,9 @@ class PatientCareInstructionView(BaseModel):
     instruction_type: InstructionType | None
     text_by_language: dict[str, str]
     approved_at: datetime
+    # The medicine's name, for a MEDICATION card's heading, exactly as the
+    # clinician wrote it (extracted, never inferred). None for other types.
+    medication_name: str | None = None
     # English-only for this prototype — see patient_access/service.py's
     # resolve_why() docstring for why this isn't run through the translation
     # pipeline (yet).

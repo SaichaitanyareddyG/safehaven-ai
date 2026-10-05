@@ -16,6 +16,21 @@ export const LANGUAGE_NATIVE_LABEL: Record<Language, string> = {
   FRENCH: 'Français',
 }
 
+// English names, for staff screens (a nurse reads "Spanish", not "SPANISH").
+export const LANGUAGE_LABEL: Record<Language, string> = {
+  ENGLISH: 'English',
+  TELUGU: 'Telugu',
+  HINDI: 'Hindi',
+  SPANISH: 'Spanish',
+  MANDARIN: 'Mandarin',
+  VIETNAMESE: 'Vietnamese',
+  TAGALOG: 'Tagalog',
+  ARABIC: 'Arabic',
+  KOREAN: 'Korean',
+  RUSSIAN: 'Russian',
+  FRENCH: 'French',
+}
+
 export const ALL_LANGUAGES: Language[] = [
   'ENGLISH',
   'SPANISH',

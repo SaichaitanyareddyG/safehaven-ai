@@ -1,7 +1,6 @@
 import { AlertTriangle, BookOpen, ShieldCheck } from 'lucide-react'
 
 import { ValidationStatusBadge } from '@/components/StatusBadge'
-import { cn } from '@/lib/utils'
 import { fieldLabel, formatFactValue } from '@/lib/instruction-field-labels'
 import type { PatientOutputRead } from '@/types/instructions'
 
@@ -16,18 +15,15 @@ export function PatientOutputPanel({ output }: { output: PatientOutputRead }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-medium">Patient-friendly version (attempt {output.attempt_number})</p>
+        <p className="text-sm text-muted-foreground">Attempt {output.attempt_number}</p>
         <ValidationStatusBadge status={output.validation_status} />
       </div>
 
       {output.reading_grade_level !== null && (
         <p
-          className={cn(
-            'flex items-center gap-2 text-sm',
-            output.reading_grade_level <= READABILITY_TARGET_GRADE
-              ? 'text-emerald-700 dark:text-emerald-400'
-              : 'text-amber-700 dark:text-amber-400',
-          )}
+          // Informational only, so neutral grey — amber read as a warning on
+          // text that had passed every safety check.
+          className="flex items-center gap-2 text-sm text-muted-foreground"
           data-testid="reading-grade-level"
         >
           <BookOpen className="h-4 w-4" />
@@ -59,37 +55,30 @@ export function PatientOutputPanel({ output }: { output: PatientOutputRead }) {
             <AlertTriangle className="h-4 w-4" />
             Blocked — SafeHaven caught a difference from the original
           </p>
-          {output.validation_diff.length > 0 && (
-            <div className="mt-2 overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="text-red-700 dark:text-red-400">
-                    <th className="pb-1 pr-3 font-medium">Field</th>
-                    <th className="pb-1 pr-3 font-medium">Type</th>
-                    <th className="pb-1 pr-3 font-medium">Original</th>
-                    <th className="pb-1 font-medium">Generated</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {output.validation_diff.map((diff, i) => (
-                    <tr key={i} className="text-red-800 dark:text-red-300">
-                      <td className="py-1 pr-3 font-medium">{fieldLabel(diff.field)}</td>
-                      <td className="py-1 pr-3">{diff.type.charAt(0) + diff.type.slice(1).toLowerCase()}</td>
-                      <td className="py-1 pr-3">{formatFactValue(diff.source)}</td>
-                      <td className="py-1">{formatFactValue(diff.generated)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <ul className="mt-2 list-inside list-disc text-sm text-red-700 dark:text-red-400">
-            {output.validation_messages.map((message, i) => (
-              <li key={i}>{message}</li>
-            ))}
+          <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-red-700 dark:text-red-400">
+            {output.validation_diff.length > 0
+              ? output.validation_diff.map((diff, i) => <li key={i}>{describeDifference(diff)}</li>)
+              : output.validation_messages.map((message, i) => <li key={i}>{message}</li>)}
           </ul>
         </div>
       )}
     </div>
   )
+}
+
+/** One plain sentence per difference the safety check found. */
+function describeDifference(diff: PatientOutputRead['validation_diff'][number]): string {
+  const label = fieldLabel(diff.field)
+  switch (diff.type) {
+    case 'CHANGED':
+      return `${label} changed: your instruction says “${formatFactValue(diff.source)}”, the friendly version says “${formatFactValue(diff.generated)}”.`
+    case 'MISSING':
+      return diff.source !== null && diff.source !== undefined
+        ? `${label} (“${formatFactValue(diff.source)}”) is missing from the friendly version.`
+        : `${label} is missing from the friendly version.`
+    case 'ADDED':
+      return `The friendly version added ${label.toLowerCase()} (“${formatFactValue(diff.generated)}”) that isn't in your instruction.`
+    default:
+      return `The friendly version doesn't say ${label.toLowerCase()} clearly.`
+  }
 }

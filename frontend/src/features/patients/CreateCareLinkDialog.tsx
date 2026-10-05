@@ -3,9 +3,11 @@ import { Check, Copy, Link as LinkIcon, ShieldOff } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
+import { formatDateTime } from '@/lib/format'
 import { createCareAccessToken, listCareAccessTokens, revokeCareAccessToken } from '@/api/patient-access'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -103,7 +105,7 @@ export function CreateCareLinkDialog({ patientId }: { patientId: string }) {
         {careUrl ? (
           <div className="space-y-2">
             <Label htmlFor="care-url">
-              Link (expires {new Date(createMutation.data!.expires_at).toLocaleString()})
+              Link (expires {formatDateTime(createMutation.data!.expires_at)})
             </Label>
             <div className="flex gap-2">
               <Input
@@ -113,7 +115,7 @@ export function CreateCareLinkDialog({ patientId }: { patientId: string }) {
                 onFocus={(e) => e.currentTarget.select()}
                 data-testid="care-link-url"
               />
-              <Button type="button" variant="outline" onClick={handleCopy}>
+              <Button type="button" variant="outline" onClick={handleCopy} aria-label="Copy link">
                 {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               </Button>
             </div>
@@ -124,15 +126,19 @@ export function CreateCareLinkDialog({ patientId }: { patientId: string }) {
         ) : (
           <div className="flex items-end gap-2">
             <div className="flex-1 space-y-2">
-              <Label htmlFor="expires-in-hours">Expires in (hours, optional)</Label>
-              <Input
-                id="expires-in-hours"
-                type="number"
-                min={1}
-                placeholder="Default"
-                value={expiresInHours}
-                onChange={(e) => setExpiresInHours(e.target.value)}
-              />
+              <Label htmlFor="expires-in-hours">Link works for</Label>
+              {/* 24 hours is the longest the server allows. */}
+              <Select value={expiresInHours || '24'} onValueChange={setExpiresInHours}>
+                <SelectTrigger id="expires-in-hours" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="24">24 hours</SelectItem>
+                  <SelectItem value="12">12 hours</SelectItem>
+                  <SelectItem value="4">4 hours</SelectItem>
+                  <SelectItem value="1">1 hour</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <Button
               onClick={() => createMutation.mutate()}
@@ -158,7 +164,7 @@ export function CreateCareLinkDialog({ patientId }: { patientId: string }) {
                   <div className="flex items-center gap-2">
                     {tokenStatusBadge(token.status)}
                     <span className="text-muted-foreground">
-                      expires {new Date(token.expires_at).toLocaleString()}
+                      expires {formatDateTime(token.expires_at)}
                     </span>
                   </div>
                   {token.status === 'ACTIVE' && (

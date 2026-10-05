@@ -138,6 +138,14 @@ _DUPLICATE_ADMINISTRATION_WINDOW_MINUTES = _TIME_TOLERANCE_MINUTES * 2
 _IMAGE_IDENTIFIED_PLACEHOLDER = "IMAGE-CONFIRMED"
 
 
+
+def _num(value: object) -> str:
+    """25.0 -> "25", 12.5 -> "12.5": how a dose is written on a label."""
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return str(value)
+
 def _find_medication_instructions(db: Session, patient_id: uuid.UUID) -> list[CareInstruction]:
     """All APPROVED MEDICATION-type instructions for a patient, at ANY
     clinical_status — STOPPED/COMPLETED ones are needed to build the
@@ -321,10 +329,10 @@ def _check_dose(order_facts: dict, product: MedicationProduct) -> CheckResult:
     if order_value is None or not order_unit:
         return CheckResult(passed=False, detail="Order does not have a structured dose to compare against.")
     if float(order_value) == product.strength_value and order_unit == product.strength_unit.strip().lower():
-        return CheckResult(passed=True, detail=f"{product.strength_value}{product.strength_unit} matches the order.")
+        return CheckResult(passed=True, detail=f"{_num(product.strength_value)} {product.strength_unit} matches the order.")
     return CheckResult(
         passed=False,
-        detail=f"Order specifies {order_value}{order_unit}, scanned product is {product.strength_value}{product.strength_unit}.",
+        detail=f"Order says {_num(order_value)} {order_unit}, the scanned product is {_num(product.strength_value)} {product.strength_unit}.",
     )
 
 
@@ -453,7 +461,7 @@ def _check_time(order_facts: dict, now: datetime) -> CheckResult:
     if scheduled is None:
         return CheckResult(
             passed=True,
-            detail="No specific administration time documented — time check skipped (prototype configuration).",
+            detail="No set time in the order, so the time was not checked.",
         )
 
     hospital_tz = get_settings().hospital_timezone
@@ -468,16 +476,15 @@ def _check_time(order_facts: dict, now: datetime) -> CheckResult:
         return CheckResult(
             passed=True,
             detail=(
-                f"Within {_TIME_TOLERANCE_MINUTES} minutes of the scheduled "
-                f"{scheduled.strftime('%H:%M')} {hospital_tz} (prototype configuration)."
+                f"Within {_TIME_TOLERANCE_MINUTES} minutes of the scheduled time "
+                f"({scheduled.strftime('%H:%M')})."
             ),
         )
     return CheckResult(
         passed=False,
         detail=(
-            f"Outside the configured {_TIME_TOLERANCE_MINUTES}-minute window around "
-            f"{scheduled.strftime('%H:%M')} {hospital_tz} — it is currently "
-            f"{local_now.strftime('%H:%M')} there (prototype configuration)."
+            f"More than {_TIME_TOLERANCE_MINUTES} minutes from the scheduled time "
+            f"({scheduled.strftime('%H:%M')}) — it is now {local_now.strftime('%H:%M')}."
         ),
     )
 
@@ -606,7 +613,7 @@ def _resolve_and_compare(
     non_active_dose_match = next((i for i in non_active if _check_dose(i.current_version.extraction.normalized_facts, product).passed), None)
     active_dose_matches = [i for i in active if _check_dose(i.current_version.extraction.normalized_facts, product).passed]
 
-    patient_check = CheckResult(passed=True, detail=f"Wristband matches {patient.first_name} {patient.last_name} ({patient.patient_code}).")
+    patient_check = CheckResult(passed=True, detail=f"Confirmed as {patient.first_name} {patient.last_name} ({patient.patient_code}).")
     medication_check = CheckResult(passed=True, detail=f"{product.medication_name} matches this patient's medication history.")
 
     if not active:

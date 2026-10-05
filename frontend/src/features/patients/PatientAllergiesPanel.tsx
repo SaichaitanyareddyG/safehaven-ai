@@ -29,6 +29,7 @@ export function PatientAllergiesPanel({ patientId }: { patientId: string }) {
     },
   })
 
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const deleteMutation = useMutation({
     mutationFn: (allergyId: string) => deleteAllergy(patientId, allergyId),
     onSuccess: () => {
@@ -49,8 +50,7 @@ export function PatientAllergiesPanel({ patientId }: { patientId: string }) {
     <div className="space-y-3" data-testid="allergies-panel">
       <p className="text-sm font-medium">Allergies</p>
       <p className="text-xs text-muted-foreground">
-        Checked automatically before every medication administration in Module 2 — a match blocks
-        administration regardless of dose, route, or timing.
+        Checked before every medication scan — a match stops the medicine being given, whatever the dose or time.
       </p>
 
       <div className="flex flex-wrap gap-2" data-testid="allergies-list">
@@ -66,16 +66,41 @@ export function PatientAllergiesPanel({ patientId }: { patientId: string }) {
             data-testid="allergy-badge"
           >
             {allergy.allergen}
-            <button
-              type="button"
-              onClick={() => deleteMutation.mutate(allergy.id)}
-              disabled={deleteMutation.isPending}
-              className="rounded-full p-0.5 hover:bg-background/20"
-              aria-label={`Remove ${allergy.allergen}`}
-              data-testid="allergy-remove-button"
-            >
-              <X className="h-3 w-3" />
-            </button>
+            {confirmingId === allergy.id ? (
+              <span className="ml-1 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmingId(null)
+                    deleteMutation.mutate(allergy.id)
+                  }}
+                  disabled={deleteMutation.isPending}
+                  className="rounded-md bg-background/90 px-2 py-1 text-xs font-semibold text-foreground"
+                  data-testid="allergy-remove-confirm"
+                >
+                  Remove
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingId(null)}
+                  className="rounded-md px-2 py-1 text-xs font-medium underline-offset-2 hover:underline"
+                >
+                  Keep
+                </button>
+              </span>
+            ) : (
+              // Two taps, with a real target: removing an allergy changes what
+              // the medication check blocks, so a stray tap must not do it.
+              <button
+                type="button"
+                onClick={() => setConfirmingId(allergy.id)}
+                className="flex size-7 items-center justify-center rounded-full hover:bg-black/10"
+                aria-label={`Remove ${allergy.allergen}`}
+                data-testid="allergy-remove-button"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </Badge>
         ))}
       </div>

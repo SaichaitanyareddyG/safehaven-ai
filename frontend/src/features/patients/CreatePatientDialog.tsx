@@ -90,12 +90,12 @@ export function CreatePatientDialog() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="first_name">First name</Label>
-              <Input id="first_name" {...register('first_name')} />
+              <Input id="first_name" aria-invalid={!!errors.first_name} {...register('first_name')} />
               {errors.first_name && <p className="text-sm text-destructive">{errors.first_name.message}</p>}
             </div>
             <div className="space-y-2">
               <Label htmlFor="last_name">Last name</Label>
-              <Input id="last_name" {...register('last_name')} />
+              <Input id="last_name" aria-invalid={!!errors.last_name} {...register('last_name')} />
               {errors.last_name && <p className="text-sm text-destructive">{errors.last_name.message}</p>}
             </div>
           </div>
@@ -105,6 +105,7 @@ export function CreatePatientDialog() {
               {/* iOS gives a date field its own size and look; keep it the same box as the others. */}
               <Input
                 id="date_of_birth"
+                aria-invalid={!!errors.date_of_birth}
                 type="date"
                 className="block min-w-0 appearance-none text-left [&::-webkit-date-and-time-value]:text-left"
                 {...register('date_of_birth')}
@@ -115,13 +116,14 @@ export function CreatePatientDialog() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="room_number">Room number</Label>
-              <Input id="room_number" placeholder="Optional" {...register('room_number')} />
+              <Input id="room_number" aria-invalid={!!errors.room_number} placeholder="Optional" {...register('room_number')} />
             </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="reason_for_visit">Reason for visit</Label>
             <Input
               id="reason_for_visit"
+              aria-invalid={!!errors.reason_for_visit}
               placeholder="e.g. fever and cough for three days"
               {...register('reason_for_visit')}
             />

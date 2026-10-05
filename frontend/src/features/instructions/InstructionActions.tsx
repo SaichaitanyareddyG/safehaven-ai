@@ -164,6 +164,9 @@ export function RejectDialog({ instructionId }: { instructionId: string }) {
             {errors.reason && <p className="text-sm text-destructive">{errors.reason.message}</p>}
           </div>
           <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
             <Button
               type="submit"
               variant="destructive"

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { BellRing, ShieldCheck, Volume2, VolumeX } from 'lucide-react'
 
+import { formatTime } from '@/lib/format'
 import { listSafetyAlerts } from '@/api/safety-monitoring'
 import { AppLayout } from '@/components/AppLayout'
 import { Button } from '@/components/ui/button'
@@ -85,7 +86,7 @@ export function SafetyAlertsPage() {
           }
         >
           {sound.enabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-          {sound.enabled ? 'Sound on' : 'Sound off'}
+          {!sound.enabled ? 'Sound off' : sound.unlocked ? 'Sound on' : 'Tap to enable sound'}
         </Button>
         </div>
       </div>
@@ -107,7 +108,8 @@ export function SafetyAlertsPage() {
         </div>
       )}
 
-      {!isLoading && alerts.length === 0 && (
+      {/* Never "all clear" while the alerts could not even be loaded. */}
+      {!isLoading && !isError && alerts.length === 0 && (
         <div
           className="rounded-lg border border-dashed bg-background p-10 text-center"
           data-testid="no-alerts"
@@ -132,7 +134,7 @@ export function SafetyAlertsPage() {
             </span>
             {dataUpdatedAt > 0 && (
               <span className="ml-auto text-xs">
-                Updated {new Date(dataUpdatedAt).toLocaleTimeString()}
+                Updated {formatTime(dataUpdatedAt)}
               </span>
             )}
           </div>
@@ -148,7 +150,7 @@ export function SafetyAlertsPage() {
       {resolved && resolved.total > 0 && (
         <section className="mt-10">
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">Recently resolved</h2>
-          <div className="space-y-3 opacity-70">
+          <div className="space-y-3">
             {resolved.results.slice(0, 5).map((alert) => (
               <SafetyAlertCard key={alert.id} alert={alert} />
             ))}

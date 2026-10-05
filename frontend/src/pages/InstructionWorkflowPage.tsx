@@ -290,7 +290,7 @@ export function InstructionWorkflowPage() {
         {instruction.status === 'APPROVED' && latestOutput && (
           <Card>
             <CardHeader className="pb-2">
-              <p className="text-sm font-medium">Telugu / Hindi translations</p>
+              <p className="text-sm font-medium">Translations</p>
             </CardHeader>
             <CardContent>
               <TranslationsPanel

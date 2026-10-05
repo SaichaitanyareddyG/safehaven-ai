@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
 import { BatteryFull, BatteryLow, Plus, Wifi, WifiOff } from 'lucide-react'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { assignWearable, listWearableDevices } from '@/api/safety-monitoring'
@@ -116,10 +117,13 @@ export function AssignDeviceDialog({ patientId }: { patientId: string }) {
             {devicesQuery.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
             {!devicesQuery.isLoading && available.length === 0 && (
               <p className="text-sm text-muted-foreground" data-testid="no-devices-available">
-                No enrolled devices are free.{' '}
+                No bands are free right now.{' '}
                 {inUse > 0
-                  ? `${inUse} ${inUse === 1 ? 'device is' : 'devices are'} monitoring other patients.`
-                  : 'Register and enrol a device first.'}
+                  ? `${inUse} ${inUse === 1 ? 'band is' : 'bands are'} monitoring other patients.`
+                  : ''}{' '}
+                <Link to="/devices" className="font-medium text-primary underline-offset-4 hover:underline">
+                  Add a band
+                </Link>
               </p>
             )}
             <div className="space-y-1">
@@ -134,6 +138,7 @@ export function AssignDeviceDialog({ patientId }: { patientId: string }) {
             </div>
           </div>
 
+          {available.length > 0 && (
           <div className="space-y-2">
             <Label htmlFor="monitoring-profile" className="text-xs">
               Monitoring profile
@@ -142,7 +147,7 @@ export function AssignDeviceDialog({ patientId }: { patientId: string }) {
                 behaviour; defaulting to Restricted mobility would switch on an
                 inferential detector nobody asked for. */}
             <Select value={profile} onValueChange={(v) => setProfile(v as MonitoringProfile)}>
-              <SelectTrigger id="monitoring-profile" data-testid="monitoring-profile-select">
+              <SelectTrigger id="monitoring-profile" className="w-full" data-testid="monitoring-profile-select">
                 <SelectValue placeholder="Choose a profile…" />
               </SelectTrigger>
               <SelectContent>
@@ -159,9 +164,13 @@ export function AssignDeviceDialog({ patientId }: { patientId: string }) {
               </p>
             )}
           </div>
+          )}
         </div>
 
         <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
           <Button
             onClick={() => assign.mutate()}
             disabled={!deviceId || !profile || assign.isPending}
@@ -196,7 +205,7 @@ function DeviceOption({
       type="button"
       onClick={onSelect}
       className={cn(
-        'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm',
+        'flex min-h-11 w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm',
         selected ? 'border-primary bg-primary/5' : 'hover:bg-muted/50',
       )}
       data-testid="device-option"

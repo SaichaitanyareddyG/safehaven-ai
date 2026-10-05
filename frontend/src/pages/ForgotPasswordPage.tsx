@@ -17,7 +17,7 @@ export function ForgotPasswordPage() {
   if (sentTo) {
     return (
       <AuthScreen>
-        <MailCheck className="h-10 w-10 text-[#0E7C72]" aria-hidden="true" />
+        <MailCheck className="h-10 w-10 text-[#0F6383]" aria-hidden="true" />
         <div className="flex flex-col gap-2">
           <h2 className="text-[26px] font-semibold tracking-tight sm:text-[32px]">Check your email</h2>
           <p className="text-base leading-relaxed text-[#4A5558]">
@@ -72,7 +72,7 @@ export function ForgotPasswordPage() {
       <button type="submit" disabled={!valid || sending} className={authButton} data-testid="forgot-submit">
         {sending ? 'Sending…' : 'Email me a link'}
       </button>
-      <Link to="/login" className="self-center text-sm font-medium text-[#0E7C72] underline-offset-4 hover:underline">
+      <Link to="/login" className="self-center text-sm font-medium text-[#0F6383] underline-offset-4 hover:underline py-2">
         Back to sign in
       </Link>
     </AuthScreen>

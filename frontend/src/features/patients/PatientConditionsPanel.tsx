@@ -29,6 +29,7 @@ export function PatientConditionsPanel({ patientId }: { patientId: string }) {
     },
   })
 
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const deleteMutation = useMutation({
     mutationFn: (conditionId: string) => deleteCondition(patientId, conditionId),
     onSuccess: () => {
@@ -49,8 +50,7 @@ export function PatientConditionsPanel({ patientId }: { patientId: string }) {
     <div className="space-y-3" data-testid="conditions-panel">
       <p className="text-sm font-medium">Documented conditions</p>
       <p className="text-xs text-muted-foreground">
-        Clinician-entered context only — not linked to specific instructions yet, and never used to
-        guess a medication's purpose for this patient.
+        For the care team's information. SafeHaven never uses these to guess why a medicine was prescribed.
       </p>
 
       <div className="flex flex-wrap gap-2" data-testid="conditions-list">
@@ -61,16 +61,41 @@ export function PatientConditionsPanel({ patientId }: { patientId: string }) {
         {data?.results.map((condition) => (
           <Badge key={condition.id} variant="secondary" className="gap-1 py-1 pr-1" data-testid="condition-badge">
             {condition.condition_name}
-            <button
-              type="button"
-              onClick={() => deleteMutation.mutate(condition.id)}
-              disabled={deleteMutation.isPending}
-              className="rounded-full p-0.5 hover:bg-muted-foreground/20"
-              aria-label={`Remove ${condition.condition_name}`}
-              data-testid="condition-remove-button"
-            >
-              <X className="h-3 w-3" />
-            </button>
+            {confirmingId === condition.id ? (
+              <span className="ml-1 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmingId(null)
+                    deleteMutation.mutate(condition.id)
+                  }}
+                  disabled={deleteMutation.isPending}
+                  className="rounded-md bg-background/90 px-2 py-1 text-xs font-semibold text-foreground"
+                  data-testid="condition-remove-confirm"
+                >
+                  Remove
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingId(null)}
+                  className="rounded-md px-2 py-1 text-xs font-medium underline-offset-2 hover:underline"
+                >
+                  Keep
+                </button>
+              </span>
+            ) : (
+              // Two taps, with a real target: removing an allergy changes what
+              // the medication check blocks, so a stray tap must not do it.
+              <button
+                type="button"
+                onClick={() => setConfirmingId(condition.id)}
+                className="flex size-7 items-center justify-center rounded-full hover:bg-black/10"
+                aria-label={`Remove ${condition.condition_name}`}
+                data-testid="condition-remove-button"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </Badge>
         ))}
       </div>

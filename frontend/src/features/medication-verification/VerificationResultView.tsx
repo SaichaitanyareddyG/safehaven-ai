@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { mismatchReasonText } from '@/lib/medication-reasons'
 import { cn } from '@/lib/utils'
 import type { NotGivenReason, VerifyResponse } from '@/types/medication-verification'
 
@@ -93,12 +94,31 @@ export function VerificationResultView({
         <div className="rounded-lg border bg-muted/30 p-3 text-sm">
           <p className="font-semibold">{verification.product.medication_name}</p>
           <p className="text-muted-foreground">
-            {verification.product.strength_value}
-            {verification.product.strength_unit} · {verification.product.formulation} · {verification.product.route}
+            {Number(verification.product.strength_value)} {verification.product.strength_unit} ·{' '}
+            {verification.product.formulation} · {verification.product.route}
           </p>
         </div>
       )}
 
+      {/* The verdict first, with why — then the individual checks. */}
+      <div className={cn('rounded-lg border-2 p-4', style.banner)} data-testid="verification-banner">
+        <p className="flex items-center gap-2 text-lg font-bold">
+          {verification.result === 'VERIFIED' && <CheckCircle2 className="h-5 w-5 shrink-0" />}
+          {verification.result === 'WARNING' && <AlertTriangle className="h-5 w-5 shrink-0" />}
+          {verification.result === 'REVIEW_REQUIRED' && <HelpCircle className="h-5 w-5 shrink-0" />}
+          {verification.result === 'BLOCKED' && <XCircle className="h-5 w-5 shrink-0" />}
+          {style.label}
+        </p>
+        {verification.mismatch_reasons.length > 0 && (
+          <ul className="mt-2 list-inside list-disc space-y-1 text-sm font-medium" data-testid="verification-reasons">
+            {verification.mismatch_reasons.map((code) => (
+              <li key={code}>{mismatchReasonText(code)}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {rows.length > 0 && (
       <div className="divide-y rounded-lg border">
         {rows.map((key) => {
           const check = verification.checks[key]
@@ -117,14 +137,8 @@ export function VerificationResultView({
           )
         })}
       </div>
+      )}
 
-      <div className={cn('flex items-center gap-2 rounded-lg border-2 p-4 text-lg font-bold', style.banner)} data-testid="verification-banner">
-        {verification.result === 'VERIFIED' && <CheckCircle2 className="h-5 w-5" />}
-        {verification.result === 'WARNING' && <AlertTriangle className="h-5 w-5" />}
-        {verification.result === 'REVIEW_REQUIRED' && <HelpCircle className="h-5 w-5" />}
-        {verification.result === 'BLOCKED' && <XCircle className="h-5 w-5" />}
-        {style.label}
-      </div>
 
       {isPrn && (verification.result === 'VERIFIED' || verification.result === 'WARNING') && (
         <div className="space-y-2 rounded-lg border bg-muted/30 p-4" data-testid="prn-reason-panel">
@@ -178,7 +192,7 @@ export function VerificationResultView({
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {(verification.result === 'VERIFIED' || verification.result === 'WARNING') && (
           <Button
             onClick={() =>

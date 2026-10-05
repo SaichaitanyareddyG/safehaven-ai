@@ -50,6 +50,10 @@ function beep(ctx: AudioContext, startAt: number, frequency: number) {
 
 export function useAlertSound() {
   const [enabled, setEnabled] = useState(readPreference)
+  // Phones (iOS above all) keep audio and speech locked until the person taps
+  // something on the page. Until then "Sound on" would be a promise the
+  // browser won't keep, so the button says "Tap to enable sound" instead.
+  const [unlocked, setUnlocked] = useState(false)
   const contextRef = useRef<AudioContext | null>(null)
 
   useEffect(() => {
@@ -68,6 +72,27 @@ export function useAlertSound() {
     contextRef.current = new Ctor()
     return contextRef.current
   }, [])
+
+  const unlock = useCallback(() => {
+    const ctx = getContext()
+    if (!ctx) return
+    void ctx
+      .resume()
+      .then(() => {
+        if (ctx.state === 'running') setUnlocked(true)
+      })
+      .catch(() => undefined)
+    // iOS also needs one utterance started from a tap before speech works later.
+    if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(''))
+  }, [getContext])
+
+  // The first tap anywhere on the page unlocks audio, not only the button.
+  useEffect(() => {
+    if (unlocked) return
+    const onFirstTap = () => unlock()
+    window.addEventListener('pointerdown', onFirstTap, { once: true })
+    return () => window.removeEventListener('pointerdown', onFirstTap)
+  }, [unlocked, unlock])
 
   const play = useCallback(() => {
     if (!enabled) return
@@ -96,17 +121,19 @@ export function useAlertSound() {
     [enabled],
   )
 
-  /** Toggle, using the click itself to unlock audio. */
+  /** Toggle, using the click itself to unlock audio. While still locked, a
+   * tap only unlocks — it must not switch sound off. */
   const toggle = useCallback(() => {
+    if (enabled && !unlocked) {
+      unlock()
+      return
+    }
     setEnabled((previous) => {
       const next = !previous
-      if (next) {
-        const ctx = getContext()
-        void ctx?.resume().catch(() => undefined)
-      }
+      if (next) unlock()
       return next
     })
-  }, [getContext])
+  }, [enabled, unlocked, unlock])
 
-  return { enabled, toggle, play, speak }
+  return { enabled, unlocked, toggle, play, speak }
 }

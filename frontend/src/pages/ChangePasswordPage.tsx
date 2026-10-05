@@ -131,7 +131,7 @@ export function ChangePasswordPage() {
                 logout()
                 navigate('/login')
               }}
-              className="self-center text-sm font-medium text-[#4A5558] underline-offset-4 hover:underline"
+              className="self-center text-sm font-medium text-[#4A5558] underline-offset-4 hover:underline py-2"
             >
               Not you? Sign out
             </button>

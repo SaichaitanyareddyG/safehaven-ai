@@ -8,6 +8,7 @@ import {
   verifyConfirmedMedication,
   verifyMedication,
 } from '@/api/medication-verification'
+import { formatDate, formatDateTime } from '@/lib/format'
 import { getPatientByCode } from '@/api/patients'
 import { AppLayout } from '@/components/AppLayout'
 import { Button } from '@/components/ui/button'
@@ -125,7 +126,7 @@ export function MedicationVerificationPage() {
           )}
         </div>
 
-        {patient && step !== 'scan-patient' && (
+        {patient && step !== 'scan-patient' && step !== 'confirm-patient' && (
           <Card className="mb-4">
             <CardContent className="flex items-center justify-between py-4">
               <div>
@@ -133,7 +134,7 @@ export function MedicationVerificationPage() {
                   {patient.first_name} {patient.last_name}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  DOB {patient.date_of_birth} · {patient.patient_code}
+                  DOB {formatDate(patient.date_of_birth)} · {patient.patient_code}
                   {patient.room_number ? ` · Room ${patient.room_number}` : ''}
                 </p>
               </div>
@@ -142,7 +143,7 @@ export function MedicationVerificationPage() {
                   className="rounded-full border border-destructive px-3 py-1 text-sm font-semibold text-destructive"
                   data-testid="patient-not-admitted-badge"
                 >
-                  {patient.admission_status}
+                  {patient.admission_status === 'DISCHARGED' ? 'Discharged' : 'Not admitted'}
                 </span>
               )}
             </CardContent>
@@ -175,19 +176,18 @@ export function MedicationVerificationPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Confirm this is the right patient before continuing — the second identifier check
-                required before any medication step (never rely on the code alone).
+                Check the name and date of birth against the patient's wristband before continuing.
               </p>
               <div className="rounded-lg border p-4">
                 <p className="text-lg font-semibold">
                   {patient.first_name} {patient.last_name}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  DOB {patient.date_of_birth} · {patient.patient_code}
+                  DOB {formatDate(patient.date_of_birth)} · {patient.patient_code}
                   {patient.room_number ? ` · Room ${patient.room_number}` : ''}
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button onClick={() => setStep('scan-medication')} data-testid="patient-confirm-identity-button">
                   Yes, this is {patient.first_name} {patient.last_name}
                 </Button>
@@ -266,7 +266,7 @@ export function MedicationVerificationPage() {
             <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
               <CheckCircle2 className="h-10 w-10 text-green-600" />
               <p className="text-lg font-semibold">Administration confirmed</p>
-              <p className="text-sm text-muted-foreground">{new Date().toLocaleString()}</p>
+              <p className="text-sm text-muted-foreground">{formatDateTime(new Date())}</p>
               <Button onClick={reset} data-testid="verify-another-button">
                 Verify another medication
               </Button>

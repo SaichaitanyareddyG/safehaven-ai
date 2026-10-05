@@ -34,7 +34,13 @@ export function describeReviewReason(reason: string): ReviewReasonText {
       aiProblem: false,
     }
   }
-  return { title: 'A detail is missing or unclear', body: reason, aiProblem: false }
+  // Missing or unclear details: the facts card below lists each one with
+  // what it means, so the banner doesn't repeat the backend's wording.
+  return {
+    title: 'A detail is missing or unclear',
+    body: 'Check the highlighted details below, then add them to the instruction and submit it again.',
+    aiProblem: false,
+  }
 }
 
 /** One short line, for lists. */
@@ -42,5 +48,5 @@ export function shortReviewReason(reason: string): string {
   if (reason.startsWith('FACT_PRESERVATION_FAILED')) return 'AI text blocked — try again'
   if (reason.startsWith('AI_GENERATION_FAILED')) return 'AI service problem — try again'
   if (reason.startsWith('AI_EXTRACTION_FAILED')) return "AI couldn't read it"
-  return reason
+  return 'A detail is missing — add it'
 }

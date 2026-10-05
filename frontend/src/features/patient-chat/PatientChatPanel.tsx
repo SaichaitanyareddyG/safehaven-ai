@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, Globe, Send } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { getCarePlanChat, sendCarePlanChatMessage } from '@/api/patient-chat'
 import { Button } from '@/components/ui/button'
@@ -41,6 +41,13 @@ export function PatientChatPanel({ token }: { token: string }) {
 
   const messages = data?.messages ?? []
 
+  // Keep the newest message in view: on a phone the question, "Thinking…"
+  // and the answer otherwise land below the visible part of the box.
+  const endRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [messages.length, pendingUserText, mutation.isPending, isOpen])
+
   return (
     <div className="rounded-2xl border-2 bg-background text-left shadow-sm" data-testid="patient-chat-panel">
       <button
@@ -55,7 +62,7 @@ export function PatientChatPanel({ token }: { token: string }) {
 
       {isOpen && (
         <div className="border-t p-6" data-testid="patient-chat-body">
-          <div className="max-h-96 space-y-3 overflow-y-auto">
+          <div className="max-h-[60vh] space-y-3 overflow-y-auto" aria-live="polite">
             {messages.length === 0 && !pendingUserText && (
               <p className="text-base text-muted-foreground">
                 Ask about your medications or instructions — this only answers from your own approved care plan.
@@ -65,7 +72,17 @@ export function PatientChatPanel({ token }: { token: string }) {
               <ChatBubble key={message.id} message={message} />
             ))}
             {pendingUserText && <ChatBubble message={{ role: 'PATIENT', text: pendingUserText } as ChatMessage} />}
-            {mutation.isPending && <p className="text-sm text-muted-foreground">Thinking…</p>}
+            {mutation.isPending && (
+              <p className="flex items-center gap-2 text-base text-muted-foreground" data-testid="patient-chat-thinking">
+                <span className="flex gap-1" aria-hidden="true">
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.3s]" />
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.15s]" />
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/60" />
+                </span>
+                Thinking…
+              </p>
+            )}
+            <div ref={endRef} />
           </div>
 
           <div className="mt-4 flex gap-2">
@@ -83,8 +100,15 @@ export function PatientChatPanel({ token }: { token: string }) {
               className="flex-1"
               data-testid="patient-chat-input"
             />
-            <Button onClick={handleSend} disabled={mutation.isPending || !draft.trim()} data-testid="patient-chat-send">
-              <Send className="h-4 w-4" />
+            <Button
+              onClick={handleSend}
+              disabled={mutation.isPending || !draft.trim()}
+              data-testid="patient-chat-send"
+              size="icon-lg"
+              aria-label="Send question"
+              className="h-auto min-h-12 w-12"
+            >
+              <Send className="h-5 w-5" />
             </Button>
           </div>
         </div>

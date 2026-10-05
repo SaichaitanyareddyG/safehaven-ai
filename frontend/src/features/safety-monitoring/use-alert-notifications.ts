@@ -96,10 +96,16 @@ function announce(alert: SafetyAlert) {
   // `alert.message` is rendered by the backend from a single table, so the
   // observed-not-diagnosed wording is identical here, on the card, and in the
   // audit timeline. Never compose alert text in the UI.
+  // Red for urgent (fall, help, no response), amber otherwise; one tap to
+  // the patient. A full page load is fine here: this runs outside React.
+  const viewPatient = {
+    label: 'View patient',
+    onClick: () => window.location.assign(`/patients/${alert.patient_id}`),
+  }
   if (alert.priority === 'HIGH') {
-    toast.error(alert.message, { description, duration: 15_000 })
+    toast.error(alert.message, { description, duration: 30_000, action: viewPatient })
   } else {
-    toast.warning(alert.message, { description, duration: 8_000 })
+    toast.warning(alert.message, { description, duration: 10_000, action: viewPatient })
   }
 
   // Hidden tab: also an OS notification. Patient code and room only — see

@@ -4,22 +4,22 @@
 // together if the pipeline itself changes.
 
 export const ANALYZE_STEPS = [
-  'Sending instruction text to AI',
-  'Extracting structured facts (medication, dose, route, frequency…)',
-  'Normalizing values (abbreviations, units)',
-  'Checking for ambiguous or conflicting facts',
-  'Checking all required fields are present',
-  'Finalizing status',
+  'Reading your instruction',
+  'Finding the medicine, dose, route and timing',
+  'Spelling out abbreviations and units',
+  'Checking nothing is unclear',
+  'Checking nothing is missing',
+  'Done',
 ]
 
 export const GENERATE_STEPS = [
-  'Generating patient-friendly text',
+  'Writing it in plain language',
   'Checking the dose number was preserved',
   'Checking safety warnings were preserved',
-  'Re-extracting facts from the generated text',
-  'Comparing re-extracted facts to the original',
-  'Checking for any unsupported facts added',
-  'Finalizing safety verdict',
+  'Reading the plain version back',
+  'Comparing it with your instruction',
+  'Checking nothing was added',
+  'Final safety check',
 ]
 
 export const TRANSLATE_STEPS = [

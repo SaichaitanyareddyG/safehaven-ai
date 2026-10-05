@@ -154,7 +154,8 @@ def test_morning_dose_at_local_morning_passes_in_a_non_utc_hospital(monkeypatch)
             datetime(2026, 9, 15, 2, 30, tzinfo=timezone.utc),
         )
         assert check.passed is True
-        assert "Asia/Kolkata" in check.detail
+        # The nurse sees the scheduled time in the hospital's own clock.
+        assert "08:00" in check.detail
     finally:
         get_settings.cache_clear()
 

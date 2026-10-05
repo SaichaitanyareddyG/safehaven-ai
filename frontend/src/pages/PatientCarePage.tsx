@@ -11,6 +11,7 @@ import { ComprehensionFeedback } from '@/features/patient-feedback/Comprehension
 import { instructionIcon, instructionTypeLabel } from '@/lib/instruction-icons'
 import { ALL_LANGUAGES, LANGUAGE_NATIVE_LABEL, textDirection } from '@/lib/language-labels'
 import { cn } from '@/lib/utils'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { Language } from '@/types/patients'
 import type {
   PatientAllergyView,
@@ -54,25 +55,28 @@ export function PatientCarePage() {
       <p className="text-xl text-muted-foreground">Hello, {data.patient_first_name}</p>
       <h1 className="mt-1 text-3xl font-bold tracking-tight sm:text-4xl">Today's Care Plan</h1>
 
-      {/* flex-wrap matters now that this is 11 languages, not 3 — without it
-          the row overflows a phone screen, and this page is mostly read on
-          phones. */}
-      <div className="mt-6 flex flex-wrap justify-center gap-2">
-        {ALL_LANGUAGES.map((language) => (
-          <button
-            key={language}
-            onClick={() => setSelectedLanguage(language)}
-            className={cn(
-              'rounded-full border-2 px-5 py-2.5 text-lg font-medium transition-colors',
-              activeLanguage === language
-                ? 'border-primary bg-primary text-primary-foreground'
-                : 'border-border bg-background text-foreground hover:bg-muted',
-            )}
-            data-testid={`care-language-button-${language.toLowerCase()}`}
-          >
-            {LANGUAGE_NATIVE_LABEL[language]}
-          </button>
-        ))}
+      {/* One language picker instead of 11 buttons filling the first screen. */}
+      <div className="mt-6 flex items-center justify-center gap-3">
+        <label htmlFor="care-language" className="text-lg text-muted-foreground">
+          Language
+        </label>
+        <Select value={activeLanguage} onValueChange={(value) => setSelectedLanguage(value as Language)}>
+          <SelectTrigger id="care-language" className="h-12 min-w-44 text-lg" data-testid="care-language-select">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {ALL_LANGUAGES.map((language) => (
+              <SelectItem
+                key={language}
+                value={language}
+                className="py-2.5 text-lg"
+                data-testid={`care-language-button-${language.toLowerCase()}`}
+              >
+                {LANGUAGE_NATIVE_LABEL[language]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {data.allergies.length > 0 && <AllergiesCard allergies={data.allergies} />}
@@ -94,8 +98,8 @@ export function PatientCarePage() {
 
       {data.conditions.length > 0 && (
         <div className="mt-8 text-left">
-          <p className="mb-3 text-center text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Understanding Your Health
+          <p className="mb-3 text-center text-xl font-semibold">
+            Understanding your health
           </p>
           <div className="space-y-4">
             {data.conditions.map((condition, index) => (
@@ -107,8 +111,8 @@ export function PatientCarePage() {
 
       {data.past_medications.length > 0 && (
         <div className="mt-8 text-left">
-          <p className="mb-3 text-center text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Medications you are no longer taking
+          <p className="mb-3 text-center text-xl font-semibold">
+            Medicines you are no longer taking
           </p>
           <div className="space-y-2">
             {data.past_medications.map((instruction, index) => (
@@ -144,10 +148,10 @@ function CurrentMedicationCard({
   return (
     <div className="rounded-2xl border-2 bg-background p-6 shadow-sm sm:p-8" data-testid="current-medication-summary">
       <p className="text-2xl font-semibold">
-        <span aria-hidden="true">{instructionIcon('MEDICATION')}</span> Medication
+        <span aria-hidden="true">{instructionIcon('MEDICATION')}</span> {instruction.medication_name ?? 'Medication'}
       </p>
-      <p className="mt-3 line-clamp-2 text-lg text-muted-foreground">{text}</p>
-      <Button className="mt-4" onClick={() => setIsOpen(true)} data-testid="understand-medicine-button">
+      <p className="mt-3 line-clamp-3 text-lg leading-relaxed">{text}</p>
+      <Button size="lg" className="mt-4 text-lg" onClick={() => setIsOpen(true)} data-testid="understand-medicine-button">
         Understand this medicine
       </Button>
     </div>
@@ -244,7 +248,7 @@ function ConditionExplainerCard({ condition }: { condition: PatientConditionView
         {panels.map(({ label, text, icon: Icon }) => (
           <div key={label} className="rounded-xl border bg-muted/30 p-4" data-testid="condition-explainer-panel">
             <Icon className="h-6 w-6 text-primary" aria-hidden="true" />
-            <p className="mt-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+            <p className="mt-2 text-base font-semibold">{label}</p>
             <p className="mt-1 text-base leading-relaxed">{text}</p>
           </div>
         ))}
@@ -269,7 +273,7 @@ function CareInstructionCard({
     <div className="rounded-2xl border-2 bg-background p-6 shadow-sm sm:p-8" data-testid="care-instruction-card">
       <p className="text-2xl font-semibold">
         <span aria-hidden="true">{instructionIcon(instruction.instruction_type)}</span>{' '}
-        {instructionTypeLabel(instruction.instruction_type)}
+        {instruction.medication_name ?? instructionTypeLabel(instruction.instruction_type)}
       </p>
       <p
         className="mt-4 text-2xl leading-relaxed sm:text-3xl"
@@ -307,12 +311,12 @@ function WhyExplanationBlock({ why }: { why: WhyExplanation }) {
       data-testid="why-explanation"
       data-tier={why.tier}
     >
-      <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        {isDocumented ? "Why you're taking/doing this" : 'General information about this medicine'}
+      <p className="text-base font-semibold">
+        {isDocumented ? "Why you're taking this" : 'What this medicine is generally used for'}
       </p>
       <p className="mt-1 text-lg leading-relaxed">{why.text}</p>
       {why.disclaimer && (
-        <p className="mt-2 text-sm text-muted-foreground" data-testid="why-disclaimer">
+        <p className="mt-2 text-base text-muted-foreground" data-testid="why-disclaimer">
           {why.disclaimer}
         </p>
       )}

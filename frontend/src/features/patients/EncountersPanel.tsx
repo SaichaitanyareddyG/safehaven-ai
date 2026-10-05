@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
+import { formatDate } from '@/lib/format'
 import { createEncounter, listEncounters, updateEncounter } from '@/api/encounters'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -66,8 +67,7 @@ export function EncountersPanel({ patientId }: { patientId: string }) {
     <div className="space-y-3" data-testid="encounters-panel">
       <p className="text-sm font-medium">Encounters / Visits</p>
       <p className="text-xs text-muted-foreground">
-        Each visit's diagnoses and medication orders stay scoped to that visit — never merged together across
-        visits.
+        Each hospital visit keeps its own reason and medicines.
       </p>
 
       <div className="space-y-2" data-testid="encounters-list">
@@ -82,7 +82,7 @@ export function EncountersPanel({ patientId }: { patientId: string }) {
             <div>
               <p className="text-sm font-medium">{encounter.reason_for_visit ?? 'Visit'}</p>
               <p className="text-xs text-muted-foreground">
-                {encounter.admission_date}
+                {formatDate(encounter.admission_date)}
                 {encounter.discharge_date ? ` – ${encounter.discharge_date}` : ''}
               </p>
             </div>
@@ -97,7 +97,7 @@ export function EncountersPanel({ patientId }: { patientId: string }) {
                 </Badge>
               )}
               <Badge variant={encounter.status === 'OPEN' ? 'default' : 'secondary'} data-status={encounter.status}>
-                {encounter.status}
+                {encounter.status === 'OPEN' ? 'Current visit' : 'Closed'}
               </Badge>
             </div>
           </div>
