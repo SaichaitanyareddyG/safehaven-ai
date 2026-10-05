@@ -205,9 +205,21 @@ function UserRow({
             </Button>
           </div>
         ) : (
-          <Button variant="outline" size="sm" onClick={() => reactivate.mutate()} disabled={reactivate.isPending}>
-            Reactivate
-          </Button>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => reactivate.mutate()} disabled={reactivate.isPending}>
+              Reactivate
+            </Button>
+            {neverJoined && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onDeactivate}
+                className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+              >
+                Remove invite
+              </Button>
+            )}
+          </div>
         )}
       </TableCell>
     </TableRow>
