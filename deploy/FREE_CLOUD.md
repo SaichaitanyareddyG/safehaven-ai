@@ -1,8 +1,9 @@
 # SafeHaven on free cloud services
 
 **Live since 2026-10-03:** backend https://safehaven-backend-kl64.onrender.com
-(Render, Singapore), dashboard https://safehaven-dashboard.safehaven-ai.workers.dev
-(Cloudflare), database on Supabase (Singapore, next to the backend; moved
+(Render, Singapore), dashboard https://app.safehaven-ai.com (Cloudflare; also
+https://safehaven-dashboard.safehaven-ai.workers.dev), account emails from
+no-reply@safehaven-ai.com (Resend), database on Supabase (Singapore, next to the backend; moved
 from Sydney the same day). Smoke test PASS on every step;
 voice assistant 6.7 s for a typed question (server 5.5 s, most of it the
 OpenAI voice); a silent band raised "band offline" 151 s after its last
