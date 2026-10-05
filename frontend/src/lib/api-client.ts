@@ -2,6 +2,8 @@ import { clearToken, getToken } from '@/lib/auth-storage'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
+const NETWORK_ERROR_MESSAGE = "Couldn't reach SafeHaven — check your connection and try again."
+
 export class ApiError extends Error {
   status: number
 
@@ -56,11 +58,29 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     if (token) headers['Authorization'] = `Bearer ${token}`
   }
 
-  const response = await fetch(buildUrl(path, params), {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
+  const send = () =>
+    fetch(buildUrl(path, params), {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+
+  let response: Response
+  try {
+    response = await send()
+  } catch {
+    // The request never reached the server (a phone switching networks, a
+    // sleeping tab): the browser only says "Failed to fetch". Requests that
+    // are safe to repeat get one quiet retry; a POST is never resent, since
+    // it could create something twice.
+    if (method === 'POST') throw new ApiError(0, NETWORK_ERROR_MESSAGE)
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 800))
+      response = await send()
+    } catch {
+      throw new ApiError(0, NETWORK_ERROR_MESSAGE)
+    }
+  }
 
   if (response.status === 401 && !skipAuth) {
     clearToken()
