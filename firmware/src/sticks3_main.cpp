@@ -1222,7 +1222,7 @@ static void buildHome(HomeModel &m) {
   m.charging = battery.charging();
   m.showBatteryNumber = battery.show_number();
   m.chargeMins = (int16_t)chargeEta.minutes_to_full();
-  m.chargeFull = chargeEta.full();
+  m.chargeFull = battery.full() || chargeEta.full();  // stays "Fully charged" through top-up dips
 
   struct tm t;
   m.timeKnown = localTime(t);

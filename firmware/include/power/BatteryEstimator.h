@@ -9,6 +9,9 @@
 //   - on battery the shown value only ever goes DOWN (a real cell cannot
 //     recharge itself; an apparent rise is load noise),
 //   - "low" has hysteresis, so it does not flicker around the threshold.
+//   - once full on the charger it stays at 100% until unplugged: a charger
+//     stops at full and tops up again after small dips, so the raw level
+//     cycles 93-100% all night (bench, 2026-10-06) — phones hide this too.
 //
 // Platform-free (no Arduino) so it is unit-tested on the host.
 
@@ -30,6 +33,13 @@ class BatteryEstimator {
   /// Feed one raw reading (0..100; anything else is ignored) and the charger state.
   void update(int raw_pct, bool charging) {
     if (raw_pct < 0 || raw_pct > 100) return;
+    if (valid_ && full_ && !charging) {
+      // Unplugged a full battery: start from 100, then fall as it is used.
+      avg_ = 100.0f;
+      shown_ = 100;
+    }
+    if (!charging) full_ = false;
+    else if (raw_pct >= kFullRawPct) full_ = true;
     if (!valid_) {
       avg_ = static_cast<float>(raw_pct);
       valid_ = true;
@@ -48,7 +58,9 @@ class BatteryEstimator {
 
   bool valid() const { return valid_; }
   /// The level to display, a multiple of 5. -1 until the first reading.
-  int shown_pct() const { return valid_ ? shown_ : -1; }
+  int shown_pct() const { return !valid_ ? -1 : full_ ? 100 : shown_; }
+  /// Reached full on the charger (shown as 100% until unplugged).
+  bool full() const { return full_; }
   bool low() const { return low_; }
   bool charging() const { return charging_; }
   /// Show the number only when it matters (research-backed: wearables keep
@@ -61,8 +73,11 @@ class BatteryEstimator {
     return r < 0 ? 0 : r > 100 ? 100 : r;
   }
 
+  static constexpr int kFullRawPct = 98;
+
   float alpha_;
   int low_pct_;
+  bool full_ = false;
   bool valid_ = false;
   float avg_ = 0.0f;
   int shown_ = 0;

@@ -28,6 +28,29 @@ int main() {
   std::printf("\nBattery display\n");
 
   {
+    // Overnight on the charger (bench 2026-10-06): full, then the charger
+    // stops and tops up, so raw cycles 93-100. Shown must stay at 100.
+    BatteryEstimator b;
+    for (int i = 0; i < 200; ++i) b.update(40 + i / 3 > 100 ? 100 : 40 + i / 3, true);
+    const int night[] = {96, 93, 95, 98, 100, 97, 94, 96, 99, 95, 93};
+    bool steady = true;
+    for (int r : night) {
+      b.update(r, true);
+      if (b.shown_pct() != 100) steady = false;
+    }
+    check(steady && b.full(), "full on the charger stays at 100% through top-up dips");
+    b.update(96, false);
+    check(b.shown_pct() == 100 && !b.full(), "unplugged full: starts at 100%", std::to_string(b.shown_pct()));
+    for (int i = 0; i < 400; ++i) b.update(80, false);
+    check(b.shown_pct() == 80, "then falls as the battery is used", std::to_string(b.shown_pct()));
+  }
+  {
+    BatteryEstimator b;
+    for (int i = 0; i < 50; ++i) b.update(60, true);
+    check(!b.full() && b.shown_pct() == 60, "charging but not yet full shows the real level");
+  }
+
+  {
     BatteryEstimator b;
     check(b.shown_pct() == -1 && !b.show_number(), "nothing shown before the first reading");
     b.update(68, false);
