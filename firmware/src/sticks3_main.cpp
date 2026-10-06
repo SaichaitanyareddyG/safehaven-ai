@@ -556,11 +556,22 @@ static uint8_t wifiBars() {
 // ── battery ──────────────────────────────────────────────────────────────────
 static void sampleBattery();
 
+#ifdef SH_LOW_POWER
+static void updateSleepLock(bool usbPowered);
+#endif
+
 static void servicePower() {
   const unsigned long now = millis();
   if (now - lastPowerPollMs < POWER_POLL_MS) return;
   lastPowerPollMs = now;
   vbusMv = M5.Power.getVBUSVoltage();
+#ifdef SH_LOW_POWER
+  // Awake from boot until the charger state is known (a few polls), then
+  // sleep only on battery. Idempotent: a no-op when nothing changed.
+  static uint8_t powerPolls = 0;
+  if (powerPolls < 255) ++powerPolls;
+  if (powerPolls > POWER_STABLE_READS + 1) updateSleepLock(onCharger);
+#endif
   const bool raw = vbusMv >= 0 ? vbusMv > VBUS_PRESENT_MV : M5.Power.isCharging() == m5::Power_Class::is_charging;
   static uint8_t disagree = 0;
   if (raw == onCharger) {
@@ -1416,7 +1427,23 @@ static void recoverSystemI2c() {
 // 40 MHz when idle and light-sleeps between IMU samples; Wi-Fi stays
 // associated in modem sleep (WIFI_PS_MAX_MODEM, set in startWifi()), waking
 // for beacons. 40 MHz (the crystal) is the lowest minimum Wi-Fi allows.
+// Light sleep only on battery: plugged in (charger or the Mac), power does not
+// matter, and the USB serial link stops whenever the chip sleeps — so while
+// USB power is present a lock keeps the chip awake and the serial tools work.
+static esp_pm_lock_handle_t usbAwakeLock = nullptr;
+static bool usbAwakeHeld = false;
+static void updateSleepLock(bool usbPowered) {
+  if (!usbAwakeLock || usbPowered == usbAwakeHeld) return;
+  if (usbPowered) esp_pm_lock_acquire(usbAwakeLock);
+  else esp_pm_lock_release(usbAwakeLock);
+  usbAwakeHeld = usbPowered;
+  Serial.printf("[POWER] light sleep %s\r\n", usbPowered ? "paused (USB power)" : "active (on battery)");
+}
+
 static void startPowerManagement() {
+  esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "usb", &usbAwakeLock);
+  esp_pm_lock_acquire(usbAwakeLock);  // awake until servicePower knows we are on battery
+  usbAwakeHeld = true;
   esp_pm_config_esp32s3_t pm = {};
   pm.max_freq_mhz = 80;
   pm.min_freq_mhz = 40;
