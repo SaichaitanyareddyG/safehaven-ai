@@ -143,7 +143,9 @@ class Settings(BaseSettings):
     # read — the nurse dashboard's poll IS the sweep — because there is no
     # scheduler in this codebase and Module 3 should not be the first thing
     # to introduce one.
-    device_offline_after_seconds: int = 120
+    # 180 s: bands check in every 60 s (was 30, changed for battery life,
+    # 2026-10-07), so one late check-in never trips it, two missed ones do.
+    device_offline_after_seconds: int = 180
     # A band whose last check-in said "on the charger" turns its radio off to
     # charge faster and checks in every ~5 min. It is not monitoring anyway
     # (the dashboard says so), so it gets this longer allowance before it

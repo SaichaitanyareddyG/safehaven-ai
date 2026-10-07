@@ -285,7 +285,9 @@ class DeviceLink {
 
  private:
   static constexpr uint32_t kMagic = 0x5AFE0E01;
-  static constexpr uint32_t kHeartbeatMs = 30000;
+  // 60 s (was 30): each check-in wakes the radio for a secure exchange. The
+  // backend calls a band offline after 3 min (device_offline_after_seconds).
+  static constexpr uint32_t kHeartbeatMs = 60000;
   static constexpr uint32_t kUrgentHeartbeatMs = 5000;
   static constexpr uint32_t kRetryMs = 10000;
   // Each failed send costs a full secure handshake (radio + processor flat

@@ -38,6 +38,7 @@
 #include <Preferences.h>
 #include <M5Unified.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <esp_timer.h>
 #ifdef SH_LOW_POWER
 #include <esp_pm.h>
@@ -87,7 +88,7 @@ static const char *FIRMWARE_VERSION = "0.4.0-link";
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
-static const uint8_t BRIGHTNESS_HOME = 140;         // of 255 — a camera reads the QR off a backlit LCD
+static const uint8_t BRIGHTNESS_HOME = 110;         // of 255 — a camera reads the QR off a backlit LCD; 140 -> 110 for battery
 static const uint8_t BRIGHTNESS_TEST = 130;
 static const unsigned long SCREEN_TIMEOUT_MS = 15000;
 static const unsigned long ALERT_SHOW_MS = 60000;
@@ -95,11 +96,12 @@ static const unsigned long CHARGING_SPLASH_MS = 5000;
 static const unsigned long STARTING_MAX_MS = 25000;  // then show monitoring anyway
 static const unsigned long HOME_CHECK_MS = 250;      // redraw only if changed
 static const unsigned long TEST_FRAME_MS = 100;
-static const unsigned long HEARTBEAT_INTERVAL_MS = 30000;
+static const unsigned long HEARTBEAT_INTERVAL_MS = 60000;  // serial "alive" line, matches the check-in
 static const unsigned long LOOP_REST_MS = 10;  // < the 20 ms sensor period
 static const unsigned long BATTERY_SAMPLE_MS = 5000;
 static const unsigned long BATTERY_LOG_MS = 60000;
 static const unsigned long WIFI_RETRY_MS = 30000;
+static const uint16_t WIFI_LISTEN_INTERVAL = 10;  // beacons between radio wake-ups
 static const unsigned long WIFI_GIVE_UP_STARTUP_MS = 20000;
 static const size_t BATTERY_LOG_MAX_BYTES = 200000;  // ~3 days of minutes
 static const char *BATTERY_LOG_PATH = "/battery.csv";
@@ -451,15 +453,25 @@ static void startWifi() {
   // listen interval) instead of every one. A heartbeat or an alert just waits
   // a few hundred ms for the radio, which detection never notices.
   WiFi.setSleep(WIFI_PS_MAX_MODEM);
+  // Set the network up without connecting, then raise the listen interval
+  // before connecting: the radio wakes for every 10th beacon (~1 s) instead
+  // of every 3rd. The band talks first (alerts, check-ins go out at once);
+  // only messages TO it wait up to a second. Battery (2026-10-07).
   if (wifiCfg.enterprise) {
     // No RADIUS CA is pinned yet: the band cannot tell the hospital's network
     // from an impostor with the same name. Hospital IT's CA belongs here
     // (ca_pem) before deployment — see firmware/SECURITY.md.
     WiFi.begin(wifiCfg.ssid, WPA2_AUTH_PEAP, wifiCfg.identity[0] ? wifiCfg.identity : wifiCfg.user,
-               wifiCfg.user, wifiCfg.pass);
+               wifiCfg.user, wifiCfg.pass, nullptr, nullptr, nullptr, 0, nullptr, false);
   } else {
-    WiFi.begin(wifiCfg.ssid, wifiCfg.pass);
+    WiFi.begin(wifiCfg.ssid, wifiCfg.pass, 0, nullptr, false);
   }
+  wifi_config_t conf;
+  if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
+    conf.sta.listen_interval = WIFI_LISTEN_INTERVAL;
+    esp_wifi_set_config(WIFI_IF_STA, &conf);
+  }
+  esp_wifi_connect();
   Serial.printf("WiFi: connecting to %s (%s, set %s)...\r\n", wifiCfg.ssid,
                 wifiCfg.enterprise ? "WPA2-Enterprise" : "password",
                 wifiCfg.fromNvs ? "over USB" : "in wifi_secrets.h");
@@ -1478,6 +1490,9 @@ void setup() {
   cfg.output_power = false;
   M5.begin(cfg);
   M5.Power.setExtOutput(false);
+  // The PM1's green indicator LED is on by default; nobody on a ward needs
+  // it lit all day (the screen shows charging), so it is off.
+  M5.Power.M5pm1.setLedEnLevel(false);
   applySpeakerVolumes();
   speakerQuietSinceMs = millis();
   M5.Display.setRotation(0);  // portrait, 135 x 240
@@ -2355,6 +2370,9 @@ static void runCommand(char *line) {
                   M5.Power.isCharging() == m5::Power_Class::is_charging ? "yes" : "no",
                   chgKnown ? (chg ? "yes" : "NO") : "?", M5.Power.getExtOutput() ? "ON" : "off",
                   (unsigned long)getCpuFrequencyMhz());
+  } else if (!strcmp(line, "led on") || !strcmp(line, "led off")) {
+    M5.Power.M5pm1.setLedEnLevel(line[5] == 'n');
+    Serial.printf("[POWER] green LED %s\r\n", line[5] == 'n' ? "on" : "off");
   } else if (!strcmp(line, "beep")) {
     beep(TONE_ALARM_HZ, 300);
   } else if (!strcmp(line, "d")) {
