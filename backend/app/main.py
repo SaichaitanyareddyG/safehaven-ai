@@ -46,7 +46,14 @@ async def lifespan(_app: FastAPI):
             await task
 
 
-app = FastAPI(title="SafeHaven AI", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="SafeHaven AI",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url="/docs" if settings.api_docs_enabled else None,
+    redoc_url="/redoc" if settings.api_docs_enabled else None,
+    openapi_url="/openapi.json" if settings.api_docs_enabled else None,
+)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

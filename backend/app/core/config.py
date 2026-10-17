@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     environment: str = "development"
+    # The interactive API docs (/docs, /redoc, /openapi.json). Handy locally;
+    # off on a shared server, where they only map the attack surface.
+    api_docs_enabled: bool = True
 
     database_url: str = "postgresql+psycopg2://safehaven:safehaven@localhost:5432/safehaven"
     test_database_url: str = "postgresql+psycopg2://safehaven:safehaven@localhost:5432/safehaven_test"

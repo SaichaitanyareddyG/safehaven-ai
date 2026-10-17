@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -145,9 +145,17 @@ def get_signed_in_patient(
 
 @router.post("/request-link", status_code=status.HTTP_202_ACCEPTED)
 @limiter.limit(_LINK_RATE_LIMIT)
-def request_link(request: Request, payload: SignInLinkRequest, db: Annotated[Session, Depends(get_db)]) -> dict:
-    """Always the same answer, so the form never reveals who is a patient."""
-    service.request_sign_in_link(db, payload.email)
+def request_link(
+    request: Request,
+    payload: SignInLinkRequest,
+    background: BackgroundTasks,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Always the same answer, in the same time: the email goes out after the
+    response, so neither reveals who is a patient."""
+    send = service.request_sign_in_link(db, payload.email)
+    if send is not None:
+        background.add_task(send)
     return {"detail": "If that address can use SafeHaven, a sign-in link is on its way."}
 
 
@@ -320,6 +328,7 @@ def reminders_tick(
     import hmac
 
     secret = get_settings().reminder_tick_secret
-    if not secret or not x_tick_secret or not hmac.compare_digest(secret, x_tick_secret):
+    # Bytes: compare_digest raises on non-ASCII str, which would be a 500.
+    if not secret or not x_tick_secret or not hmac.compare_digest(secret.encode(), x_tick_secret.encode()):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
     return {"sent": push_service.run_reminders(db)}

@@ -9,7 +9,9 @@ link (patient_access.service.build_care_plan); visits come from encounters.
 import hashlib
 import secrets
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func
@@ -237,12 +239,14 @@ def on_admission_status_changed(db: Session, patient: Patient) -> None:
     db.flush()
 
 
-def request_sign_in_link(db: Session, email: str) -> None:
-    """Sends a link if the address belongs to a patient with app access.
-    Says nothing either way, so the form never confirms who is a patient."""
+def request_sign_in_link(db: Session, email: str) -> Callable[[], object] | None:
+    """Makes a link if the address belongs to a patient with app access, and
+    returns the email to send — the caller sends it after answering, so the
+    response takes the same time either way and never confirms who is a
+    patient."""
     email = normalize_email(email)
     if not email:
-        return
+        return None
     row = (
         db.query(Patient, PatientAppAccount)
         .join(PatientAppAccount, PatientAppAccount.patient_id == Patient.id)
@@ -250,14 +254,17 @@ def request_sign_in_link(db: Session, email: str) -> None:
         .first()
     )
     if row is None:
-        return
+        return None
     patient, account = row
     if _access_expired(account):
-        return
+        return None
     token = _create_link(db, patient.id, PURPOSE_SIGN_IN)
     db.commit()
-    email_module.send_patient_sign_in_email(
-        patient.email, link_url(token), get_settings().patient_sign_in_link_ttl_minutes
+    return partial(
+        email_module.send_patient_sign_in_email,
+        patient.email,
+        link_url(token),
+        get_settings().patient_sign_in_link_ttl_minutes,
     )
 
 
@@ -272,7 +279,15 @@ def exchange_link(db: Session, raw_token: str) -> tuple[Patient, PatientAppAccou
         raise InvalidSignInLinkError()
     patient = db.get(Patient, link.patient_id)
 
-    link.used_at = now
+    # Spend it in one conditional UPDATE: of two requests racing with the same
+    # link, exactly one gets a session.
+    spent = (
+        db.query(PatientSignInLink)
+        .filter(PatientSignInLink.id == link.id, PatientSignInLink.used_at.is_(None))
+        .update({PatientSignInLink.used_at: now}, synchronize_session=False)
+    )
+    if spent != 1:
+        raise InvalidSignInLinkError()
     if account.status == STATUS_INVITED:
         account.status = STATUS_ACTIVE
         account.activated_at = now

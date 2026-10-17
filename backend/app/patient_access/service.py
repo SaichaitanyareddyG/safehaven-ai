@@ -35,7 +35,7 @@ from app.patients.models import Patient
 from app.patients.service import get_patient
 from app.reference.condition_explainers import lookup_condition_explainer
 from app.reference.medication_purpose import lookup_medication_purpose
-from app.schedules.dose_schedule import derive_schedule
+from app.schedules.instruction_schedule import approved_schedule
 from app.schedules.schemas import to_read as schedule_to_read
 
 _GENERAL_PURPOSE_DISCLAIMER = (
@@ -311,11 +311,11 @@ def get_care_plan(db: Session, raw_token: str) -> PatientCarePlanResponse:
 
 
 def _schedule_for(instruction: CareInstruction, version: InstructionVersion):
-    extraction = version.extraction
-    if extraction is None or extraction.instruction_type != InstructionType.MEDICATION:
+    found = approved_schedule(instruction)
+    if found is None:
         return None
-    start = instruction.clinical_start_date or (instruction.approved_at.date() if instruction.approved_at else None)
-    return schedule_to_read(derive_schedule(extraction.normalized_facts, version.raw_text), start)
+    schedule, start = found
+    return schedule_to_read(schedule, start)
 
 
 def build_care_plan(db: Session, patient: Patient) -> PatientCarePlanResponse:

@@ -6,15 +6,17 @@ patient app shows (app/schedules/), never from anything typed separately.
 
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.instructions.models import CareInstruction, ClinicalStatus, InstructionStatus, InstructionType
 from app.patient_app.models import DoseLog
-from app.schedules.dose_schedule import derive_schedule, format_time
+from app.schedules.dose_schedule import format_time
+from app.schedules.instruction_schedule import approved_schedule
 
 
 @dataclass(frozen=True)
@@ -55,12 +57,13 @@ def scheduled_doses(db: Session, patient_id: uuid.UUID, day: date, today: date) 
     for a past day, it counts only before the day it was stopped."""
     doses: list[DueDose] = []
     for instruction in _medications(db, patient_id):
-        version = instruction.current_version
-        facts = version.extraction.normalized_facts
-        schedule = derive_schedule(facts, version.raw_text)
+        facts = instruction.current_version.extraction.normalized_facts
+        found = approved_schedule(instruction)
+        if found is None:
+            continue
+        schedule, start = found
         if schedule.kind != "SCHEDULED":
             continue
-        start = instruction.clinical_start_date or (instruction.approved_at.date() if instruction.approved_at else None)
         if start is None or day < start:
             continue
         end = schedule.end_date(start)
@@ -113,19 +116,27 @@ def record_dose(
         raise DoseNotDueError()
     if not any(d.instruction_id == instruction_id and d.time == slot for d in scheduled_doses(db, patient_id, day, today)):
         raise DoseNotDueError()
-    existing = (
-        db.query(DoseLog)
-        .filter(DoseLog.instruction_id == instruction_id, DoseLog.dose_date == day, DoseLog.dose_time == slot)
-        .first()
-    )
+    slot_filter = (DoseLog.instruction_id == instruction_id, DoseLog.dose_date == day, DoseLog.dose_time == slot)
     if status is None:
-        if existing is not None:
-            db.delete(existing)
-    elif existing is None:
-        db.add(DoseLog(patient_id=patient_id, instruction_id=instruction_id, dose_date=day, dose_time=slot, status=status))
+        db.query(DoseLog).filter(*slot_filter).delete()
     else:
-        existing.status = status
-        existing.recorded_at = datetime.now(existing.recorded_at.tzinfo)
+        # One statement, so a double tap or a retried request on a weak signal
+        # updates the answer instead of failing on the one-per-dose rule.
+        statement = pg_insert(DoseLog).values(
+            id=uuid.uuid4(),
+            patient_id=patient_id,
+            instruction_id=instruction_id,
+            dose_date=day,
+            dose_time=slot,
+            status=status,
+            recorded_at=datetime.now(timezone.utc),
+        )
+        db.execute(
+            statement.on_conflict_do_update(
+                constraint="uq_dose_log_slot",
+                set_={"status": statement.excluded.status, "recorded_at": statement.excluded.recorded_at},
+            )
+        )
     db.commit()
 
 

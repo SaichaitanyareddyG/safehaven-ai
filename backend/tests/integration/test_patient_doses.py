@@ -221,3 +221,150 @@ def test_discharge_closes_the_current_visit(client, setup):
     client.patch(f"/patients/{setup['patient']['id']}", json={"admission_status": "DISCHARGED"}, headers=setup["staff"])
     visits = client.get("/patient-app/me/visits", headers=setup["me"]).json()["visits"]
     assert all(v["status"] == "CLOSED" and v["discharge_date"] for v in visits)
+
+
+def test_dose_times_are_saved_as_approved(client, setup, db_session, monkeypatch):
+    """Later rule changes must never rewrite what the clinician approved."""
+    from app.instructions.models import CareInstruction
+    from app.schedules import instruction_schedule
+    from app.schedules.dose_schedule import DoseSchedule
+
+    saved = db_session.get(CareInstruction, setup["bid"]).dose_schedule
+    assert saved["kind"] == "SCHEDULED" and saved["times"] == ["08:00", "20:00"] and saved["start_date"]
+
+    monkeypatch.setattr(
+        instruction_schedule, "derive_schedule", lambda *a, **k: DoseSchedule(kind="NEEDS_REVIEW", problem="changed")
+    )
+    medicine = next(
+        i for i in client.get("/patient-app/me/care-plan", headers=setup["me"]).json()["instructions"] if i["id"] == setup["bid"]
+    )
+    assert medicine["schedule"]["times"] == ["08:00", "20:00"]
+    assert [d["time"] for d in client.get("/patient-app/me/doses", headers=setup["me"]).json()["doses"]] == ["08:00", "20:00"]
+
+
+def test_start_date_is_the_hospital_day_not_the_utc_day():
+    from datetime import datetime, timezone
+
+    from app.core.config import get_settings
+    from app.schedules.instruction_schedule import hospital_date
+
+    settings = get_settings()
+    original = settings.hospital_timezone
+    try:
+        settings.hospital_timezone = "Asia/Kolkata"
+        # 20:00 UTC on Oct 16 is 01:30 on Oct 17 in Delhi.
+        assert hospital_date(datetime(2026, 10, 16, 20, 0, tzinfo=timezone.utc)).isoformat() == "2026-10-17"
+    finally:
+        settings.hospital_timezone = original
+
+
+# --- Review follow-ups --------------------------------------------------------
+
+
+def _at_home_with_phone(client, setup):
+    _subscribe(client, setup["me"])
+    client.patch(f"/patients/{setup['patient']['id']}", json={"admission_status": "DISCHARGED"}, headers=setup["staff"])
+
+
+def _today(client, setup):
+    return datetime.fromisoformat(client.get("/patient-app/me/doses", headers=setup["me"]).json()["date"])
+
+
+def test_no_reminder_once_access_has_ended(client, setup, pushes, db_session):
+    from app.patient_app.models import PatientAppAccount
+
+    _at_home_with_phone(client, setup)
+    today = _today(client, setup)  # before access ends: the patient API refuses after
+    db_session.query(PatientAppAccount).update(
+        {PatientAppAccount.access_expires_at: datetime.now(timezone.utc) - timedelta(minutes=1)}
+    )
+    db_session.flush()
+    pushes.clear()
+    assert _tick(client, db_session, today.replace(hour=8, minute=5, tzinfo=timezone.utc)) == 0
+
+
+def test_no_reminder_for_a_stopped_medicine(client, setup, pushes, db_session):
+    _at_home_with_phone(client, setup)
+    today = _today(client, setup)
+    client.patch(f"/instructions/{setup['bid']}/clinical-status", json={"status": "STOPPED"}, headers=setup["staff"])
+    pushes.clear()
+    assert _tick(client, db_session, today.replace(hour=8, minute=5, tzinfo=timezone.utc)) == 0
+
+
+def test_no_reminder_after_the_course_ends(client, setup, pushes, db_session):
+    from app.instructions.models import CareInstruction
+
+    _at_home_with_phone(client, setup)
+    instruction = db_session.get(CareInstruction, setup["bid"])
+    ended = dict(instruction.dose_schedule)
+    ended["duration_days"] = 1
+    ended["start_date"] = (_today(client, setup) - timedelta(days=3)).date().isoformat()
+    instruction.dose_schedule = ended
+    db_session.flush()
+    pushes.clear()
+    assert _tick(client, db_session, _today(client, setup).replace(hour=8, minute=5, tzinfo=timezone.utc)) == 0
+
+
+def test_a_failed_delivery_is_tried_again(client, setup, monkeypatch, db_session):
+    from app.patient_app import push as push_module
+
+    public_key, private_key = generate()
+    monkeypatch.setattr(get_settings(), "vapid_public_key", public_key)
+    monkeypatch.setattr(get_settings(), "vapid_private_key", private_key)
+    outcomes = [False, True]
+    monkeypatch.setattr(push_module, "send_to_subscription", lambda db, s, p: outcomes.pop(0))
+    db_session.add(PushSubscription(patient_id=setup["patient"]["id"], endpoint="https://push.example.com/x", p256dh="p", auth="a"))
+    client.patch(f"/patients/{setup['patient']['id']}", json={"admission_status": "DISCHARGED"}, headers=setup["staff"])
+    at = _today(client, setup).replace(hour=8, minute=5, tzinfo=timezone.utc)
+    assert _tick(client, db_session, at) == 0  # push service failed
+    assert _tick(client, db_session, at + timedelta(minutes=1)) == 1  # tried again
+
+
+def test_minutes_away_from_any_dose_time_do_no_work(client, setup, pushes, db_session, monkeypatch):
+    from app.patient_app import push as push_module
+
+    _at_home_with_phone(client, setup)
+    monkeypatch.setattr(push_module, "scheduled_doses", lambda *a, **k: (_ for _ in ()).throw(AssertionError("queried")))
+    assert _tick(client, db_session, _today(client, setup).replace(hour=9, minute=45, tzinfo=timezone.utc)) == 0
+
+
+def test_dose_two_days_ago_cannot_be_logged(client, setup):
+    two_days_ago = (_today(client, setup) - timedelta(days=2)).date().isoformat()
+    resp = client.post(
+        "/patient-app/me/doses",
+        json={"instruction_id": setup["bid"], "date": two_days_ago, "time": "08:00", "status": "TAKEN"},
+        headers=setup["me"],
+    )
+    assert resp.status_code == 409
+
+
+def test_answering_the_same_dose_twice_updates_it(client, setup):
+    today = _today(client, setup).date().isoformat()
+    dose = {"instruction_id": setup["bid"], "date": today, "time": "08:00"}
+    assert client.post("/patient-app/me/doses", json={**dose, "status": "TAKEN"}, headers=setup["me"]).status_code == 204
+    assert client.post("/patient-app/me/doses", json={**dose, "status": "SKIPPED"}, headers=setup["me"]).status_code == 204
+    statuses = [d["status"] for d in client.get("/patient-app/me/doses", headers=setup["me"]).json()["doses"]]
+    assert statuses == ["SKIPPED", None]
+
+
+def test_past_days_count_until_the_day_a_medicine_was_stopped(client, setup, db_session):
+    from app.instructions.models import CareInstruction, ClinicalStatus
+    from app.patient_app.doses import scheduled_doses
+
+    today = _today(client, setup).date()
+    instruction = db_session.get(CareInstruction, setup["bid"])
+    snapshot = dict(instruction.dose_schedule)
+    snapshot["start_date"] = (today - timedelta(days=5)).isoformat()
+    instruction.dose_schedule = snapshot
+    instruction.clinical_status = ClinicalStatus.STOPPED
+    instruction.clinical_end_date = today - timedelta(days=2)
+    db_session.flush()
+    patient_id = instruction.patient_id
+    assert len(scheduled_doses(db_session, patient_id, today - timedelta(days=3), today)) == 2  # before the stop
+    assert scheduled_doses(db_session, patient_id, today - timedelta(days=2), today) == []  # the stop day
+    assert scheduled_doses(db_session, patient_id, today, today) == []
+
+
+def test_tick_secret_with_unusual_characters_is_a_plain_404(client, pushes):
+    resp = client.post("/internal/reminders/tick", headers={"X-Tick-Secret": "sécret".encode("latin-1")})
+    assert resp.status_code == 404

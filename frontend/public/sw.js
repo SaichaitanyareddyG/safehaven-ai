@@ -27,7 +27,16 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const url = (event.notification.data && event.notification.data.url) || '/my'
+  // Only ever our own patient pages, whatever the message carried.
+  let url = '/my'
+  try {
+    const wanted = new URL((event.notification.data && event.notification.data.url) || '/my', self.location.origin)
+    if (wanted.origin === self.location.origin && (wanted.pathname === '/my' || wanted.pathname.startsWith('/my/'))) {
+      url = wanted.pathname
+    }
+  } catch {
+    url = '/my'
+  }
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
       for (const client of windows) {

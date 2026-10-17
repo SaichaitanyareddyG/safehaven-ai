@@ -69,6 +69,7 @@ export function TodaysDoses({ data }: { data: MyDosesResponse }) {
                 <button
                   type="button"
                   onClick={() => mutation.mutate({ dose, status: 'TAKEN' })}
+                  aria-label={`Mark ${dose.medication_name} ${dose.time_display} as taken`}
                   className="flex h-12 grow items-center justify-center gap-2 rounded-xl bg-[#0F6383] text-[17px] font-semibold text-white hover:bg-[#0B5068]"
                   data-testid="my-dose-taken"
                 >
@@ -78,6 +79,7 @@ export function TodaysDoses({ data }: { data: MyDosesResponse }) {
                 <button
                   type="button"
                   onClick={() => mutation.mutate({ dose, status: 'SKIPPED' })}
+                  aria-label={`Mark ${dose.medication_name} ${dose.time_display} as skipped`}
                   className="h-12 rounded-xl border-[1.5px] border-[#C9D6DB] bg-white px-5 text-[17px] font-medium text-[#2E3A3D] hover:bg-[#F3F7F8]"
                   data-testid="my-dose-skip"
                 >
@@ -99,7 +101,8 @@ export function TodaysDoses({ data }: { data: MyDosesResponse }) {
                 <button
                   type="button"
                   onClick={() => mutation.mutate({ dose, status: null })}
-                  className="min-h-10 px-2 text-base font-medium text-[#0F6383]"
+                  aria-label={`Undo ${dose.medication_name} ${dose.time_display}`}
+                  className="min-h-12 px-3 text-base font-medium text-[#0F6383]"
                   data-testid="my-dose-undo"
                 >
                   Undo

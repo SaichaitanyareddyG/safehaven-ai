@@ -55,6 +55,7 @@ export function usePatientAppHead() {
     }
     add('link', { rel: 'manifest', href: '/app/manifest.webmanifest' })
     add('link', { rel: 'apple-touch-icon', href: '/app/apple-touch-icon.png' })
+    add('meta', { name: 'mobile-web-app-capable', content: 'yes' })
     add('meta', { name: 'apple-mobile-web-app-capable', content: 'yes' })
     add('meta', { name: 'apple-mobile-web-app-title', content: 'SafeHaven' })
     add('meta', { name: 'theme-color', content: '#143440' })

@@ -132,6 +132,11 @@ class CareInstruction(Base):
     clinical_status_changed_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
+    # MEDICATION only: the dose schedule exactly as it was when the clinician
+    # approved (app/schedules/), with its hospital-local start date. Reminders,
+    # Taken/Skip and adherence read this copy, so later changes to the rules
+    # never rewrite what was approved or what past days counted.
+    dose_schedule: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     # References instruction_versions, which itself references this table (via
     # care_instruction_id) — a genuine circular FK. use_alter=True tells SQLAlchemy

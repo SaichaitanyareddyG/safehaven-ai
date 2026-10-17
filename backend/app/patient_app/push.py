@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.patient_app.doses import hospital_now, scheduled_doses, slot_time
+from app.schedules.dose_schedule import POSSIBLE_DOSE_TIMES
 from app.patient_app.models import (
     STATUS_ACTIVE,
     DoseLog,
@@ -91,6 +92,10 @@ def run_reminders(db: Session, now: datetime | None = None) -> int:
     now = now or hospital_now()
     today = now.date()
     window = timedelta(minutes=get_settings().reminder_window_minutes)
+    # Most minutes are nowhere near a dose time: skip the database entirely.
+    minutes_now = now.hour * 60 + now.minute
+    if not any(0 <= minutes_now - (t.hour * 60 + t.minute) < window.total_seconds() / 60 for t in POSSIBLE_DOSE_TIMES):
+        return 0
 
     patient_ids = [
         pid
@@ -141,5 +146,14 @@ def run_reminders(db: Session, now: datetime | None = None) -> int:
                 continue
             if send_to_patient(db, patient_id, reminder_payload(doses[0].time_display, len(doses))):
                 sent += 1
+            else:
+                # Nothing delivered (push service down, network): forget the
+                # marker so the next run, still inside the window, tries again.
+                db.query(DoseReminderSent).filter(
+                    DoseReminderSent.patient_id == patient_id,
+                    DoseReminderSent.dose_date == today,
+                    DoseReminderSent.dose_time == slot,
+                ).delete()
+                db.commit()
     db.commit()
     return sent

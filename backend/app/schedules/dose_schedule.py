@@ -44,6 +44,14 @@ TIMES_PER_DAY: dict[int, list[time]] = {
 # "Every N hours": first dose at 06:00 (08:00 for 12 and 24), then every N.
 _INTERVAL_ANCHOR = {4: time(6, 0), 6: time(6, 0), 8: time(6, 0), 12: time(8, 0), 24: time(8, 0)}
 
+# Every time of day these rules can ever produce (the reminder job uses it to
+# skip the minutes in between).
+POSSIBLE_DOSE_TIMES: frozenset[time] = frozenset(
+    list(SLOT_TIMES.values())
+    + [t for times in TIMES_PER_DAY.values() for t in times]
+    + [time((a.hour + h * i) % 24, 0) for h, a in _INTERVAL_ANCHOR.items() for i in range(24 // h)]
+)
+
 _PRN_RE = re.compile(r"\bas needed\b|\bprn\b|\bwhen required\b|\bif needed\b|\bas required\b", re.I)
 # Patterns this module will not turn into reminders.
 _UNSUPPORTED_RE = re.compile(
@@ -68,8 +76,17 @@ _NUMBER_WORDS = {
 _DURATION_RE = re.compile(
     r"^(?:for\s+|x\s*|×\s*)?(?:the\s+next\s+)?(\d+|" + "|".join(_NUMBER_WORDS) + r")\s*(days?|weeks?)$", re.I
 )
-_ONGOING_RE = re.compile(r"\b(ongoing|long[- ]term|indefinitely|continue|continuing|lifelong|regularly)\b", re.I)
+# The WHOLE duration must be one of these to mean "no end date": "continue
+# for 5 days" is a 5-day course, not an ongoing one.
+_ONGOING_RE = re.compile(
+    r"^(?:ongoing|long[- ]term|indefinitely|continue|continuing|lifelong|regularly|until (?:told|advised) otherwise)$",
+    re.I,
+)
 _MAX_COURSE_DAYS = 180
+# "1-2 times daily", "2 to 3 tablets": a range is never an exact schedule.
+_RANGE_RE = re.compile(r"\d\s*(?:-|–|—|to|or)\s*\d|\b(?:one|two|three|four)\s+(?:to|or)\s+(?:two|three|four|five|six)\b", re.I)
+# Every "<n> times": counts outside 1-4 must never fall through to "daily" = once.
+_TIMES_COUNT_RE = re.compile(r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+times?\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -163,9 +180,10 @@ def _parse_duration(duration: str) -> tuple[bool, int | None]:
     """(understood, days). (True, None) means ongoing / no end date."""
     if not duration:
         return True, None
-    if _ONGOING_RE.search(duration):
+    cleaned = duration.strip().rstrip(".")
+    if _ONGOING_RE.match(cleaned):
         return True, None
-    match = _DURATION_RE.match(duration.strip().rstrip("."))
+    match = _DURATION_RE.match(cleaned)
     if match is None:
         return False, None
     raw, unit = match.group(1).lower(), match.group(2).lower()
@@ -193,6 +211,14 @@ def derive_schedule(facts: dict, raw_text: str | None = None) -> DoseSchedule:
     if _UNSUPPORTED_RE.search(combined):
         return _review(f'"{frequency or timing}" is not a daily pattern SafeHaven can turn into reminders.', facts)
 
+    if _RANGE_RE.search(combined):
+        return _review(f'"{combined.strip()}" gives a range, not an exact number of doses.', facts)
+    for number in _TIMES_COUNT_RE.findall(combined):
+        word = number.lower()
+        value = int(word) if word.isdigit() else _NUMBER_WORDS.get(word, _COUNT_WORDS.get(word))
+        if value not in TIMES_PER_DAY:
+            return _review(f'"{combined.strip()}" is not a number of daily doses SafeHaven schedules.', facts)
+
     unknown = _unknown_words(combined)
     if unknown:
         return _review(f'"{combined.strip()}" has wording SafeHaven cannot turn into exact dose times.', facts)
@@ -211,6 +237,8 @@ def derive_schedule(facts: dict, raw_text: str | None = None) -> DoseSchedule:
             return _review(f'"Every {hours} hours" is not an interval SafeHaven schedules.', facts)
         if slots:
             return _review("The order gives both an hourly interval and times of day.", facts)
+        if count is not None and count != 24 // hours:
+            return _review(f'"{frequency}" does not match "every {hours} hours" ({24 // hours} doses a day).', facts)
         anchor = _INTERVAL_ANCHOR[hours]
         times = sorted(time((anchor.hour + hours * i) % 24, 0) for i in range(24 // hours))
     elif slots:
@@ -225,3 +253,34 @@ def derive_schedule(facts: dict, raw_text: str | None = None) -> DoseSchedule:
         return _review(f'"{frequency or timing}" is not a frequency SafeHaven can turn into reminders.', facts)
 
     return DoseSchedule(kind="SCHEDULED", times=times, dose=_dose(facts), with_food=with_food, duration_days=days)
+
+
+# --- The copy saved at approval ------------------------------------------------
+
+
+def to_snapshot(schedule: DoseSchedule, start: date) -> dict:
+    return {
+        "kind": schedule.kind,
+        "times": [t.strftime("%H:%M") for t in schedule.times],
+        "dose": schedule.dose,
+        "with_food": schedule.with_food,
+        "duration_days": schedule.duration_days,
+        "problem": schedule.problem,
+        "start_date": start.isoformat(),
+    }
+
+
+def from_snapshot(data: dict) -> tuple[DoseSchedule, date]:
+    times = []
+    for value in data.get("times", []):
+        hour, minute = value.split(":")
+        times.append(time(int(hour), int(minute)))
+    schedule = DoseSchedule(
+        kind=data["kind"],
+        times=times,
+        dose=data.get("dose"),
+        with_food=data.get("with_food"),
+        duration_days=data.get("duration_days"),
+        problem=data.get("problem"),
+    )
+    return schedule, date.fromisoformat(data["start_date"])

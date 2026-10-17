@@ -137,3 +137,36 @@ def test_standard_times_match_the_bedside_time_check():
         schedule = derive_schedule(facts("once daily", f"in the {word}"))
         assert schedule.times == [expected], word
     assert time(8, 0) in derive_schedule(facts("once daily")).times
+
+
+@pytest.mark.parametrize(
+    ("frequency", "timing", "duration"),
+    [
+        ("6 times daily", None, None),  # must not fall back to "daily" = once
+        ("12 times daily", None, None),
+        ("five times a day", None, None),
+        ("1-2 times daily", None, None),
+        ("2-3 times a day", None, None),
+        ("2 to 3 times daily", None, None),
+        ("twice daily", "every 8 hours", None),  # 2 a day vs 3 a day
+        ("once daily", "q6h", None),
+        ("twice daily", None, "continue for 5 days and then ongoing"),
+    ],
+)
+def test_review_findings_never_produce_a_schedule(frequency, timing, duration):
+    schedule = derive_schedule(facts(frequency, timing, duration))
+    assert schedule.kind == "NEEDS_REVIEW", (frequency, timing, duration, schedule)
+
+
+@pytest.mark.parametrize(
+    ("duration", "days"),
+    [("continue for 5 days", None), ("take regularly for 7 days", None)],
+)
+def test_course_length_inside_other_words_is_never_read_as_ongoing(duration, days):
+    schedule = derive_schedule(facts("twice daily", duration=duration))
+    # Not a clean "for N days": review, never "no end date".
+    assert schedule.kind == "NEEDS_REVIEW" and schedule.duration_days is days
+
+
+def test_interval_matching_its_count_is_fine():
+    assert hhmm(derive_schedule(facts("three times daily", "every 8 hours"))) == ["06:00", "14:00", "22:00"]

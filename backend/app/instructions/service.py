@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.schedules.instruction_schedule import hospital_date, snapshot_at_approval
 from app.ai.extraction_service import PROMPT_VERSION, ExtractionAttempt, run_extraction
 from app.ai.generation_service import GENERATION_PROMPT_VERSION, GenerationAttempt, run_generation
 from app.ai.provider import ExtractionProviderError, get_llm_provider
@@ -780,7 +781,11 @@ def approve(db: Session, instruction: CareInstruction, approved_by: uuid.UUID) -
     )
     if extraction is not None and extraction.instruction_type == InstructionType.MEDICATION:
         instruction.clinical_status = ClinicalStatus.ACTIVE
-        instruction.clinical_start_date = instruction.approved_at.date()
+        # The hospital's calendar day, not UTC's: approving at 9 PM in New
+        # York must not start the course "tomorrow".
+        instruction.clinical_start_date = hospital_date(instruction.approved_at)
+        # The dose times the clinician just saw and approved, kept as approved.
+        instruction.dose_schedule = snapshot_at_approval(instruction)
 
     record_event(
         db,
@@ -817,7 +822,7 @@ def set_clinical_status(
     instruction.clinical_status_changed_at = now
     instruction.clinical_status_changed_by = changed_by
     if new_status in (ClinicalStatus.COMPLETED, ClinicalStatus.STOPPED):
-        instruction.clinical_end_date = now.date()
+        instruction.clinical_end_date = hospital_date(now)
     elif new_status == ClinicalStatus.ACTIVE:
         instruction.clinical_end_date = None  # reactivated — no longer "ended"
 
