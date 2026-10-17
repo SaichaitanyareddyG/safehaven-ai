@@ -246,3 +246,37 @@ def test_app_events_are_audited(client, outbox):
     assert events.status_code == 200
     types = {e["event_type"] for e in events.json()["results"]}
     assert {"PATIENT_APP_INVITED", "PATIENT_APP_SIGNED_IN", "PATIENT_APP_ACCESS_REVOKED"} <= types
+
+
+def test_dose_schedule_is_shown_to_staff_before_approval_and_to_the_patient_after(client, outbox):
+    staff = _staff(client)
+    patient = _register(client, staff, email="maria@example.com", app_consent=True)
+    created = client.post(
+        f"/patients/{patient['id']}/instructions", json={"text": MEDICATION_TEXT}, headers=staff
+    ).json()
+    analyzed = client.post(f"/instructions/{created['id']}/analyze", headers=staff).json()
+    schedule = analyzed["current_version"]["dose_schedule"]
+    assert schedule["kind"] == "SCHEDULED" and schedule["times_display"] == ["8:00 AM", "8:00 PM"]
+    assert schedule["start_date"] is None  # starts on approval
+
+    client.post(f"/instructions/{created['id']}/generate", headers=staff)
+    client.post(f"/instructions/{created['id']}/approve", headers=staff)
+    me = _sign_in(client, _token_from(outbox[0]))
+    medicine = client.get("/patient-app/me/care-plan", headers=me).json()["instructions"][0]
+    assert medicine["schedule"]["times"] == ["08:00", "20:00"]
+    assert medicine["schedule"]["start_date"] is not None
+
+
+def test_as_needed_medicine_has_no_dose_times(client, outbox):
+    staff = _staff(client)
+    patient = _register(client, staff, email="maria@example.com", app_consent=True)
+    created = client.post(
+        f"/patients/{patient['id']}/instructions",
+        json={"text": "Take Paracetamol 500 mg orally every 6 hours as needed for pain."},
+        headers=staff,
+    ).json()
+    analyzed = client.post(f"/instructions/{created['id']}/analyze", headers=staff).json()
+    schedule = analyzed["current_version"]["dose_schedule"]
+    assert schedule is None or schedule["kind"] in ("AS_NEEDED", "NEEDS_REVIEW")
+    if schedule:
+        assert schedule["times"] == []

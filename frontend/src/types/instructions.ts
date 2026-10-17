@@ -1,3 +1,4 @@
+import type { DoseSchedule } from '@/types/dose-schedule'
 import type { Language } from '@/types/patients'
 
 export type InstructionStatus =
@@ -103,6 +104,8 @@ export interface InstructionVersionRead {
   created_at: string
   extraction: StructuredExtractionRead | null
   patient_outputs: PatientOutputRead[]
+  /** MEDICATION only: the dose times the patient app will use. */
+  dose_schedule: DoseSchedule | null
 }
 
 export interface CareInstructionRead {

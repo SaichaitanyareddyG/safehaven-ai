@@ -1,3 +1,4 @@
+import type { DoseSchedule } from '@/types/dose-schedule'
 import type { InstructionType } from '@/types/instructions'
 import type { Language } from '@/types/patients'
 
@@ -38,6 +39,7 @@ export interface PatientCareInstructionView {
   medication_name: string | null
   why: WhyExplanation | null
   past_reason: 'STOPPED' | 'COMPLETED' | null
+  schedule: DoseSchedule | null
 }
 
 export interface ConditionExplainerView {

@@ -246,12 +246,17 @@ def test_response_is_minimal_no_internal_fields(client):
         "medication_name",
         "why",
         "past_reason",
+        "schedule",
     }
     # `id` is deliberately present (an opaque reference, needed by the
     # comprehension-feedback endpoint) — everything else stays absent: no
     # patient_id, no provider/model metadata, no validation internals.
     assert "provider" not in instruction_view
     assert "validation_diff" not in instruction_view
+    # Dose times from the approved facts ("twice daily", "with food").
+    assert instruction_view["schedule"]["kind"] == "SCHEDULED"
+    assert instruction_view["schedule"]["times"] == ["08:00", "20:00"]
+    assert instruction_view["schedule"]["start_date"] is not None
 
 
 # ---------------------------------------------------------------------------

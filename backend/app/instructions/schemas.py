@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from app.encounters.schemas import EncounterSummary
 from app.instructions.models import (
@@ -13,6 +13,8 @@ from app.instructions.models import (
     VersionSource,
 )
 from app.patients.models import Language
+from app.schedules.dose_schedule import derive_schedule
+from app.schedules.schemas import DoseScheduleRead, to_read
 
 
 class DictationWarningRead(BaseModel):
@@ -138,6 +140,21 @@ class InstructionVersionRead(BaseModel):
     # attempt_number — the latest attempt is patient_outputs[-1] when non-empty.
     extraction: StructuredExtractionRead | None = None
     patient_outputs: list[PatientOutputRead] = []
+    # MEDICATION only: the dose times the patient app will remind at, derived
+    # by fixed rules from the extracted facts (app/schedules/). Shown to the
+    # clinician before approval, so approving the instruction approves this.
+    dose_schedule: DoseScheduleRead | None = None
+
+    @model_validator(mode="after")
+    def _derive_dose_schedule(self) -> "InstructionVersionRead":
+        if (
+            self.dose_schedule is None
+            and self.extraction is not None
+            and self.extraction.instruction_type == InstructionType.MEDICATION
+            and self.extraction.completeness_status != CompletenessStatus.FAILED
+        ):
+            self.dose_schedule = to_read(derive_schedule(self.extraction.normalized_facts, self.raw_text))
+        return self
 
 
 class TranslationRequest(BaseModel):

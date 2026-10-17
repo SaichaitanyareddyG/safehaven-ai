@@ -2,7 +2,7 @@ import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
 import { useState } from 'react'
 
 import { MyCard } from '@/features/patient-app/MyAppLayout'
-import { textFor } from '@/features/patient-app/use-my-data'
+import { courseEnded, textFor } from '@/features/patient-app/use-my-data'
 import { formatDate, formatDateTime } from '@/lib/format'
 import { instructionIcon, instructionTypeLabel } from '@/lib/instruction-icons'
 import { textDirection } from '@/lib/language-labels'
@@ -20,6 +20,7 @@ export function MedicineCard({ medicine, language }: { medicine: PatientCareInst
       <p className="text-lg leading-relaxed" dir={textDirection(shownIn)}>
         {text}
       </p>
+      <ScheduleFacts medicine={medicine} />
       {open && medicine.why && (
         <div className="rounded-xl bg-[#F3F7F8] p-3">
           <p className="text-base font-semibold">
@@ -145,6 +146,35 @@ function Fact({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl bg-[#F3F7F8] px-3 py-2">
       <div className="text-xs text-[#53656E]">{label}</div>
       <div className="text-base font-medium">{value}</div>
+    </div>
+  )
+}
+
+
+/** When and until when, from the approved dose schedule. Shows nothing it
+ *  cannot state exactly. */
+function ScheduleFacts({ medicine }: { medicine: PatientCareInstructionView }) {
+  const schedule = medicine.schedule
+  if (!schedule) return null
+  if (schedule.kind === 'NEEDS_REVIEW') {
+    return <p className="text-base text-[#53656E]">Ask your nurse or doctor exactly when to take this.</p>
+  }
+  if (courseEnded(medicine)) {
+    return (
+      <p className="rounded-xl bg-[#FFF4E5] p-3 text-base text-[#7A4200]" data-testid="my-course-ended">
+        This course ended on {formatDate(schedule.end_date!)}. Ask your care team before taking any more.
+      </p>
+    )
+  }
+  const when =
+    schedule.kind === 'AS_NEEDED'
+      ? 'Only when needed'
+      : schedule.times_display.join(', ') + (schedule.with_food ? ', with food' : '')
+  const until = schedule.end_date ? formatDate(schedule.end_date) : schedule.kind === 'AS_NEEDED' ? '—' : 'Ongoing'
+  return (
+    <div className="grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-2" data-testid="my-medicine-schedule">
+      <Fact label="When" value={when} />
+      <Fact label="Until" value={until} />
     </div>
   )
 }

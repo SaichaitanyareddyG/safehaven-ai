@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ClarificationForm } from '@/features/instructions/ClarificationForm'
+import { DoseSchedulePanel } from '@/features/instructions/DoseSchedulePanel'
 import { FactsPanel } from '@/features/instructions/FactsPanel'
 import {
   AnalyzeButton,
@@ -234,6 +235,9 @@ export function InstructionWorkflowPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <FactsPanel extraction={extraction} />
+              {version?.dose_schedule && extraction.completeness_status === 'PASSED' && (
+                <DoseSchedulePanel schedule={version.dose_schedule} />
+              )}
               {instruction.status === 'PROCESSING' &&
                 extraction.completeness_status === 'PASSED' &&
                 !latestOutput &&

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.instructions.models import InstructionType
 from app.patients.models import Language
+from app.schedules.schemas import DoseScheduleRead
 
 
 class CarePlanAudioRequest(BaseModel):
@@ -106,6 +107,9 @@ class PatientCareInstructionView(BaseModel):
     # from the patient — one is "do not take any more of this", the other is
     # "nothing to do".
     past_reason: Literal["STOPPED", "COMPLETED"] | None = None
+    # MEDICATION only: when to take it, derived by fixed rules from the
+    # approved facts (app/schedules/). Starts on the approval day.
+    schedule: DoseScheduleRead | None = None
 
 
 class ConditionExplainerView(BaseModel):

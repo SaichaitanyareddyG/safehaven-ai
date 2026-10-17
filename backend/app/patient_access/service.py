@@ -35,6 +35,8 @@ from app.patients.models import Patient
 from app.patients.service import get_patient
 from app.reference.condition_explainers import lookup_condition_explainer
 from app.reference.medication_purpose import lookup_medication_purpose
+from app.schedules.dose_schedule import derive_schedule
+from app.schedules.schemas import to_read as schedule_to_read
 
 _GENERAL_PURPOSE_DISCLAIMER = (
     "This is general information about this medicine. Your nurse or doctor can tell you why it was given to you."
@@ -308,6 +310,14 @@ def get_care_plan(db: Session, raw_token: str) -> PatientCarePlanResponse:
     return plan
 
 
+def _schedule_for(instruction: CareInstruction, version: InstructionVersion):
+    extraction = version.extraction
+    if extraction is None or extraction.instruction_type != InstructionType.MEDICATION:
+        return None
+    start = instruction.clinical_start_date or (instruction.approved_at.date() if instruction.approved_at else None)
+    return schedule_to_read(derive_schedule(extraction.normalized_facts, version.raw_text), start)
+
+
 def build_care_plan(db: Session, patient: Patient) -> PatientCarePlanResponse:
     """Everything a patient may see, built only from APPROVED instructions with
     a PASSED patient-facing text. Shared by the printed care link and the
@@ -353,6 +363,7 @@ def build_care_plan(db: Session, patient: Patient) -> PatientCarePlanResponse:
                 else None
             ),
             why=resolve_why(version.extraction),
+            schedule=_schedule_for(instruction, version),
         )
 
         # Only a MEDICATION instruction ever carries a clinical_status at all
