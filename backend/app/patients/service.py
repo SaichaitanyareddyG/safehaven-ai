@@ -22,6 +22,8 @@ def create_patient(db: Session, data: PatientCreate, created_by: uuid.UUID) -> P
         date_of_birth=data.date_of_birth,
         room_number=data.room_number,
         preferred_language=data.preferred_language,
+        email=data.email,
+        phone=data.phone,
         created_by=created_by,
     )
     db.add(patient)

@@ -77,6 +77,16 @@ class Patient(Base):
         default=AdmissionStatus.ACTIVE,
     )
 
+    # Contact details for the patient app (app/patient_app/). Optional: a
+    # patient without email still gets the printed care link. Never put in an
+    # email body or a log — only used as the address a sign-in link goes to.
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
+    phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # When, and by whom, the patient's agreement to use the app (and receive
+    # its emails) was recorded. No invite is sent without it.
+    app_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    app_consent_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(

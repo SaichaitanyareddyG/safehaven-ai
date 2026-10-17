@@ -1,4 +1,4 @@
-import { clearToken, getToken } from '@/lib/auth-storage'
+import { clearPatientToken, clearToken, getPatientToken, getToken } from '@/lib/auth-storage'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
@@ -22,6 +22,8 @@ interface RequestOptions {
   params?: object
   /** /auth/login and /auth/register run before a token exists. */
   skipAuth?: boolean
+  /** The patient app (/patient-app/me...): the patient's own session, not staff's. */
+  asPatient?: boolean
 }
 
 function buildUrl(path: string, params?: RequestOptions['params']): string {
@@ -49,12 +51,12 @@ async function extractErrorMessage(response: Response): Promise<string> {
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, params, skipAuth = false } = options
+  const { method = 'GET', body, params, skipAuth = false, asPatient = false } = options
 
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (!skipAuth) {
-    const token = getToken()
+    const token = asPatient ? getPatientToken() : getToken()
     if (token) headers['Authorization'] = `Bearer ${token}`
   }
 
@@ -80,6 +82,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     } catch {
       throw new ApiError(0, NETWORK_ERROR_MESSAGE)
     }
+  }
+
+  if (response.status === 401 && asPatient) {
+    clearPatientToken()
+    window.location.assign('/my/sign-in')
+    throw new ApiError(401, 'Please sign in again')
   }
 
   if (response.status === 401 && !skipAuth) {

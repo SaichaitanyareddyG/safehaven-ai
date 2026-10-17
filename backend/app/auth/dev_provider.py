@@ -29,6 +29,10 @@ class DevAuthProvider:
     def verify_token(self, token: str) -> AuthenticatedUser:
         try:
             payload = decode_access_token(token)
+            # A patient-app token is signed with the same key; it must never
+            # open a staff route (see app/patient_app/security.py).
+            if payload.get("typ") is not None:
+                raise AuthError("Not a staff token")
             user_id = uuid.UUID(payload["sub"])
         except Exception as exc:
             raise AuthError("Invalid or expired token") from exc

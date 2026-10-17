@@ -202,6 +202,12 @@ export function auditEventDescription(event: AuditEvent): string {
       return 'Patient record updated'
     case 'PATIENT_DISCHARGED':
       return 'Patient discharged'
+    case 'PATIENT_APP_INVITED':
+      return 'Patient app invite emailed'
+    case 'PATIENT_APP_SIGNED_IN':
+      return 'Patient signed in to the patient app'
+    case 'PATIENT_APP_ACCESS_REVOKED':
+      return 'Patient app access turned off'
     case 'INSTRUCTION_CREATED':
       return 'Care instruction created'
     case 'INSTRUCTION_ANALYSIS_STARTED':

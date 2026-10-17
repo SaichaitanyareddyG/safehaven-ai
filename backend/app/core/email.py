@@ -55,7 +55,15 @@ FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif"
 
 
 def _layout(
-    *, preheader: str, heading: str, paragraphs: list[str], button: str, link: str, note: str, reason: str
+    *,
+    preheader: str,
+    heading: str,
+    paragraphs: list[str],
+    button: str,
+    link: str,
+    note: str,
+    reason: str,
+    product: str = "Ward safety dashboard",
 ) -> str:
     """One branded, table-based email (what Gmail, Outlook and Apple Mail all
     render alike): dark teal header with the SafeHaven mark, a big button, a
@@ -117,7 +125,7 @@ SafeHaven never sends patient information by email, and will never ask for your 
 </td></tr>
 
 </table>
-<p style="margin:18px 0 0;font-family:{FONT};font-size:12px;color:#8A9598">SafeHaven AI &middot; Ward safety dashboard</p>
+<p style="margin:18px 0 0;font-family:{FONT};font-size:12px;color:#8A9598">SafeHaven AI &middot; {product}</p>
 </td></tr></table>
 </body></html>"""
 
@@ -175,5 +183,62 @@ def send_reset_email(to: str, full_name: str, link: str, minutes: int) -> EmailR
         link=link,
         note=f"This link works once and expires in {lifetime}.",
         reason="Didn't ask for this? You can safely ignore this email — your password stays the same.",
+    )
+    return send_email(to, subject, text, html)
+
+
+# Patient app emails. Deliberately no name, ward, hospital or medicine: the
+# address may be shared with family, and an inbox is not a medical record.
+_PATIENT_REASON = (
+    "You're receiving this because you agreed, with your care team, to use the SafeHaven patient app. "
+    "Not expecting it? You can ignore this email."
+)
+
+
+def send_patient_invite_email(to: str, link: str, hours: int) -> EmailResult:
+    subject = "Your care information is ready in SafeHaven"
+    text = (
+        "Hello,\n\n"
+        "Your care team has set up the SafeHaven patient app for you. Sign in to see your medicines, "
+        "hospital visits and care instructions, explained in plain words.\n\n"
+        f"Sign in here (the link works once, for {hours} hours):\n{link}\n\n"
+        'After that, open the app and choose "Email me a sign-in link" whenever you need one.'
+        + _signature_text()
+        + "\n\n" + _PATIENT_REASON
+    )
+    html = _layout(
+        preheader="Sign in to see your medicines, visits and care instructions.",
+        heading="Your care information is ready",
+        paragraphs=[
+            "Your care team has set up the SafeHaven patient app for you. Sign in to see your medicines, "
+            "hospital visits and care instructions, explained in plain words.",
+            "There is no password to remember: each time, we email you a link like this one.",
+        ],
+        button="Sign in to SafeHaven",
+        link=link,
+        note=f'This link works once and expires in {hours} hours. After that, use "Email me a sign-in link" on the sign-in page.',
+        reason=_PATIENT_REASON,
+        product="Patient app",
+    )
+    return send_email(to, subject, text, html)
+
+
+def send_patient_sign_in_email(to: str, link: str, minutes: int) -> EmailResult:
+    subject = "Your SafeHaven sign-in link"
+    text = (
+        "Hello,\n\n"
+        f"Here is your link to sign in to SafeHaven (it works once, for {minutes} minutes):\n{link}"
+        + _signature_text()
+        + "\n\nDidn't ask for this? Ignore this email — nobody can sign in without the link."
+    )
+    html = _layout(
+        preheader=f"Your sign-in link — it works for {minutes} minutes.",
+        heading="Sign in to SafeHaven",
+        paragraphs=["Use the button below to sign in to the SafeHaven patient app."],
+        button="Sign in",
+        link=link,
+        note=f"This link works once and expires in {minutes} minutes.",
+        reason="Didn't ask for this? You can safely ignore this email — nobody can sign in without the link.",
+        product="Patient app",
     )
     return send_email(to, subject, text, html)

@@ -21,6 +21,7 @@ import { PatientChatTranscript } from '@/features/patient-chat/PatientChatTransc
 import { CreateCareLinkDialog } from '@/features/patients/CreateCareLinkDialog'
 import { EncountersPanel } from '@/features/patients/EncountersPanel'
 import { PatientAllergiesPanel } from '@/features/patients/PatientAllergiesPanel'
+import { PatientAppPanel } from '@/features/patients/PatientAppPanel'
 import { AdministrationHistoryPanel } from '@/features/medication-verification/AdministrationHistoryPanel'
 import { PatientConditionsPanel } from '@/features/patients/PatientConditionsPanel'
 import { SafetyEventHistoryPanel } from '@/features/safety-monitoring/SafetyEventHistoryPanel'
@@ -58,6 +59,7 @@ export function PatientDetailPage() {
       // that is no longer monitoring anyone.
       queryClient.invalidateQueries({ queryKey: ['wearable-assignment', patientId] })
       queryClient.invalidateQueries({ queryKey: ['wearable-devices'] })
+      queryClient.invalidateQueries({ queryKey: ['patient-app-access', patientId] })
       toast.success('Patient discharged')
     },
     onError: (error) => {
@@ -134,7 +136,7 @@ export function PatientDetailPage() {
                       </DialogTitle>
                       <DialogDescription>
                         Their wrist band stops monitoring, their care link stops working, and no new instructions can be
-                        added. Their records stay.
+                        added. Their records stay. If they use the patient app, it keeps working at home for 90 days.
                       </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>
@@ -166,6 +168,9 @@ export function PatientDetailPage() {
           </div>
           <div className="mt-6 border-t pt-4">
             <EncountersPanel patientId={patient.id} />
+          </div>
+          <div className="mt-6 border-t pt-4">
+            <PatientAppPanel patientId={patient.id} />
           </div>
           <div className="mt-6 border-t pt-4">
             <WearableDevicePanel

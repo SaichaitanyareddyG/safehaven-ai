@@ -12,6 +12,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 from app.patient_access.service import revoke_all_tokens_for_patient
+from app.patient_app.service import on_admission_status_changed
 from app.patients.models import AdmissionStatus, Patient
 from app.patients.schemas import PatientUpdate
 from app.patients.service import update_patient as _update_patient_record
@@ -51,6 +52,10 @@ def update_patient(db: Session, patient_id: uuid.UUID, data: PatientUpdate, upda
     if data.admission_status == AdmissionStatus.DISCHARGED:
         revoke_all_tokens_for_patient(db, patient_id, commit=False)
         end_assignments_for_patient(db, patient_id, commit=False)
+    if data.admission_status is not None:
+        # The patient app outlives the stay by a fixed window (and reopens on
+        # readmission) — unlike the bedside care link revoked above.
+        on_admission_status_changed(db, patient)
 
     db.commit()
     db.refresh(patient)

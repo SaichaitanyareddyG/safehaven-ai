@@ -18,6 +18,11 @@ import { ChangePasswordPage } from '@/pages/ChangePasswordPage'
 import { UsersPage } from '@/pages/UsersPage'
 import { SetPasswordPage } from '@/pages/SetPasswordPage'
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
+import { MyCarePage } from '@/pages/my/MyCarePage'
+import { MyHomePage } from '@/pages/my/MyHomePage'
+import { MyMedicinesPage } from '@/pages/my/MyMedicinesPage'
+import { MySignInPage } from '@/pages/my/MySignInPage'
+import { MyVisitsPage } from '@/pages/my/MyVisitsPage'
 
 export default function App() {
   return (
@@ -33,6 +38,13 @@ export default function App() {
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             {/* Public, token-gated — no clinician session, must never sit behind ProtectedRoute */}
             <Route path="/care" element={<PatientCarePage />} />
+            {/* The patient app: its own sign-in and session, never staff's (MyAppLayout guards). */}
+            <Route path="/my/sign-in" element={<MySignInPage />} />
+            <Route path="/my" element={<MyHomePage />} />
+            <Route path="/my/medicines" element={<MyMedicinesPage />} />
+            <Route path="/my/visits" element={<MyVisitsPage />} />
+            <Route path="/my/care" element={<MyCarePage />} />
+            <Route path="/my/*" element={<Navigate to="/my" replace />} />
             <Route
               path="/patients"
               element={

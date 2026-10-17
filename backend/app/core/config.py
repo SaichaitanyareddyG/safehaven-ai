@@ -111,6 +111,15 @@ class Settings(BaseSettings):
     invite_link_ttl_hours: int = 24
     reset_link_ttl_minutes: int = 60
 
+    # Patient app (app/patient_app/). The first invite lasts longer than a
+    # staff one: a patient may not open email the day they are admitted.
+    patient_invite_link_ttl_hours: int = 72
+    patient_sign_in_link_ttl_minutes: int = 15
+    # "Keep me signed in" on the patient's own phone.
+    patient_session_days: int = 30
+    # After discharge the app keeps working at home for this long, then stops.
+    patient_access_after_discharge_days: int = 90
+
     # Patient care-access token lifetime. Also the cap on a clinician-requested
     # shorter expiry (see patient_access/schemas.py's CareAccessTokenCreate) —
     # there is no way to mint a longer-lived or permanent token.

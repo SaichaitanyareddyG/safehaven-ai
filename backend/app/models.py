@@ -31,3 +31,4 @@ from app.wearables.models import (  # noqa: F401
     WearableDevice,
 )
 from app.auth.password_links import PasswordLink  # noqa: F401
+from app.patient_app.models import PatientAppAccount, PatientSignInLink  # noqa: F401

@@ -10,19 +10,43 @@ from app.core.db import get_db
 from app.orchestration import patient_ops
 from app.patients import service
 from app.patients.models import AdmissionStatus
-from app.patients.schemas import PatientCreate, PatientListResponse, PatientRead, PatientUpdate
+from app.patient_app import service as app_service
+from app.patients.schemas import (
+    AppInviteOutcome,
+    PatientCreate,
+    PatientCreateResponse,
+    PatientListResponse,
+    PatientRead,
+    PatientUpdate,
+)
 from app.patients.service import PatientNotFoundError
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 
 
-@router.post("", response_model=PatientRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=PatientCreateResponse, status_code=status.HTTP_201_CREATED)
 def create_patient(
     payload: PatientCreate,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-) -> PatientRead:
-    return service.create_patient(db, payload, created_by=uuid.UUID(current_user.id))
+) -> PatientCreateResponse:
+    """With an email and the patient's consent, also emails the patient-app
+    invite. The patient is registered either way: a failed invite is
+    reported, never a reason to lose the registration."""
+    staff_id = uuid.UUID(current_user.id)
+    if payload.email and payload.app_consent and app_service.email_in_use_elsewhere(db, None, payload.email):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Another patient already uses this email for the app."
+        )
+    patient = service.create_patient(db, payload, created_by=staff_id)
+    response = PatientCreateResponse.model_validate(patient, from_attributes=True)
+    if payload.email and payload.app_consent:
+        try:
+            result = app_service.invite(db, patient.id, staff_id, consent=True)
+            response.app_invite = AppInviteOutcome(emailed=result.emailed, problem=result.problem, link=result.link)
+        except app_service.PatientAppError as exc:
+            response.app_invite = AppInviteOutcome(emailed=False, problem=str(exc))
+    return response
 
 
 @router.get("", response_model=PatientListResponse)
@@ -71,6 +95,10 @@ def update_patient(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> PatientRead:
+    if payload.email and app_service.email_in_use_elsewhere(db, patient_id, payload.email):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Another patient already uses this email for the app."
+        )
     try:
         return patient_ops.update_patient(db, patient_id, payload, updated_by=uuid.UUID(current_user.id))
     except PatientNotFoundError as exc:

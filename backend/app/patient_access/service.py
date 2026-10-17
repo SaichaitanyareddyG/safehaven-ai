@@ -302,7 +302,16 @@ def validate_care_access_token(db: Session, raw_token: str) -> PatientCareAccess
 def get_care_plan(db: Session, raw_token: str) -> PatientCarePlanResponse:
     record = validate_care_access_token(db, raw_token)
     patient = db.get(Patient, record.patient_id)
+    plan = build_care_plan(db, patient)
+    _maybe_record_view_event(db, record)
+    db.commit()
+    return plan
 
+
+def build_care_plan(db: Session, patient: Patient) -> PatientCarePlanResponse:
+    """Everything a patient may see, built only from APPROVED instructions with
+    a PASSED patient-facing text. Shared by the printed care link and the
+    patient app (app/patient_app/), so both always show the same thing."""
     approved_instructions = (
         db.query(CareInstruction)
         .filter(CareInstruction.patient_id == patient.id, CareInstruction.status == InstructionStatus.APPROVED)
@@ -375,9 +384,6 @@ def get_care_plan(db: Session, raw_token: str) -> PatientCarePlanResponse:
             .all()
         )
     ]
-
-    _maybe_record_view_event(db, record)
-    db.commit()
 
     return PatientCarePlanResponse(
         patient_first_name=patient.first_name,

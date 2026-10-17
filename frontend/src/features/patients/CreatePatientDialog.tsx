@@ -37,6 +37,9 @@ const patientSchema = z.object({
   // whole point is that registration should ask, not that the server insists.
   reason_for_visit: z.string().trim().min(1, 'Why has the patient come in?'),
   preferred_language: z.enum(ALL_LANGUAGES as [Language, ...Language[]]),
+  email: z.union([z.literal(''), z.string().trim().email('Enter a valid email address')]).optional(),
+  phone: z.string().optional(),
+  app_consent: z.boolean().optional(),
 })
 
 type PatientFormValues = z.infer<typeof patientSchema>
@@ -55,15 +58,30 @@ export function CreatePatientDialog() {
     formState: { errors, isSubmitting },
   } = useForm<PatientFormValues>({
     resolver: zodResolver(patientSchema),
-    defaultValues: { preferred_language: 'ENGLISH' },
+    defaultValues: { preferred_language: 'ENGLISH', app_consent: false },
   })
+  const email = watch('email')?.trim() ?? ''
+  const consent = watch('app_consent') ?? false
 
   const mutation = useMutation({
     mutationFn: (values: PatientFormValues) =>
-      createPatient({ ...values, room_number: values.room_number || null }),
+      createPatient({
+        ...values,
+        room_number: values.room_number || null,
+        email: values.email?.trim() || null,
+        phone: values.phone?.trim() || null,
+        app_consent: !!values.email?.trim() && !!values.app_consent,
+      }),
     onSuccess: (patient) => {
       queryClient.invalidateQueries({ queryKey: ['patients'] })
       toast.success(`${patient.first_name} ${patient.last_name} registered as ${patient.patient_code}`)
+      const invite = patient.app_invite
+      if (invite?.emailed) toast.success(`Patient app invite emailed to ${patient.email}`)
+      else if (invite) {
+        toast.warning(`Patient app invite not sent: ${invite.problem ?? 'unknown problem'}`, {
+          description: 'You can send it again from the Patient app section.',
+        })
+      }
       setOpen(false)
       reset()
       navigate(`/patients/${patient.id}`)
@@ -81,7 +99,7 @@ export function CreatePatientDialog() {
           New Patient
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Register a new patient</DialogTitle>
           <DialogDescription>A patient code (e.g. P1001) will be assigned automatically.</DialogDescription>
@@ -156,13 +174,50 @@ export function CreatePatientDialog() {
               </SelectContent>
             </Select>
           </div>
+          <fieldset className="space-y-4 rounded-lg border p-4">
+            <legend className="px-1 text-sm font-medium">Patient app</legend>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="email">Patient's email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="off"
+                  placeholder="Optional"
+                  aria-invalid={!!errors.email}
+                  {...register('email')}
+                />
+                {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="phone">Mobile</Label>
+                <Input id="phone" type="tel" inputMode="tel" placeholder="Optional" {...register('phone')} />
+              </div>
+            </div>
+            <label className="flex items-start gap-3 text-sm leading-snug">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                disabled={!email}
+                data-testid="patient-app-consent"
+                {...register('app_consent')}
+              />
+              <span>The patient agreed to use the SafeHaven app and to receive emails about it.</span>
+            </label>
+            <p className="text-xs text-muted-foreground">
+              {email && consent
+                ? 'On saving, the patient gets an email with a link to sign in. Their medicines, visits and instructions appear as you approve them.'
+                : 'No email? Leave it blank — the printed care link still works, and you can invite them later.'}
+            </p>
+          </fieldset>
           <DialogFooter>
             <Button
               type="submit"
               disabled={isSubmitting || mutation.isPending}
               data-testid="patient-create-submit"
             >
-              {mutation.isPending ? 'Registering…' : 'Register patient'}
+              {mutation.isPending ? 'Registering…' : email && consent ? 'Register and send invite' : 'Register patient'}
             </Button>
           </DialogFooter>
         </form>
