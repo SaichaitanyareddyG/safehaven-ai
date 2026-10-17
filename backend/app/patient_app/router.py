@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -12,8 +12,20 @@ from app.core.rate_limit import limiter
 from app.patient_access.schemas import PatientCarePlanResponse
 from app.patient_access.service import build_care_plan
 from app.patient_app import service
+from app.core.config import get_settings
+from app.patient_app import doses as dose_service
+from app.patient_app import push as push_service
+from app.patient_app.models import PushSubscription
 from app.patient_app.schemas import (
+    AdherenceDayRead,
+    AdherenceResponse,
     AppAccessRead,
+    DoseRead,
+    DoseRecordRequest,
+    MyDosesResponse,
+    PushStatus,
+    PushSubscribeRequest,
+    PushUnsubscribeRequest,
     AppInviteRequest,
     AppInviteResponse,
     ExchangeRequest,
@@ -25,7 +37,7 @@ from app.patient_app.schemas import (
 )
 from app.patient_app.security import InvalidPatientTokenError, create_patient_token, decode_patient_token
 from app.patient_app.service import InvalidSignInLinkError, PatientAccessDeniedError, PatientAppError
-from app.patients.models import Patient
+from app.patients.models import AdmissionStatus, Patient
 from app.patients.service import PatientNotFoundError, get_patient
 
 # Staff manage a patient's app access next to the rest of the patient record.
@@ -191,3 +203,123 @@ def my_visits(
             for e in service.list_visits(db, patient.id)
         ]
     )
+
+
+def _dose_read(dose: dose_service.DueDose) -> DoseRead:
+    return DoseRead(**dose.__dict__)
+
+
+@router.get("/me/doses", response_model=MyDosesResponse)
+def my_doses(
+    patient: Annotated[Patient, Depends(get_signed_in_patient)], db: Annotated[Session, Depends(get_db)]
+) -> MyDosesResponse:
+    """Today's scheduled doses, earliest first, with the patient's answers."""
+    today = dose_service.hospital_now().date()
+    return MyDosesResponse(
+        date=today,
+        at_home=patient.admission_status == AdmissionStatus.DISCHARGED,
+        doses=[_dose_read(d) for d in dose_service.doses_with_status(db, patient.id, today, today)],
+    )
+
+
+@router.post("/me/doses", status_code=status.HTTP_204_NO_CONTENT)
+def record_dose(
+    payload: DoseRecordRequest,
+    patient: Annotated[Patient, Depends(get_signed_in_patient)],
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    """Taken / Skipped (status null = undo), for today or yesterday only."""
+    try:
+        dose_service.record_dose(db, patient.id, payload.instruction_id, payload.date, payload.time, payload.status)
+    except dose_service.DoseNotDueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="That dose is not on your schedule") from exc
+
+
+@router.get("/push", response_model=PushStatus)
+def push_status() -> PushStatus:
+    """Public: the key a browser needs to subscribe, if reminders are set up."""
+    return PushStatus(available=push_service.push_enabled(), public_key=get_settings().vapid_public_key)
+
+
+@router.post("/me/push", status_code=status.HTTP_204_NO_CONTENT)
+def subscribe_push(
+    payload: PushSubscribeRequest,
+    patient: Annotated[Patient, Depends(get_signed_in_patient)],
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    """Turn reminders on for this phone. Sends one test notification so the
+    patient sees at once that it works."""
+    if not push_service.push_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reminders are not set up on this server")
+    if not payload.endpoint.startswith("https://"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Not a push address")
+    existing = db.query(PushSubscription).filter(PushSubscription.endpoint == payload.endpoint).first()
+    if existing is None:
+        existing = PushSubscription(
+            patient_id=patient.id, endpoint=payload.endpoint, p256dh=payload.keys.p256dh, auth=payload.keys.auth
+        )
+        db.add(existing)
+    else:
+        # The same phone, now signed in as this patient.
+        existing.patient_id = patient.id
+        existing.p256dh = payload.keys.p256dh
+        existing.auth = payload.keys.auth
+    db.commit()
+    push_service.send_to_subscription(
+        db,
+        existing,
+        {"title": "Reminders are on", "body": "We'll remind you when it's time for your medicines.", "url": "/my", "tag": "welcome"},
+    )
+    db.commit()
+
+
+@router.post("/me/push/remove", status_code=status.HTTP_204_NO_CONTENT)
+def unsubscribe_push(
+    payload: PushUnsubscribeRequest,
+    patient: Annotated[Patient, Depends(get_signed_in_patient)],
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    db.query(PushSubscription).filter(
+        PushSubscription.endpoint == payload.endpoint, PushSubscription.patient_id == patient.id
+    ).delete()
+    db.commit()
+
+
+@staff_router.get("/{patient_id}/app-access/adherence", response_model=AdherenceResponse)
+def get_adherence(
+    patient_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    days: Annotated[int, Query(ge=1, le=60)] = 14,
+) -> AdherenceResponse:
+    """What the patient reported in the app, per day. Patient-reported, not
+    nurse-administered (that is Medication check)."""
+    try:
+        get_patient(db, patient_id)
+    except PatientNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found") from exc
+    rows = dose_service.adherence(db, patient_id, days)
+    return AdherenceResponse(
+        days=[AdherenceDayRead(date=r.day, due=r.due, taken=r.taken, skipped=r.skipped) for r in rows],
+        total_due=sum(r.due for r in rows),
+        total_taken=sum(r.taken for r in rows),
+        total_skipped=sum(r.skipped for r in rows),
+    )
+
+
+# Called every minute by the Cloudflare cron (frontend/worker/index.js): a
+# free Render service sleeps, so it cannot keep its own clock.
+internal_router = APIRouter(prefix="/internal", tags=["internal"], include_in_schema=False)
+
+
+@internal_router.post("/reminders/tick")
+def reminders_tick(
+    db: Annotated[Session, Depends(get_db)],
+    x_tick_secret: Annotated[str | None, Header()] = None,
+) -> dict:
+    import hmac
+
+    secret = get_settings().reminder_tick_secret
+    if not secret or not x_tick_secret or not hmac.compare_digest(secret, x_tick_secret):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+    return {"sent": push_service.run_reminders(db)}

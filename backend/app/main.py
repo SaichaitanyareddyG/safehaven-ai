@@ -26,6 +26,7 @@ from app.wearables.router import router as wearables_router
 from app.wearables.sweeper import run_offline_sweeper
 from app.patient_access.router import router as patient_access_router
 from app.patient_app.router import router as patient_app_router
+from app.patient_app.router import internal_router as patient_app_internal_router
 from app.patient_app.router import staff_router as patient_app_staff_router
 from app.patient_chat.router import router as patient_chat_router
 from app.patients.router import router as patients_router
@@ -70,6 +71,7 @@ app.include_router(patient_access_router)
 app.include_router(patient_app_staff_router)
 # The patient's own API: its own token type, refused on every staff route.
 app.include_router(patient_app_router)
+app.include_router(patient_app_internal_router)
 app.include_router(audit_router)
 app.include_router(conditions_router)
 app.include_router(allergies_router)

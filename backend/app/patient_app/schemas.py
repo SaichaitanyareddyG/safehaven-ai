@@ -80,3 +80,65 @@ class MyVisit(BaseModel):
 
 class MyVisitsResponse(BaseModel):
     visits: list[MyVisit]
+
+
+# --- Doses, reminders, adherence --------------------------------------------
+
+
+class DoseRead(BaseModel):
+    instruction_id: uuid.UUID
+    medication_name: str
+    dose: str | None
+    with_food: bool | None
+    time: str
+    time_display: str
+    status: Literal["TAKEN", "SKIPPED"] | None
+    recorded_at: datetime | None
+
+
+class MyDosesResponse(BaseModel):
+    date: date
+    # False while admitted: nurses give the doses, the app only lists them.
+    at_home: bool
+    doses: list[DoseRead]
+
+
+class DoseRecordRequest(BaseModel):
+    instruction_id: uuid.UUID
+    date: date
+    time: str = Field(pattern=r"^\d{2}:\d{2}$")
+    # None = undo.
+    status: Literal["TAKEN", "SKIPPED"] | None
+
+
+class PushKeys(BaseModel):
+    p256dh: str = Field(max_length=200)
+    auth: str = Field(max_length=100)
+
+
+class PushSubscribeRequest(BaseModel):
+    endpoint: str = Field(max_length=2000)
+    keys: PushKeys
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str = Field(max_length=2000)
+
+
+class PushStatus(BaseModel):
+    available: bool
+    public_key: str | None
+
+
+class AdherenceDayRead(BaseModel):
+    date: date
+    due: int
+    taken: int
+    skipped: int
+
+
+class AdherenceResponse(BaseModel):
+    days: list[AdherenceDayRead]
+    total_due: int
+    total_taken: int
+    total_skipped: int

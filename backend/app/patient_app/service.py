@@ -28,6 +28,7 @@ from app.patient_app.models import (
     STATUS_REVOKED,
     PatientAppAccount,
     PatientSignInLink,
+    PushSubscription,
 )
 from app.patients.models import AdmissionStatus, Patient
 from app.patients.service import get_patient
@@ -205,6 +206,8 @@ def revoke(db: Session, patient_id: uuid.UUID, revoked_by: uuid.UUID) -> Patient
         db.query(PatientSignInLink).filter(
             PatientSignInLink.patient_id == patient_id, PatientSignInLink.used_at.is_(None)
         ).update({PatientSignInLink.used_at: now})
+        # No more reminders to a phone that has lost access.
+        db.query(PushSubscription).filter(PushSubscription.patient_id == patient_id).delete()
         record_event(
             db,
             event_type=AuditEventType.PATIENT_APP_ACCESS_REVOKED,

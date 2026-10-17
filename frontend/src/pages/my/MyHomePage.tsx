@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom'
 
 import { MyAppLayout, MyCard, MyLoadError, MyLoading, MySectionTitle } from '@/features/patient-app/MyAppLayout'
 import { AllergiesCard, CurrentStayCard } from '@/features/patient-app/MyCards'
-import { dosesToday, useMyCarePlan, useMyProfile, useMyVisits } from '@/features/patient-app/use-my-data'
+import { RemindersCard, TodaysDoses } from '@/features/patient-app/MyDoses'
+import { useMyCarePlan, useMyDoses, useMyProfile, useMyVisits } from '@/features/patient-app/use-my-data'
 import { formatDate } from '@/lib/format'
 
 function greeting(): string {
@@ -19,10 +20,12 @@ export function MyHomePage() {
   const visits = useMyVisits()
 
   const first = profile.data?.first_name
-  const openVisit = visits.data?.visits.find((v) => v.status === 'OPEN')
+  // Only while admitted: an old visit nobody closed must never say "In hospital now" at home.
+  const openVisit =
+    profile.data?.admission_status === 'ACTIVE' ? visits.data?.visits.find((v) => v.status === 'OPEN') : undefined
   const medicines = plan.data?.instructions.filter((i) => i.instruction_type === 'MEDICATION') ?? []
   const otherCount = (plan.data?.instructions.length ?? 0) - medicines.length
-  const doses = dosesToday(medicines)
+  const doses = useMyDoses()
   const stopped = plan.data?.past_medications.filter((m) => m.past_reason === 'STOPPED') ?? []
 
   return (
@@ -36,28 +39,8 @@ export function MyHomePage() {
 
       {plan.data && (
         <>
-          {doses.length > 0 && (
-            <>
-              <MySectionTitle>Your medicines today</MySectionTitle>
-              {profile.data?.admission_status === 'ACTIVE' && (
-                <p className="-mt-2 text-base text-[#53656E]">While you're in hospital, your nurse gives these.</p>
-              )}
-              <MyCard className="py-1" data-testid="my-doses-today">
-                {doses.map((dose, i) => (
-                  <div key={i} className="flex items-start gap-4 border-b border-[#E1E8EC] py-3 last:border-b-0">
-                    <span className="min-w-[76px] text-lg font-semibold text-[#0F6383]">{dose.timeDisplay}</span>
-                    <span className="flex flex-col">
-                      <span className="text-lg font-semibold">
-                        {dose.medicine.medication_name ?? 'Medicine'}
-                        {dose.medicine.schedule?.dose ? ` ${dose.medicine.schedule.dose}` : ''}
-                      </span>
-                      {dose.medicine.schedule?.with_food && <span className="text-base text-[#53656E]">With food</span>}
-                    </span>
-                  </div>
-                ))}
-              </MyCard>
-            </>
-          )}
+          {doses.data && <TodaysDoses data={doses.data} />}
+          {doses.data && doses.data.doses.length > 0 && <RemindersCard />}
 
           <MySectionTitle>Your medicines</MySectionTitle>
           {medicines.length === 0 ? (

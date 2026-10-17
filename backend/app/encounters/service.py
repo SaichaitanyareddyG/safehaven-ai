@@ -1,10 +1,11 @@
 import uuid
+from datetime import date
 
 from sqlalchemy.orm import Session
 
 from app.audit.models import ActorType, AuditEventType
 from app.audit.service import record_event
-from app.encounters.models import Encounter
+from app.encounters.models import Encounter, EncounterStatus
 from app.encounters.schemas import EncounterCreate
 from app.patients.service import get_patient
 
@@ -50,3 +51,18 @@ def list_encounters(db: Session, patient_id: uuid.UUID) -> list[Encounter]:
         .order_by(Encounter.admission_date.desc())
         .all()
     )
+
+
+def close_open_encounters(db: Session, patient_id: uuid.UUID, on: date) -> list[Encounter]:
+    """Discharge ends the current visit: without this, a discharged patient's
+    visit stayed "Current visit" for ever, and their app said "In hospital
+    now" at home. Flushes only; the discharge transaction commits."""
+    open_encounters = (
+        db.query(Encounter).filter(Encounter.patient_id == patient_id, Encounter.status == EncounterStatus.OPEN).all()
+    )
+    for encounter in open_encounters:
+        encounter.status = EncounterStatus.CLOSED
+        if encounter.discharge_date is None:
+            encounter.discharge_date = max(on, encounter.admission_date)
+    db.flush()
+    return open_encounters

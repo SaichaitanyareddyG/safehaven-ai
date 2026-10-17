@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 
 import { exchangeSignInLink, requestSignInLink } from '@/api/patient-app'
 import { Logo } from '@/components/BrandPanel'
+import { usePatientAppHead } from '@/features/patient-app/use-my-data'
 import { ApiError } from '@/lib/api-client'
 import { getPatientToken, setPatientToken } from '@/lib/auth-storage'
 
@@ -16,6 +17,7 @@ const button =
  *  #token=...), or type your email to get a fresh link. */
 export function MySignInPage() {
   const navigate = useNavigate()
+  usePatientAppHead()
   const [linkToken] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('token'))
   const [exchanging, setExchanging] = useState(!!linkToken)
   const exchanged = useRef(false)

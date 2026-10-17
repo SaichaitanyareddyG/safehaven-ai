@@ -3,6 +3,8 @@ import type { ReactNode } from 'react'
 import { Navigate, NavLink, useNavigate } from 'react-router-dom'
 
 import { Logo } from '@/components/BrandPanel'
+import { turnOffReminders } from '@/features/patient-app/reminders'
+import { usePatientAppHead } from '@/features/patient-app/use-my-data'
 import { clearPatientToken, getPatientToken } from '@/lib/auth-storage'
 import { queryClient } from '@/lib/query-client'
 import { cn } from '@/lib/utils'
@@ -18,9 +20,12 @@ const TABS = [
  *  a thumb can reach. Signed-out visitors go to the sign-in page. */
 export function MyAppLayout({ title, subtitle, children }: { title: string; subtitle?: ReactNode; children: ReactNode }) {
   const navigate = useNavigate()
+  usePatientAppHead()
   if (!getPatientToken()) return <Navigate to="/my/sign-in" replace />
 
-  function signOut() {
+  async function signOut() {
+    // Reminders stop on this phone before the session goes.
+    await turnOffReminders().catch(() => undefined)
     clearPatientToken()
     // Nothing of this patient's stays in memory for the next person on this phone.
     queryClient.removeQueries({ queryKey: ['my'] })

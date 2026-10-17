@@ -30,3 +30,41 @@ export interface MyVisit {
 export interface MyVisitsResponse {
   visits: MyVisit[]
 }
+
+export interface MyDose {
+  instruction_id: string
+  medication_name: string
+  dose: string | null
+  with_food: boolean | null
+  /** "08:00", hospital local time */
+  time: string
+  time_display: string
+  status: 'TAKEN' | 'SKIPPED' | null
+  recorded_at: string | null
+}
+
+export interface MyDosesResponse {
+  date: string
+  /** false while admitted: nurses give the doses */
+  at_home: boolean
+  doses: MyDose[]
+}
+
+export interface PushStatus {
+  available: boolean
+  public_key: string | null
+}
+
+export interface AdherenceDay {
+  date: string
+  due: number
+  taken: number
+  skipped: number
+}
+
+export interface AdherenceResponse {
+  days: AdherenceDay[]
+  total_due: number
+  total_taken: number
+  total_skipped: number
+}

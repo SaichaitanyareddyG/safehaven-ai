@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { AdherenceChart } from '@/features/patients/AdherenceChart'
 import { ApiError } from '@/lib/api-client'
 import { formatDate, formatDateTime } from '@/lib/format'
 import type { AppAccessStatus } from '@/types/patients'
@@ -174,6 +175,10 @@ export function PatientAppPanel({ patientId }: { patientId: string }) {
             </Button>
           </div>
         </div>
+      )}
+
+      {(access.status === 'ACTIVE' || access.status === 'EXPIRED' || access.status === 'REVOKED') && (
+        <AdherenceChart patientId={patientId} />
       )}
 
       {live && (

@@ -3,12 +3,22 @@
 #   VITE_API_BASE_URL=https://<backend> npm run build && npx wrangler deploy
 name = "safehaven-dashboard"
 compatibility_date = "2026-10-01"
+# Serves the static assets, plus the dose-reminder clock (worker/index.js).
+main = "worker/index.js"
 # Also served at the project's own domain (Cloudflare creates the DNS record
 # and certificate); the workers.dev address keeps working too.
 routes = [{ pattern = "app.safehaven-ai.com", custom_domain = true }]
 workers_dev = true
 
+[vars]
+BACKEND_URL = "https://safehaven-backend-kl64.onrender.com"
+
+# Every minute: send any dose reminders now due (and keep the backend awake).
+[triggers]
+crons = ["* * * * *"]
+
 [assets]
 directory = "./dist"
+binding = "ASSETS"
 # Unknown paths are React routes: serve index.html.
 not_found_handling = "single-page-application"

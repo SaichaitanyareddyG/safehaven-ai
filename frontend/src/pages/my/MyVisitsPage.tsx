@@ -6,8 +6,9 @@ import { formatDate } from '@/lib/format'
 export function MyVisitsPage() {
   const visits = useMyVisits()
   const profile = useMyProfile()
-  const open = visits.data?.visits.filter((v) => v.status === 'OPEN') ?? []
-  const past = visits.data?.visits.filter((v) => v.status !== 'OPEN') ?? []
+  const admitted = profile.data?.admission_status === 'ACTIVE'
+  const open = admitted ? (visits.data?.visits.filter((v) => v.status === 'OPEN') ?? []) : []
+  const past = visits.data?.visits.filter((v) => !open.includes(v)) ?? []
 
   return (
     <MyAppLayout title="My visits" subtitle="Your hospital stays">

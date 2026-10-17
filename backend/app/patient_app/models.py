@@ -7,9 +7,9 @@ with care links and staff password links.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -60,5 +60,69 @@ class PatientSignInLink(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+
+DOSE_TAKEN = "TAKEN"
+DOSE_SKIPPED = "SKIPPED"
+
+
+class DoseLog(Base):
+    """The patient's own "Taken" / "Skipped" for one scheduled dose. Patient-
+    reported, not a clinical administration record (that is Module 2's
+    AdministrationEvent, recorded by a nurse)."""
+
+    __tablename__ = "patient_dose_logs"
+    __table_args__ = (UniqueConstraint("instruction_id", "dose_date", "dose_time", name="uq_dose_log_slot"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("patients.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    instruction_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("care_instructions.id", ondelete="CASCADE"), nullable=False
+    )
+    dose_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # "08:00", hospital local time — the slot from the dose schedule.
+    dose_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+
+class PushSubscription(Base):
+    """One phone or browser that agreed to show reminders (Web Push)."""
+
+    __tablename__ = "patient_push_subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("patients.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    endpoint: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    p256dh: Mapped[str] = mapped_column(String(200), nullable=False)
+    auth: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DoseReminderSent(Base):
+    """One reminder per patient per dose time per day, however often the
+    reminder job runs."""
+
+    __tablename__ = "patient_dose_reminders_sent"
+    __table_args__ = (UniqueConstraint("patient_id", "dose_date", "dose_time", name="uq_dose_reminder_slot"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    dose_date: Mapped[date] = mapped_column(Date, nullable=False)
+    dose_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )

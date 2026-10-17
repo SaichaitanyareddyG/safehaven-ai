@@ -119,6 +119,18 @@ class Settings(BaseSettings):
     patient_session_days: int = 30
     # After discharge the app keeps working at home for this long, then stops.
     patient_access_after_discharge_days: int = 90
+    # Dose reminders by Web Push. Without the VAPID keys the app works and
+    # simply offers no reminders. Generate with scripts/generate_vapid_keys.py.
+    vapid_public_key: str | None = None
+    vapid_private_key: str | None = None
+    vapid_subject: str = "mailto:no-reply@safehaven-ai.com"
+    # Shared with the Cloudflare cron that calls POST /internal/reminders/tick
+    # every minute (a free Render service sleeps, so it cannot keep its own
+    # clock). Unset = the endpoint does not exist.
+    reminder_tick_secret: str | None = None
+    # A dose is reminded once, if the job runs within this many minutes of
+    # its time (covers a sleeping server waking up late).
+    reminder_window_minutes: int = 30
 
     # Patient care-access token lifetime. Also the cap on a clinician-requested
     # shorter expiry (see patient_access/schemas.py's CareAccessTokenCreate) —

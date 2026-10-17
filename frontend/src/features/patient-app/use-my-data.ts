@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { getMyCarePlan, getMyProfile, getMyVisits } from '@/api/patient-app'
+import { useEffect } from 'react'
+
+import { getMyCarePlan, getMyDoses, getMyProfile, getMyVisits } from '@/api/patient-app'
 import { getPatientToken } from '@/lib/auth-storage'
 import type { PatientCareInstructionView } from '@/types/patient-access'
 import type { Language } from '@/types/patients'
@@ -12,6 +14,10 @@ export function useMyProfile() {
 
 export function useMyCarePlan() {
   return useQuery({ queryKey: ['my', 'care-plan'], queryFn: getMyCarePlan, enabled: !!getPatientToken() })
+}
+
+export function useMyDoses() {
+  return useQuery({ queryKey: ['my', 'doses'], queryFn: getMyDoses, enabled: !!getPatientToken() })
 }
 
 export function useMyVisits() {
@@ -35,23 +41,23 @@ export function courseEnded(instruction: PatientCareInstructionView, today = tod
   return !!end && end < today
 }
 
-export interface DoseToday {
-  time: string
-  timeDisplay: string
-  medicine: PatientCareInstructionView
-}
-
-/** Every scheduled dose due today, earliest first. As-needed medicines,
- *  ones without clear times, and courses not started or already ended are
- *  left out — never guessed. */
-export function dosesToday(medicines: PatientCareInstructionView[], today = todayIso()): DoseToday[] {
-  const doses: DoseToday[] = []
-  for (const medicine of medicines) {
-    const schedule = medicine.schedule
-    if (!schedule || schedule.kind !== 'SCHEDULED') continue
-    if (schedule.start_date && schedule.start_date > today) continue
-    if (courseEnded(medicine, today)) continue
-    schedule.times.forEach((time, i) => doses.push({ time, timeDisplay: schedule.times_display[i], medicine }))
-  }
-  return doses.sort((a, b) => a.time.localeCompare(b.time))
+/** Makes the patient pages installable as their own Home Screen app ("SafeHaven",
+ *  opening at /my) — added only here, so the staff dashboard is never offered
+ *  as the patient app. iPhone needs the app on the Home Screen for reminders. */
+export function usePatientAppHead() {
+  useEffect(() => {
+    const added: HTMLElement[] = []
+    const add = (tag: 'link' | 'meta', attrs: Record<string, string>) => {
+      const el = document.createElement(tag)
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+      document.head.appendChild(el)
+      added.push(el)
+    }
+    add('link', { rel: 'manifest', href: '/app/manifest.webmanifest' })
+    add('link', { rel: 'apple-touch-icon', href: '/app/apple-touch-icon.png' })
+    add('meta', { name: 'apple-mobile-web-app-capable', content: 'yes' })
+    add('meta', { name: 'apple-mobile-web-app-title', content: 'SafeHaven' })
+    add('meta', { name: 'theme-color', content: '#143440' })
+    return () => added.forEach((el) => el.remove())
+  }, [])
 }
