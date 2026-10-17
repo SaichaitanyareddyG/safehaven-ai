@@ -178,7 +178,7 @@ def heartbeat(
                 last_event_at_ms=int(stamp.timestamp() * 1000),
             )
     return DeviceHeartbeatResponse(
-        server_time_ms=int(time.time() * 1000), assignment=view, alert=alert_view
+        server_time_ms=int(time.time() * 1000), device_code=device.device_code, assignment=view, alert=alert_view
     )
 
 

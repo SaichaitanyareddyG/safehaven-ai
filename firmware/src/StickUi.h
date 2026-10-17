@@ -174,6 +174,11 @@ struct TestModel {
 
 class StickUi {
  public:
+  /// The band's name as the dashboard shows it (set from the backend link).
+  void setDeviceLabel(const char* label) {
+    if (label && label[0]) strlcpy(label_, label, sizeof(label_));
+  }
+
   explicit StickUi(M5GFX* display) : canvas_(display) {}
 
   void begin() {
@@ -311,6 +316,7 @@ class StickUi {
   }
 
  private:
+  char label_[33] = "SH-WEAR-001";
   // ── primitives ─────────────────────────────────────────────────────────────
   void text(SmoothFont& f, const char* s, int x, int y, uint16_t color, textdatum_t datum) {
     canvas_.setFont(&f.font);
@@ -471,7 +477,7 @@ class StickUi {
                       : m.clockStep == Step::SKIPPED ? "Clock needs Wi-Fi"
                                                      : "Setting the clock";
     stepRow(170, m.clockStep, clk);
-    text(small_, "SH-WEAR-001", CX, 228, TEXT3, middle_center);
+    text(small_, label_, CX, 228, TEXT3, middle_center);
   }
 
   void gettingReady(const HomeModel& m) {
@@ -592,7 +598,9 @@ class StickUi {
     c.fillRoundRect(10, 160, 115, 34, 7, SURFACE);
     text(small_, "Staff: return to the", CX, 171, TEXT2, middle_center);
     text(small_, "patient when charged", CX, 183, TEXT2, middle_center);
-    text(small_, "SAFEHAVEN \xc2\xb7 SH-WEAR-001", CX, 228, TEXT3, middle_center);
+    char footer[48];
+    snprintf(footer, sizeof(footer), "SAFEHAVEN \xc2\xb7 %s", label_);
+    text(small_, footer, CX, 228, TEXT3, middle_center);
   }
 
   void bell(int cx, int cy, uint16_t col) {
@@ -769,7 +777,7 @@ class StickUi {
     text(title_, "Not paired yet", CX, y + 40, TEXT, middle_center);
     text(small_, "Staff: pair this band in", CX, y + 57, TEXT2, middle_center);
     text(small_, "the SAFEHAVEN app", CX, y + 69, TEXT2, middle_center);
-    text(small_, "SH-WEAR-001", CX, 228, TEXT3, middle_center);
+    text(small_, label_, CX, 228, TEXT3, middle_center);
   }
 
   /// The red beacon (design board 11). Pulses at ~0.55 Hz — far below the

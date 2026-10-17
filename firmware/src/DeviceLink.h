@@ -90,6 +90,9 @@ struct LinkStatus {
   // Latest clinical alert as the backend sees it (from the heartbeat).
   NurseResponse nurseResponse = NurseResponse::NONE;
   uint64_t alertLastEventAtMs = 0;  // matched against the band's own event time
+  // The name the dashboard shows for this band (from enrolment or a
+  // heartbeat), kept in NVS. Empty until the backend has told us.
+  char deviceCode[33] = "";
 };
 
 class DeviceLink {
@@ -143,6 +146,7 @@ class DeviceLink {
     }
     st_.configured = (https && caPem_ && caPem_[0]) || (http && allowPlainHttp);
     st_.enrolled = secret_[0] != 0;
+    if (prefs_.isKey("code")) strlcpy(st_.deviceCode, prefs_.getString("code", "").c_str(), sizeof(st_.deviceCode));
     st_.assignment = a;
     st_.assignmentKnown = st_.enrolled;
     st_.queueDepth = countQueue();
@@ -543,6 +547,7 @@ class DeviceLink {
     xSemaphoreTake(lock_, portMAX_DELAY);
     strlcpy(secret_, doc["device_secret"].as<const char*>(), sizeof(secret_));
     prefs_.putString("secret", secret_);
+    rememberCodeLocked(doc["device_code"] | "");
     st_.enrolled = true;
     st_.credentialRejected = false;
     st_.assignmentKnown = true;
@@ -611,6 +616,7 @@ class DeviceLink {
     xSemaphoreTake(lock_, portMAX_DELAY);
     st_.heartbeatOk = true;
     st_.credentialRejected = false;
+    rememberCodeLocked(doc["device_code"] | "");
     hbAnswered_ = hbAnswered_ + 1;
     // Server time at the midpoint of the round trip.
     const uint64_t serverMs = doc["server_time_ms"] | (uint64_t)0;
@@ -834,6 +840,13 @@ class DeviceLink {
   uint64_t (*monoMs_)() = nullptr;
   SemaphoreHandle_t lock_ = nullptr;
   QueueHandle_t inbox_ = nullptr;
+  // Caller holds lock_. NVS is written only when the name actually changes.
+  void rememberCodeLocked(const char* code) {
+    if (!code[0] || strcmp(code, st_.deviceCode) == 0) return;
+    strlcpy(st_.deviceCode, code, sizeof(st_.deviceCode));
+    prefs_.putString("code", st_.deviceCode);
+  }
+
   Preferences prefs_;
   char secret_[128] = "";
   char pendingEnroll_[32] = "";

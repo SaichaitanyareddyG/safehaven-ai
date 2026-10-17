@@ -342,6 +342,10 @@ class DeviceHeartbeatResponse(BaseModel):
     events at all."""
 
     server_time_ms: int
+    # The name the dashboard shows for this band ("SH-WEAR-002"), so the band
+    # shows the same one. Without it the band showed a name compiled into the
+    # firmware, which differed from the dashboard's.
+    device_code: str | None = None
     assignment: DeviceAssignmentView | None = None
     alert: DeviceAlertView | None = None
 

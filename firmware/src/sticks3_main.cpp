@@ -1559,6 +1559,7 @@ void setup() {
   const bool allowHttp = false;
 #endif
   backendLink.begin(SH_BACKEND_URL, FIRMWARE_VERSION, &monoNow, SH_BACKEND_CA, allowHttp);
+  stickUi.setDeviceLabel(backendLink.status().deviceCode);  // the name saved last time, if any
   {
     const LinkStatus ls = backendLink.status();
     Serial.printf("Backend: %s\r\n", !ls.configured ? "not configured (SH_BACKEND_URL) - BENCH mode"
@@ -2236,8 +2237,18 @@ static void injectEvent(const char *what) {
 }
 #endif
 
+// The dashboard's name for this band once the backend has told us (kept in
+// NVS), else the compiled-in default.
+static const char* deviceName() {
+  static char name[33];
+  const LinkStatus ls = backendLink.status();
+  strlcpy(name, ls.deviceCode[0] ? ls.deviceCode : DEVICE_ID, sizeof(name));
+  return name;
+}
+
 static void printStatus() {
   const LinkStatus ls = backendLink.status();
+  Serial.printf("[STATUS] name %s\r\n", deviceName());
   Serial.printf("[STATUS] mode %s | backend %s | enrolled %s%s | heartbeat %s | assignment %s%s | "
                 "queue %lu | wifi %s\r\n",
                 benchMode ? "BENCH" : "LINKED", ls.configured ? SH_BACKEND_URL : "(none)",
@@ -2483,8 +2494,9 @@ void loop() {
 
   if (now - lastHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {
     lastHeartbeatMs = now;
+    stickUi.setDeviceLabel(deviceName());
     Serial.printf("%s alive  |a|=%.2f g  battery %d%% (raw %d%%, %d mV%s, usb %d mV, full in %d min)  screen %s  wifi %s  %s\r\n",
-                  DEVICE_ID, magnitude(lastSample), battery.shown_pct(), rawBatteryPct, batteryMv,
+                  deviceName(), magnitude(lastSample), battery.shown_pct(), rawBatteryPct, batteryMv,
                   battery.charging() ? ", charging" : "", vbusMv, chargeEta.minutes_to_full(), screenOn ? "on" : "off",
                   WiFi.status() == WL_CONNECTED ? "ok" : "off", benchMode ? "BENCH" : "LINKED");
   }

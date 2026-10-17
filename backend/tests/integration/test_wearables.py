@@ -205,6 +205,8 @@ def test_heartbeat_with_valid_credential_updates_health(client, db_session):
     assert resp.json()["server_time_ms"] > 0
 
     device = db_session.query(WearableDevice).one()
+    # The band shows the same name the dashboard does.
+    assert resp.json()["device_code"] == device.device_code
     assert device.battery_percent == 73
     assert device.firmware_version == "0.1.0"
     assert device.last_seen_at is not None
