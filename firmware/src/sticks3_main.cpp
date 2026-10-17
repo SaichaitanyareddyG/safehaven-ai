@@ -2370,6 +2370,7 @@ static void runCommand(char *line) {
                   M5.Power.isCharging() == m5::Power_Class::is_charging ? "yes" : "no",
                   chgKnown ? (chg ? "yes" : "NO") : "?", M5.Power.getExtOutput() ? "ON" : "off",
                   (unsigned long)getCpuFrequencyMhz());
+    backendLink.printHeartbeatStats();
   } else if (!strcmp(line, "led on") || !strcmp(line, "led off")) {
     M5.Power.M5pm1.setLedEnLevel(line[5] == 'n');
     Serial.printf("[POWER] green LED %s\r\n", line[5] == 'n' ? "on" : "off");

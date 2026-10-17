@@ -216,6 +216,12 @@ class DeviceLink {
   /// Check in as soon as the network allows (e.g. the radio was just turned
   /// back on after a quiet spell on the charger).
   void requestHeartbeat() { hbNow_ = true; }
+  /// Check-in cost since boot: how many needed a new secure connection.
+  void printHeartbeatStats() const {
+    Serial.printf("[LINK] check-ins since boot: %lu new secure connection (avg %lu ms), %lu reused (avg %lu ms)\r\n",
+                  (unsigned long)hbNew_, (unsigned long)(hbNew_ ? hbNewMs_ / hbNew_ : 0),
+                  (unsigned long)hbReused_, (unsigned long)(hbReused_ ? hbReusedMs_ / hbReused_ : 0));
+  }
   /// Counts heartbeats the server answered (200): the caller can wait for one.
   uint32_t heartbeatsAnswered() const { return hbAnswered_; }
 
@@ -500,9 +506,14 @@ class DeviceLink {
     http.setConnectTimeout(4000);
     http.addHeader("Content-Type", "application/json");
     if (auth) http.addHeader("Authorization", String("Bearer ") + secret_);
+    // Battery diagnostics: how long a request took and whether it rode an
+    // already-open secure connection (no handshake) or had to open one.
+    lastReused_ = tls_ && tlsClient_.connected();
+    const uint32_t t0 = millis();
     const int code = http.POST(body);
     out = code > 0 ? http.getString() : String();
     http.end();
+    lastPostMs_ = millis() - t0;
     return code;
   }
 
@@ -593,6 +604,10 @@ class DeviceLink {
       strlcpy(a.qrToken, av["qr_token"] | "", sizeof(a.qrToken));
     }
 
+    Serial.printf("[LINK] heartbeat ok in %lu ms (%s)\r\n", (unsigned long)lastPostMs_,
+                  lastReused_ ? "connection reused" : "new secure connection");
+    if (lastReused_) { ++hbReused_; hbReusedMs_ += lastPostMs_; }
+    else { ++hbNew_; hbNewMs_ += lastPostMs_; }
     xSemaphoreTake(lock_, portMAX_DELAY);
     st_.heartbeatOk = true;
     st_.credentialRejected = false;
@@ -804,6 +819,10 @@ class DeviceLink {
   bool tls_ = false;
   WiFiClientSecure tlsClient_;  // used only from the network task
   uint32_t retryMs_ = kRetryMs;
+  uint32_t lastPostMs_ = 0;
+  bool lastReused_ = false;
+  // Since boot (RAM survives light sleep): read with the serial "power" command.
+  uint32_t hbNew_ = 0, hbReused_ = 0, hbNewMs_ = 0, hbReusedMs_ = 0;
   std::atomic<TalkStatus> talkStatus_{TalkStatus::IDLE};
   volatile bool talkAbandoned_ = false;
   const uint8_t* talkWav_ = nullptr;
