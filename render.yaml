@@ -10,7 +10,8 @@ services:
     region: singapore          # closest to the team in India; demo data only
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    healthCheckPath: /docs
+    # /health also checks the database; /docs is switched off in production.
+    healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: DATABASE_URL        # Supabase -> Connect -> Session pooler (add ?sslmode=require)
@@ -35,3 +36,11 @@ services:
         value: openai
       - key: HOSPITAL_TIMEZONE
         value: Asia/Kolkata
+      - key: API_DOCS_ENABLED          # /docs off on a shared server
+        value: "false"
+      - key: VAPID_PUBLIC_KEY          # dose reminders: backend/scripts/generate_vapid_keys.py
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: REMINDER_TICK_SECRET      # same value as the Worker secret (frontend/worker/index.js)
+        sync: false
