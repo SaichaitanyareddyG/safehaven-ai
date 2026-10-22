@@ -1,0 +1,81 @@
+# Runs every test on every push and pull request: the backend suite against a
+# real Postgres (with the real migrations), the band's detection and battery
+# tests, and the dashboard's type check, lint and build. Nothing here deploys.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: safehaven
+          POSTGRES_PASSWORD: safehaven
+          POSTGRES_DB: safehaven_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U safehaven"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Test-only values: a throwaway database in this job, never a real secret.
+      DATABASE_URL: postgresql+psycopg2://safehaven:safehaven@localhost:5432/safehaven_test
+      TEST_DATABASE_URL: postgresql+psycopg2://safehaven:safehaven@localhost:5432/safehaven_test
+      JWT_SECRET_KEY: ci-only-not-a-real-secret-0123456789abcdef
+      LLM_PROVIDER: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q -p no:cacheprovider
+
+  firmware:
+    name: Band firmware tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test
+        working-directory: firmware/native
+
+  frontend:
+    name: Dashboard build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx tsc -b
+      - run: npm run lint
+      - run: npm run build
+        env:
+          VITE_API_BASE_URL: https://example.invalid

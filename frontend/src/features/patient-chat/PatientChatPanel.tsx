@@ -2,27 +2,38 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, Globe, Send } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import { getMyChat, sendMyChat } from '@/api/patient-app'
 import { getCarePlanChat, sendCarePlanChatMessage } from '@/api/patient-chat'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/types/patient-chat'
 
-export function PatientChatPanel({ token }: { token: string }) {
-  const [isOpen, setIsOpen] = useState(false)
+/** The patient's questions: on the care link (token) or in the patient app
+ *  (asPatient, opened from the start). One conversation either way. */
+export function PatientChatPanel({
+  token,
+  asPatient = false,
+  startOpen = false,
+}: {
+  token?: string
+  asPatient?: boolean
+  startOpen?: boolean
+}) {
+  const [isOpen, setIsOpen] = useState(startOpen)
   const [draft, setDraft] = useState('')
   const [pendingUserText, setPendingUserText] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
-  const queryKey = ['patient-chat', token]
+  const queryKey = asPatient ? ['my', 'chat'] : ['patient-chat', token]
   const { data } = useQuery({
     queryKey,
-    queryFn: () => getCarePlanChat(token),
+    queryFn: () => (asPatient ? getMyChat() : getCarePlanChat(token ?? '')),
     enabled: isOpen,
   })
 
   const mutation = useMutation({
-    mutationFn: (text: string) => sendCarePlanChatMessage(token, text),
+    mutationFn: (text: string) => (asPatient ? sendMyChat(text) : sendCarePlanChatMessage(token ?? '', text)),
     onSuccess: (result) => {
       queryClient.setQueryData(queryKey, (existing: { messages: ChatMessage[] } | undefined) => ({
         messages: [...(existing?.messages ?? []), result.patient_message, result.assistant_message],
@@ -50,18 +61,21 @@ export function PatientChatPanel({ token }: { token: string }) {
 
   return (
     <div className="rounded-2xl border-2 bg-background text-left shadow-sm" data-testid="patient-chat-panel">
-      <button
-        type="button"
-        onClick={() => setIsOpen((open) => !open)}
-        className="flex w-full items-center justify-between p-6"
-        data-testid="patient-chat-toggle"
-      >
-        <span className="text-2xl font-semibold">Ask a question</span>
-        <ChevronDown className={cn('h-5 w-5 transition-transform', isOpen && 'rotate-180')} />
-      </button>
+      {/* In the app the page title already says "Ask a question". */}
+      {!asPatient && (
+        <button
+          type="button"
+          onClick={() => setIsOpen((open) => !open)}
+          className="flex w-full items-center justify-between p-6"
+          data-testid="patient-chat-toggle"
+        >
+          <span className="text-2xl font-semibold">Ask a question</span>
+          <ChevronDown className={cn('h-5 w-5 transition-transform', isOpen && 'rotate-180')} />
+        </button>
+      )}
 
       {isOpen && (
-        <div className="border-t p-6" data-testid="patient-chat-body">
+        <div className={cn('p-6', !asPatient && 'border-t')} data-testid="patient-chat-body">
           <div className="max-h-[60vh] space-y-3 overflow-y-auto" aria-live="polite">
             {messages.length === 0 && !pendingUserText && (
               <p className="text-base text-muted-foreground">

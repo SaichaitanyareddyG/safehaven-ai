@@ -1,6 +1,7 @@
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
 import { useState } from 'react'
 
+import { ListenButton } from '@/components/ListenButton'
 import { MyCard } from '@/features/patient-app/MyAppLayout'
 import { courseEnded, textFor } from '@/features/patient-app/use-my-data'
 import { formatDate, formatDateTime } from '@/lib/format'
@@ -21,6 +22,11 @@ export function MedicineCard({ medicine, language }: { medicine: PatientCareInst
         {text}
       </p>
       <ScheduleFacts medicine={medicine} />
+      {text && (
+        <div>
+          <ListenButton text={text} asPatient />
+        </div>
+      )}
       {open && medicine.why && (
         <div className="rounded-xl bg-[#F3F7F8] p-3">
           <p className="text-base font-semibold">
@@ -82,6 +88,11 @@ export function CareInstructionCard({
       <p className="text-lg leading-relaxed" dir={textDirection(shownIn)}>
         {textFor(instruction, language)}
       </p>
+      {textFor(instruction, language) && (
+        <div>
+          <ListenButton text={textFor(instruction, language)} asPatient />
+        </div>
+      )}
     </MyCard>
   )
 }

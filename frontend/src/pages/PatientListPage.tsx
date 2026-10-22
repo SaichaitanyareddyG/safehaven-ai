@@ -6,6 +6,8 @@ import { useNavigate } from 'react-router-dom'
 import { formatDate } from '@/lib/format'
 import { listPatients } from '@/api/patients'
 import { AppLayout } from '@/components/AppLayout'
+import { MissedDosesBadge } from '@/features/patients/MissedDoses'
+import { useMissedDoses } from '@/features/patients/use-missed-doses'
 import { AdmissionStatusBadge } from '@/components/StatusBadge'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -16,6 +18,7 @@ import type { AdmissionStatus } from '@/types/patients'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
 
 export function PatientListPage() {
+  const missed = useMissedDoses()
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState<AdmissionStatus | 'ALL'>('ACTIVE')
@@ -109,6 +112,11 @@ export function PatientListPage() {
               >
                 <TableCell className="font-medium">
                   {patient.first_name} {patient.last_name}
+                  {missed.data?.get(patient.id) && (
+                    <span className="block">
+                      <MissedDosesBadge flag={missed.data.get(patient.id)!} />
+                    </span>
+                  )}
                   <span className="block text-xs font-normal text-muted-foreground sm:hidden">{patient.patient_code}</span>
                 </TableCell>
                 <TableCell className="hidden text-muted-foreground sm:table-cell">{patient.patient_code}</TableCell>

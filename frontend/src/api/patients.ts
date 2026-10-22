@@ -3,6 +3,7 @@ import type {
   AdmissionStatus,
   AppAccess,
   AppInviteResponse,
+  MissedDosesFlag,
   Patient,
   PatientCreate,
   PatientCreateResponse,
@@ -52,4 +53,9 @@ export function inviteToApp(
 
 export function revokeAppAccess(patientId: string): Promise<AppAccess> {
   return apiRequest<AppAccess>(`/patients/${patientId}/app-access/revoke`, { method: 'POST' })
+}
+
+/** Patients at home who missed 2+ doses in the app today or yesterday. */
+export function getMissedDoses(): Promise<{ flags: MissedDosesFlag[] }> {
+  return apiRequest<{ flags: MissedDosesFlag[] }>('/patients/missed-doses')
 }

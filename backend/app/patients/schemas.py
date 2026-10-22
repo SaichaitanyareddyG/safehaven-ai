@@ -101,3 +101,14 @@ class PatientCreateResponse(PatientRead):
 class PatientListResponse(BaseModel):
     total: int
     results: list[PatientRead]
+
+
+class MissedDosesFlag(BaseModel):
+    patient_id: uuid.UUID
+    date: date
+    missed: int
+    skipped: int
+
+
+class MissedDosesResponse(BaseModel):
+    flags: list[MissedDosesFlag]

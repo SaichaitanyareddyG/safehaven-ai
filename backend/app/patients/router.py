@@ -11,8 +11,11 @@ from app.orchestration import patient_ops
 from app.patients import service
 from app.patients.models import AdmissionStatus
 from app.patient_app import service as app_service
+from app.patient_app.doses import missed_doses_flags
 from app.patients.schemas import (
     AppInviteOutcome,
+    MissedDosesFlag,
+    MissedDosesResponse,
     PatientCreate,
     PatientCreateResponse,
     PatientListResponse,
@@ -60,6 +63,22 @@ def list_patients(
 ) -> PatientListResponse:
     total, results = service.list_patients(db, status_filter, search, limit, offset)
     return PatientListResponse(total=total, results=results)
+
+
+@router.get("/missed-doses", response_model=MissedDosesResponse)
+def missed_doses(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> MissedDosesResponse:
+    """Patients at home who missed 2+ doses in the app today or yesterday
+    (app/patient_app/doses.py). Declared before /{patient_id} so the path is
+    not read as a patient id."""
+    return MissedDosesResponse(
+        flags=[
+            MissedDosesFlag(patient_id=f.patient_id, date=f.day, missed=f.missed, skipped=f.skipped)
+            for f in missed_doses_flags(db)
+        ]
+    )
 
 
 @router.get("/by-code/{patient_code}", response_model=PatientRead)

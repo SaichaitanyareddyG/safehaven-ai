@@ -142,3 +142,15 @@ class AdherenceResponse(BaseModel):
     total_due: int
     total_taken: int
     total_skipped: int
+
+
+
+class MyChatSend(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class MyAudioRequest(BaseModel):
+    """Only text the app is already showing (approved, validated) — this
+    turns it into speech, it never produces new content. English only."""
+
+    text: str = Field(min_length=1, max_length=2000)

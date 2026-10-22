@@ -84,3 +84,10 @@ export interface PatientUpdate {
   email?: string | null
   phone?: string | null
 }
+
+export interface MissedDosesFlag {
+  patient_id: string
+  date: string
+  missed: number
+  skipped: number
+}

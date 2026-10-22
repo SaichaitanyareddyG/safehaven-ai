@@ -1,11 +1,30 @@
 import { Loader2, Pause, Play, RotateCcw, Square, VolumeX } from 'lucide-react'
+import { useCallback } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { getCarePlanAudio } from '@/api/patient-access'
+import { getMyAudio } from '@/api/patient-app'
 import { useSpeech } from '@/lib/use-speech'
 import type { Language } from '@/types/patients'
 
-export function ListenButton({ text, language, token }: { text: string; language: Language; token: string }) {
-  const { status, play, pause, resume, stop, replay } = useSpeech(text, language, token)
+/** Reads shown text aloud: with a care-link token, or (asPatient) with the
+ *  patient app's own session. */
+export function ListenButton({
+  text,
+  language = 'ENGLISH',
+  token,
+  asPatient = false,
+}: {
+  text: string
+  language?: Language
+  token?: string
+  asPatient?: boolean
+}) {
+  const fetchAudio = useCallback(
+    (shown: string) => (asPatient ? getMyAudio(shown) : getCarePlanAudio(token ?? '', shown, language)),
+    [asPatient, token, language],
+  )
+  const { status, play, pause, resume, stop, replay } = useSpeech(text, fetchAudio)
 
   if (status === 'error') {
     return (

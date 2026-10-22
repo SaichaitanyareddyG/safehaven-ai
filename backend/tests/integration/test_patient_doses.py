@@ -368,3 +368,36 @@ def test_past_days_count_until_the_day_a_medicine_was_stopped(client, setup, db_
 def test_tick_secret_with_unusual_characters_is_a_plain_404(client, pushes):
     resp = client.post("/internal/reminders/tick", headers={"X-Tick-Secret": "sécret".encode("latin-1")})
     assert resp.status_code == 404
+
+
+# --- Missed-dose flag for the care team ----------------------------------------
+
+
+def test_missed_doses_flag_only_after_the_grace_period(client, setup, monkeypatch):
+    client.patch(f"/patients/{setup['patient']['id']}", json={"admission_status": "DISCHARGED"}, headers=setup["staff"])
+    flags = lambda: client.get("/patients/missed-doses", headers=setup["staff"]).json()["flags"]  # noqa: E731
+
+    _pin_clock(monkeypatch, 9)  # 8 AM dose only 1 h ago: not missed yet
+    assert all(f["date"] != _today(client, setup).date().isoformat() for f in flags())
+
+    _pin_clock(monkeypatch, 23)  # both doses (8 AM, 8 PM) over 2 h ago, no answer
+    today = _today(client, setup).date().isoformat()
+    mine = [f for f in flags() if f["patient_id"] == setup["patient"]["id"]]
+    assert mine == [{"patient_id": setup["patient"]["id"], "date": today, "missed": 2, "skipped": 0}]
+
+    client.post(
+        "/patient-app/me/doses",
+        json={"instruction_id": setup["bid"], "date": today, "time": "08:00", "status": "TAKEN"},
+        headers=setup["me"],
+    )
+    assert [f for f in flags() if f["patient_id"] == setup["patient"]["id"] and f["date"] == today] == []
+
+
+def test_missed_doses_ignores_patients_in_hospital(client, setup, monkeypatch):
+    _pin_clock(monkeypatch, 23)
+    assert all(f["patient_id"] != setup["patient"]["id"] for f in client.get("/patients/missed-doses", headers=setup["staff"]).json()["flags"])
+
+
+def test_missed_doses_is_staff_only(client, setup):
+    assert client.get("/patients/missed-doses").status_code == 401
+    assert client.get("/patients/missed-doses", headers=setup["me"]).status_code == 401

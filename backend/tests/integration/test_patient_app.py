@@ -280,3 +280,49 @@ def test_as_needed_medicine_has_no_dose_times(client, outbox):
     assert schedule is None or schedule["kind"] in ("AS_NEEDED", "NEEDS_REVIEW")
     if schedule:
         assert schedule["times"] == []
+
+
+def test_patient_can_ask_a_question_in_the_app(client, outbox):
+    staff = _staff(client)
+    patient = _register(client, staff, email="maria@example.com", app_consent=True)
+    _approve(client, staff, patient["id"], MEDICATION_TEXT)
+    me = _sign_in(client, _token_from(outbox[0]))
+
+    resp = client.post("/patient-app/me/chat", json={"text": "When do I take my Metoprolol?"}, headers=me)
+    assert resp.status_code == 200
+    assert resp.json()["assistant_message"]["role"] == "ASSISTANT"
+    history = client.get("/patient-app/me/chat", headers=me).json()["messages"]
+    assert [m["role"] for m in history] == ["PATIENT", "ASSISTANT"]
+    # Staff see the same conversation.
+    assert len(client.get(f"/patients/{patient['id']}/chat", headers=staff).json()["messages"]) == 2
+
+
+def test_app_chat_keeps_the_emergency_gate(client, outbox):
+    staff = _staff(client)
+    _register(client, staff, email="maria@example.com", app_consent=True)
+    me = _sign_in(client, _token_from(outbox[0]))
+    body = client.post("/patient-app/me/chat", json={"text": "I have severe chest pain"}, headers=me).json()
+    assert body["patient_message"]["emergency_flagged"] is True
+    assert "emergency" in body["assistant_message"]["text"].lower()
+
+
+def test_app_chat_and_audio_need_the_patient_session(client):
+    staff = _staff(client)
+    assert client.post("/patient-app/me/chat", json={"text": "hi"}).status_code == 401
+    assert client.post("/patient-app/me/chat", json={"text": "hi"}, headers=staff).status_code == 401
+    assert client.post("/patient-app/me/audio", json={"text": "hi"}).status_code == 401
+
+
+def test_app_audio_reads_text_aloud(client, outbox, monkeypatch):
+    from app.patient_app import router as app_router
+
+    async def fake_speech(text, language):
+        assert language.value == "ENGLISH"
+        return b"ID3-fake-mp3"
+
+    monkeypatch.setattr(app_router, "synthesize_speech", fake_speech)
+    staff = _staff(client)
+    _register(client, staff, email="maria@example.com", app_consent=True)
+    me = _sign_in(client, _token_from(outbox[0]))
+    resp = client.post("/patient-app/me/audio", json={"text": "Take one tablet."}, headers=me)
+    assert resp.status_code == 200 and resp.headers["content-type"] == "audio/mpeg" and resp.content == b"ID3-fake-mp3"

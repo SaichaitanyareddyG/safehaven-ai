@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useAlertNotifications } from '@/features/safety-monitoring/use-alert-notifications'
 import { useLiveSafetyAlerts } from '@/features/safety-monitoring/use-safety-alerts'
+import { IdleSignOut } from '@/features/auth/IdleSignOut'
 import { useAuth } from '@/lib/auth-context'
 import { cn } from '@/lib/utils'
 
@@ -69,6 +70,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-[#F3F7F8] lg:flex">
+      <IdleSignOut />
       {/* Phone top bar */}
       <div className="sticky top-0 z-30 flex h-16 items-center gap-2.5 bg-[#143440] pr-2 pl-4 lg:hidden">
         <Logo className="h-6.5 w-6.5" />

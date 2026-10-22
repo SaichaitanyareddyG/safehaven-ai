@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { getCarePlanAudio } from '@/api/patient-access'
-import type { Language } from '@/types/patients'
 
 // Audio is an accessibility feature, not a safety source of truth — the text
 // itself remains canonical regardless of whether speech is available. This
@@ -23,7 +21,9 @@ interface UseSpeechResult {
   replay: () => void
 }
 
-export function useSpeech(text: string, language: Language, token: string): UseSpeechResult {
+/** fetchAudio turns the shown text into speech: the care link's token
+ *  endpoint, or the patient app's own (see ListenButton). */
+export function useSpeech(text: string, fetchAudio: (text: string) => Promise<Blob>): UseSpeechResult {
   const [status, setStatus] = useState<SpeechStatus>('idle')
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const objectUrlRef = useRef<string | null>(null)
@@ -48,7 +48,7 @@ export function useSpeech(text: string, language: Language, token: string): UseS
     cleanup()
     setStatus('loading')
     try {
-      const blob = await getCarePlanAudio(token, text, language)
+      const blob = await fetchAudio(text)
       const url = URL.createObjectURL(blob)
       objectUrlRef.current = url
 
@@ -62,7 +62,7 @@ export function useSpeech(text: string, language: Language, token: string): UseS
     } catch {
       setStatus('error')
     }
-  }, [text, language, token, cleanup])
+  }, [text, fetchAudio, cleanup])
 
   const pause = useCallback(() => {
     if (status !== 'speaking' || !audioRef.current) return

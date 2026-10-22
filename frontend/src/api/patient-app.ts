@@ -1,5 +1,7 @@
-import { apiRequest } from '@/lib/api-client'
+import { ApiError, apiRequest } from '@/lib/api-client'
+import { getPatientToken } from '@/lib/auth-storage'
 import type { PatientCarePlanResponse } from '@/types/patient-access'
+import type { ChatMessageListResponse, ChatSendResponse } from '@/types/patient-chat'
 import type {
   AdherenceResponse,
   MyDosesResponse,
@@ -61,4 +63,23 @@ export function removePushSubscription(endpoint: string): Promise<void> {
 // Staff side.
 export function getAdherence(patientId: string, days = 14): Promise<AdherenceResponse> {
   return apiRequest<AdherenceResponse>(`/patients/${patientId}/app-access/adherence`, { params: { days } })
+}
+
+export function getMyChat(): Promise<ChatMessageListResponse> {
+  return apiRequest<ChatMessageListResponse>('/patient-app/me/chat', { asPatient: true })
+}
+
+export function sendMyChat(text: string): Promise<ChatSendResponse> {
+  return apiRequest<ChatSendResponse>('/patient-app/me/chat', { method: 'POST', body: { text }, asPatient: true })
+}
+
+/** Speech for text the app is already showing (an audio body, not JSON). */
+export async function getMyAudio(text: string): Promise<Blob> {
+  const response = await fetch(new URL('/patient-app/me/audio', import.meta.env.VITE_API_BASE_URL), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getPatientToken() ?? ''}` },
+    body: JSON.stringify({ text }),
+  })
+  if (!response.ok) throw new ApiError(response.status, 'Speech is not available right now')
+  return response.blob()
 }

@@ -20,6 +20,8 @@ import { PatientChatTranscript } from '@/features/patient-chat/PatientChatTransc
 import { CreateCareLinkDialog } from '@/features/patients/CreateCareLinkDialog'
 import { EncountersPanel } from '@/features/patients/EncountersPanel'
 import { PatientAllergiesPanel } from '@/features/patients/PatientAllergiesPanel'
+import { MissedDosesBanner } from '@/features/patients/MissedDoses'
+import { useMissedDoses } from '@/features/patients/use-missed-doses'
 import { PatientAppPanel } from '@/features/patients/PatientAppPanel'
 import { AdministrationHistoryPanel } from '@/features/medication-verification/AdministrationHistoryPanel'
 import { PatientConditionsPanel } from '@/features/patients/PatientConditionsPanel'
@@ -42,6 +44,7 @@ export function PatientDetailPage() {
     enabled: !!patientId,
   })
 
+  const missed = useMissedDoses()
   const [confirmingDischarge, setConfirmingDischarge] = useState(false)
   const dischargeMutation = useMutation({
     mutationFn: () => updatePatient(patientId!, { admission_status: 'DISCHARGED' }),
@@ -88,6 +91,8 @@ export function PatientDetailPage() {
         <ArrowLeft className="h-4 w-4" />
         All patients
       </Button>
+
+      {missed.data?.get(patient.id) && <MissedDosesBanner flag={missed.data.get(patient.id)!} />}
 
       <Card className="mb-6">
         <CardHeader className="flex-row items-start justify-between space-y-0">

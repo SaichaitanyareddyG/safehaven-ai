@@ -179,3 +179,50 @@ def adherence(db: Session, patient_id: uuid.UUID, days: int) -> list[AdherenceDa
 def slot_time(value: str) -> time:
     hour, minute = value.split(":")
     return time(int(hour), int(minute))
+
+
+# A dose counts as missed only this long after its time: nobody is flagged at
+# 8:01 for an 8:00 dose.
+MISSED_GRACE = timedelta(hours=2)
+# Two missed doses in a day is worth a call from the care team.
+MISSED_FLAG_THRESHOLD = 2
+
+
+@dataclass(frozen=True)
+class MissedDoses:
+    patient_id: uuid.UUID
+    day: date
+    missed: int  # skipped + no answer
+    skipped: int
+
+
+def missed_doses_flags(db: Session) -> list[MissedDoses]:
+    """Patients at home using the app who missed 2+ doses today (counting
+    only doses more than 2 hours past) or yesterday. Patient-reported: a
+    prompt for a phone call, not a clinical record."""
+    from app.patient_app.models import STATUS_ACTIVE, PatientAppAccount
+    from app.patients.models import AdmissionStatus, Patient
+
+    now = hospital_now()
+    today = now.date()
+    patient_ids = [
+        pid
+        for (pid,) in db.query(Patient.id)
+        .join(PatientAppAccount, PatientAppAccount.patient_id == Patient.id)
+        .filter(PatientAppAccount.status == STATUS_ACTIVE, Patient.admission_status == AdmissionStatus.DISCHARGED)
+        .all()
+    ]
+    flags = []
+    for patient_id in patient_ids:
+        for day in (today, today - timedelta(days=1)):
+            doses = [
+                d
+                for d in doses_with_status(db, patient_id, day, today)
+                if day < today or datetime.combine(day, slot_time(d.time), now.tzinfo) + MISSED_GRACE <= now
+            ]
+            skipped = sum(1 for d in doses if d.status == "SKIPPED")
+            missed = skipped + sum(1 for d in doses if d.status is None)
+            if missed >= MISSED_FLAG_THRESHOLD:
+                flags.append(MissedDoses(patient_id=patient_id, day=day, missed=missed, skipped=skipped))
+                break  # today's flag first; one per patient
+    return flags

@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,8 @@ from app.patient_app.schemas import (
     AppAccessRead,
     DoseRead,
     DoseRecordRequest,
+    MyAudioRequest,
+    MyChatSend,
     MyDosesResponse,
     PushStatus,
     PushSubscribeRequest,
@@ -37,7 +39,10 @@ from app.patient_app.schemas import (
 )
 from app.patient_app.security import InvalidPatientTokenError, create_patient_token, decode_patient_token
 from app.patient_app.service import InvalidSignInLinkError, PatientAccessDeniedError, PatientAppError
-from app.patients.models import AdmissionStatus, Patient
+from app.patient_chat import service as chat_service
+from app.patient_chat.schemas import ChatMessageListResponse, ChatMessageRead, ChatSendResponse
+from app.patients.models import AdmissionStatus, Language, Patient
+from app.tts.service import TextTooLongError, synthesize_speech
 from app.patients.service import PatientNotFoundError, get_patient
 
 # Staff manage a patient's app access next to the rest of the patient record.
@@ -211,6 +216,54 @@ def my_visits(
             for e in service.list_visits(db, patient.id)
         ]
     )
+
+
+# Every message costs an AI call: generous for a person, slow for a script.
+_CHAT_RATE_LIMIT = "20/minute"
+_AUDIO_RATE_LIMIT = "30/minute"
+
+
+@router.get("/me/chat", response_model=ChatMessageListResponse)
+def my_chat(
+    patient: Annotated[Patient, Depends(get_signed_in_patient)], db: Annotated[Session, Depends(get_db)]
+) -> ChatMessageListResponse:
+    """The same conversation as on the printed care link: one per patient."""
+    messages = chat_service.list_chat_messages(db, patient.id)
+    return ChatMessageListResponse(messages=[ChatMessageRead.model_validate(m) for m in messages])
+
+
+@router.post("/me/chat", response_model=ChatSendResponse)
+@limiter.limit(_CHAT_RATE_LIMIT)
+def send_my_chat(
+    request: Request,
+    payload: MyChatSend,
+    patient: Annotated[Patient, Depends(get_signed_in_patient)],
+    db: Annotated[Session, Depends(get_db)],
+) -> ChatSendResponse:
+    """Same deterministic safety gates as the care link's chat
+    (app/patient_chat/service.py) — emergencies and treatment changes never
+    reach the AI."""
+    patient_message, assistant_message = chat_service.send_chat_message(db, patient.id, payload.text)
+    return ChatSendResponse(
+        patient_message=ChatMessageRead.model_validate(patient_message),
+        assistant_message=ChatMessageRead.model_validate(assistant_message),
+    )
+
+
+@router.post("/me/audio")
+@limiter.limit(_AUDIO_RATE_LIMIT)
+async def my_audio(
+    request: Request,
+    payload: MyAudioRequest,
+    patient: Annotated[Patient, Depends(get_signed_in_patient)],
+) -> Response:
+    try:
+        audio = await synthesize_speech(payload.text, Language.ENGLISH)
+    except TextTooLongError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except Exception as exc:  # audio is best-effort, never fatal to the page
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Speech is not available right now") from exc
+    return Response(content=audio, media_type="audio/mpeg")
 
 
 def _dose_read(dose: dose_service.DueDose) -> DoseRead:

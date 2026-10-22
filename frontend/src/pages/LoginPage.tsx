@@ -1,12 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Eye, EyeOff, Lock } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { z } from 'zod'
 
 import { BrandPanel } from '@/components/BrandPanel'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { IDLE_NOTE_KEY } from '@/features/auth/IdleSignOut'
 import { ApiError } from '@/lib/api-client'
 import { useAuth } from '@/lib/auth-context'
 
@@ -30,6 +31,22 @@ export function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const [serverError, setServerError] = useState<string | null>(null)
+  // Shown once, after an automatic sign-out (features/auth/IdleSignOut.tsx).
+  // Read on render, cleared in an effect (React may run initializers twice).
+  const [signedOutIdle] = useState(() => {
+    try {
+      return sessionStorage.getItem(IDLE_NOTE_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+  useEffect(() => {
+    try {
+      sessionStorage.removeItem(IDLE_NOTE_KEY)
+    } catch {
+      // nothing to clear
+    }
+  }, [])
   const [showPassword, setShowPassword] = useState(false)
 
   const {
@@ -74,6 +91,11 @@ export function LoginPage() {
             <p className="text-base text-[#4A5558]">Sign in to your ward dashboard</p>
           </div>
 
+          {signedOutIdle && !serverError && (
+            <Alert data-testid="idle-signed-out">
+              <AlertDescription>You were signed out after 15 minutes without activity, to protect patient privacy.</AlertDescription>
+            </Alert>
+          )}
           {serverError && (
             <Alert variant="destructive">
               <AlertDescription>{serverError}</AlertDescription>

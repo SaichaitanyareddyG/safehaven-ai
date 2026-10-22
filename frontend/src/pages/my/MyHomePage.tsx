@@ -1,4 +1,4 @@
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, MessageCircle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import { MyAppLayout, MyCard, MyLoadError, MyLoading, MySectionTitle } from '@/features/patient-app/MyAppLayout'
@@ -83,6 +83,18 @@ export function MyHomePage() {
           )}
         </>
       )}
+
+      <Link
+        to="/my/ask"
+        className="flex items-center gap-3 rounded-2xl bg-[#143440] p-4 text-[#E6F0F3] hover:bg-[#1A4351]"
+        data-testid="my-ask-link"
+      >
+        <MessageCircle className="h-6 w-6 shrink-0 text-[#7CC3DB]" aria-hidden="true" />
+        <span className="flex flex-col">
+          <span className="text-lg font-semibold">Ask a question</span>
+          <span className="text-sm text-[#9FB9C3]">About your medicines or care</span>
+        </span>
+      </Link>
 
       <p className="mt-2 text-sm leading-relaxed text-[#53656E]">
         Never change a dose on your own. If something here doesn't match what you were told, ask your nurse or doctor.
