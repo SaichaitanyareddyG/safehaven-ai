@@ -9,6 +9,7 @@ returns patient data: a device never learns who it is monitoring
 
 import base64
 import time
+import uuid
 from urllib.parse import quote
 from typing import Annotated
 
@@ -22,7 +23,9 @@ from app.core.rate_limit import limiter
 from app.wearables import service, talk as band_talk
 from app.wearables.dependencies import get_current_device
 from app.wearables.models import WearableDevice
+from app.wearables import firmware
 from app.wearables.schemas import (
+    FirmwareUpdateView,
     TalkReply,
     TalkTextRequest,
     DeviceAlertView,
@@ -177,9 +180,36 @@ def heartbeat(
                 status=alert.status,
                 last_event_at_ms=int(stamp.timestamp() * 1000),
             )
+    offer = firmware.update_offer(db, payload.firmware_version, payload.charging)
     return DeviceHeartbeatResponse(
-        server_time_ms=int(time.time() * 1000), device_code=device.device_code, assignment=view, alert=alert_view
+        server_time_ms=int(time.time() * 1000),
+        device_code=device.device_code,
+        assignment=view,
+        alert=alert_view,
+        firmware_update=(
+            FirmwareUpdateView(
+                version=offer.version, size=offer.size, sha256=offer.sha256, path=f"/device-api/firmware/{offer.id}"
+            )
+            if offer is not None
+            else None
+        ),
     )
+
+
+@router.get("/firmware/{release_id}")
+@limiter.limit("6/hour")
+def download_firmware(
+    request: Request,
+    release_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    device: Annotated[WearableDevice, Depends(get_current_device)],
+) -> Response:
+    """The firmware image, for an enrolled band only (it carries ward Wi-Fi
+    settings, so it is never public)."""
+    release = db.get(firmware.FirmwareRelease, release_id)
+    if release is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such firmware")
+    return Response(content=release.image, media_type="application/octet-stream")
 
 
 @router.post("/events", response_model=SensorEventAccepted)

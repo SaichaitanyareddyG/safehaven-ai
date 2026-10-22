@@ -31,6 +31,9 @@
 #include <WiFi.h>
 #include <esp_random.h>
 #include <mbedtls/base64.h>
+#include <mbedtls/sha256.h>
+#include <Update.h>
+#include <esp_ota_ops.h>
 
 #include <atomic>
 #include <freertos/FreeRTOS.h>
@@ -155,6 +158,11 @@ class DeviceLink {
     // TLS handshakes need more stack than plain HTTP.
     xTaskCreatePinnedToCore(&DeviceLink::taskEntry, "device-link", 16384, this, 1, nullptr, 0);
   }
+
+  /// True once this firmware has reached the backend since it started. A
+  /// freshly installed update stays on probation until then (sticks3_main.cpp
+  /// rolls it back if it never does).
+  bool firmwareConfirmed() const { return fwConfirmed_; }
 
   LinkStatus status() {
     xSemaphoreTake(lock_, portMAX_DELAY);
@@ -298,6 +306,8 @@ class DeviceLink {
   // 60 s (was 30): each check-in wakes the radio for a secure exchange. The
   // backend calls a band offline after 3 min (device_offline_after_seconds).
   static constexpr uint32_t kHeartbeatMs = 60000;
+  // A failed update is tried again after this, not on every check-in.
+  static constexpr uint32_t kOtaRetryMs = 30UL * 60UL * 1000UL;
   static constexpr uint32_t kUrgentHeartbeatMs = 5000;
   static constexpr uint32_t kRetryMs = 10000;
   // Each failed send costs a full secure handshake (radio + processor flat
@@ -655,6 +665,127 @@ class DeviceLink {
       Serial.printf("[LINK] assignment: %s%s\r\n", a.present ? "ASSIGNED, profile " : "none (device idle)",
                     a.present ? to_string(a.profile) : "");
     }
+
+    confirmRunningFirmware();
+    if (restartPending_ && h.charging) {
+      Serial.println("[OTA] back on the charger - restarting into the new firmware");
+      vTaskDelay(pdMS_TO_TICKS(300));
+      ESP.restart();
+    }
+    // Offered only while the band is on its charger (backend rule), and
+    // checked again here: never install on a band that is monitoring.
+    JsonVariantConst fw = doc["firmware_update"];
+    if (!fw.isNull() && h.charging) {
+      installUpdate(fw["version"] | "", fw["size"] | (uint32_t)0, fw["sha256"] | "", fw["path"] | "");
+    }
+  }
+
+  // ── firmware update over Wi-Fi ─────────────────────────────────────────────
+  // The first answered heartbeat proves this firmware does its job: keep it.
+  void confirmRunningFirmware() {
+    if (fwConfirmed_) return;
+    fwConfirmed_ = true;
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    if (running && esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY) {
+      esp_ota_mark_app_valid_cancel_rollback();
+      Serial.println("[OTA] new firmware confirmed - it reached the backend");
+    }
+  }
+
+  /// Download into the spare app slot with the device credential, check the
+  /// SHA-256 against the backend's, then restart into it (now, or the next
+  /// time the band is on its charger).
+  void installUpdate(const char* version, uint32_t size, const char* sha256Hex, const char* path) {
+    if (!version[0] || !path[0] || strlen(sha256Hex) != 64 || size == 0) return;
+    if (!strcmp(version, fw_) || restartPending_) return;
+    if (otaTried_ && millis() - lastOtaTryMs_ < kOtaRetryMs) return;
+    otaTried_ = true;
+    lastOtaTryMs_ = millis();
+    Serial.printf("[OTA] installing %s (%lu bytes) - band on the charger, not monitoring\r\n", version,
+                  (unsigned long)size);
+
+    HTTPClient http;
+    const String url = String(baseUrl_) + path;
+    if (tls_) {
+      tlsClient_.setCACert(caPem_);
+      if (!http.begin(tlsClient_, url)) return;
+    } else if (!http.begin(url)) {
+      return;
+    }
+    http.setReuse(false);
+    http.setTimeout(15000);
+    http.addHeader("Authorization", String("Bearer ") + secret_);
+    const int code = http.GET();
+    if (code != 200 || http.getSize() != (int)size) {
+      Serial.printf("[OTA] download refused (HTTP %d, %d bytes) - not installed\r\n", code, http.getSize());
+      http.end();
+      return;
+    }
+    if (!Update.begin(size)) {
+      Serial.printf("[OTA] cannot start: %s\r\n", Update.errorString());
+      http.end();
+      return;
+    }
+
+    mbedtls_sha256_context sha;
+    mbedtls_sha256_init(&sha);
+    mbedtls_sha256_starts_ret(&sha, 0);
+    WiFiClient* stream = http.getStreamPtr();
+    static uint8_t buf[2048];
+    uint32_t done = 0;
+    uint32_t lastData = millis();
+    bool writeFailed = false;
+    while (done < size) {
+      const size_t avail = stream->available();
+      if (!avail) {
+        if (!http.connected() || millis() - lastData > 20000) break;
+        vTaskDelay(pdMS_TO_TICKS(5));
+        continue;
+      }
+      size_t want = avail < sizeof(buf) ? avail : sizeof(buf);
+      if (want > size - done) want = size - done;
+      const int n = stream->readBytes(buf, want);
+      if (n <= 0) break;
+      mbedtls_sha256_update_ret(&sha, buf, n);
+      if (Update.write(buf, n) != (size_t)n) {
+        writeFailed = true;
+        break;
+      }
+      done += n;
+      lastData = millis();
+    }
+    http.end();
+    uint8_t digest[32];
+    mbedtls_sha256_finish_ret(&sha, digest);
+    mbedtls_sha256_free(&sha);
+    char hex[65];
+    for (int i = 0; i < 32; ++i) snprintf(hex + 2 * i, 3, "%02x", digest[i]);
+
+    if (writeFailed || done != size || strcmp(hex, sha256Hex) != 0) {
+      Update.abort();
+      Serial.printf("[OTA] %s - not installed, will try again later\r\n",
+                    writeFailed ? "flash write failed" : done != size ? "download incomplete" : "fingerprint mismatch");
+      return;
+    }
+    if (!Update.end(true)) {
+      Serial.printf("[OTA] install failed: %s\r\n", Update.errorString());
+      return;
+    }
+    Health now;
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    now = health_;
+    xSemaphoreGive(lock_);
+    if (!now.charging) {
+      // Unplugged during the download: never restart a band that may be on a
+      // wrist. The new firmware starts the next time it is on the charger.
+      restartPending_ = true;
+      Serial.printf("[OTA] %s installed - restarts next time the band is on the charger\r\n", version);
+      return;
+    }
+    Serial.printf("[OTA] %s installed - restarting\r\n", version);
+    vTaskDelay(pdMS_TO_TICKS(300));
+    ESP.restart();
   }
 
   // ── device-initiated pairing ───────────────────────────────────────────────
@@ -827,6 +958,10 @@ class DeviceLink {
   uint32_t retryMs_ = kRetryMs;
   uint32_t lastPostMs_ = 0;
   bool lastReused_ = false;
+  bool fwConfirmed_ = false;
+  bool otaTried_ = false;
+  bool restartPending_ = false;
+  uint32_t lastOtaTryMs_ = 0;
   // Since boot (RAM survives light sleep): read with the serial "power" command.
   uint32_t hbNew_ = 0, hbReused_ = 0, hbNewMs_ = 0, hbReusedMs_ = 0;
   std::atomic<TalkStatus> talkStatus_{TalkStatus::IDLE};

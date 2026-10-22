@@ -40,6 +40,7 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_timer.h>
+#include <esp_ota_ops.h>
 #ifdef SH_LOW_POWER
 #include <esp_pm.h>
 #endif
@@ -84,7 +85,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.4.0-link";
+static const char *FIRMWARE_VERSION = "0.5.0";  // 0.5.0: updates over Wi-Fi
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -1466,6 +1467,32 @@ static void startPowerManagement() {
 }
 #endif
 
+// Firmware updates over Wi-Fi (DeviceLink::installUpdate). A freshly
+// installed update starts "on probation": Arduino would normally accept it at
+// once; returning true here leaves the decision to us. It is kept when it
+// reaches the backend (DeviceLink::confirmRunningFirmware) and put back to
+// the previous version if it has not done so within this long.
+extern "C" bool verifyRollbackLater() { return true; }
+static const uint32_t FIRMWARE_PROBATION_MS = 10UL * 60UL * 1000UL;
+
+static void checkFirmwareProbation(uint32_t now) {
+  static bool settled = false;
+  if (settled) return;
+  if (backendLink.firmwareConfirmed()) {
+    settled = true;
+    return;
+  }
+  if (now < FIRMWARE_PROBATION_MS) return;
+  settled = true;
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  esp_ota_img_states_t state;
+  if (running && esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY) {
+    Serial.println("[OTA] new firmware never reached the backend - going back to the previous version");
+    delay(200);
+    esp_ota_mark_app_invalid_rollback_and_reboot();
+  }
+}
+
 void setup() {
   if (bootRetriesMagic != BOOT_RETRIES_MAGIC || esp_reset_reason() == ESP_RST_POWERON ||
       bootRetries < 0 || bootRetries > MAX_BOOT_RETRIES) {
@@ -2436,6 +2463,7 @@ void loop() {
   handleSerial();
 
   const unsigned long now = millis();
+  checkFirmwareProbation(now);
   // An unacknowledged fall beacon keeps the alert on screen; the calm screen
   // that follows a press times out as before.
   if (alertActive && !attentionActive && now - alertSinceMs > ALERT_SHOW_MS) {

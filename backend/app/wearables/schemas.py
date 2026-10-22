@@ -348,6 +348,17 @@ class DeviceHeartbeatResponse(BaseModel):
     device_code: str | None = None
     assignment: DeviceAssignmentView | None = None
     alert: DeviceAlertView | None = None
+    # Only while the band is on its charger, and only when a different
+    # version is published (app/wearables/firmware.py).
+    firmware_update: "FirmwareUpdateView | None" = None
+
+
+class FirmwareUpdateView(BaseModel):
+    version: str
+    size: int
+    sha256: str
+    # GET with the device credential.
+    path: str
 
 
 class PairingStartRequest(BaseModel):

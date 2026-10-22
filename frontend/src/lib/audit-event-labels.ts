@@ -274,6 +274,10 @@ export function auditEventDescription(event: AuditEvent): string {
       return `Wearable device enrolled and credentialled${deviceSuffix(event)}`
     case 'WEARABLE_DEVICE_REVOKED':
       return `Wearable device credential revoked${deviceSuffix(event)}`
+    case 'WEARABLE_FIRMWARE_CHANGED':
+      return `Band software updated${
+        typeof event.event_metadata['to'] === 'string' ? ` to ${String(event.event_metadata['to'])}` : ''
+      }`
     case 'WEARABLE_DEVICE_ASSIGNED':
       return `Safety monitoring started${deviceSuffix(event)}${profileSuffix(event)}`
     case 'WEARABLE_DEVICE_UNASSIGNED':

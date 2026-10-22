@@ -1245,6 +1245,17 @@ def record_heartbeat(
     """
     device.last_seen_at = datetime.now(timezone.utc)
     device.battery_percent = payload.battery_percent
+    if device.firmware_version and payload.firmware_version != device.firmware_version:
+        # Over Wi-Fi or by cable: which software a band ran, and since when,
+        # is part of its history.
+        record_event(
+            db,
+            event_type=AuditEventType.WEARABLE_FIRMWARE_CHANGED,
+            actor_type=ActorType.SYSTEM,
+            entity_type="WearableDevice",
+            entity_id=device.id,
+            event_metadata={"from": device.firmware_version, "to": payload.firmware_version},
+        )
     device.firmware_version = payload.firmware_version
     device.charging = payload.charging
 
