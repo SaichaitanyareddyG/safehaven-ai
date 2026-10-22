@@ -107,7 +107,13 @@ class DoseNotDueError(Exception):
 
 
 def record_dose(
-    db: Session, patient_id: uuid.UUID, instruction_id: uuid.UUID, day: date, slot: str, status: str | None
+    db: Session,
+    patient_id: uuid.UUID,
+    instruction_id: uuid.UUID,
+    day: date,
+    slot: str,
+    status: str | None,
+    recorded_by: uuid.UUID | None = None,
 ) -> None:
     """Taken / Skipped, or None to undo. Only today's and yesterday's doses,
     and only a dose that really is on the schedule."""
@@ -129,12 +135,17 @@ def record_dose(
             dose_date=day,
             dose_time=slot,
             status=status,
+            recorded_by_account_id=recorded_by,
             recorded_at=datetime.now(timezone.utc),
         )
         db.execute(
             statement.on_conflict_do_update(
                 constraint="uq_dose_log_slot",
-                set_={"status": statement.excluded.status, "recorded_at": statement.excluded.recorded_at},
+                set_={
+                    "status": statement.excluded.status,
+                    "recorded_at": statement.excluded.recorded_at,
+                    "recorded_by_account_id": statement.excluded.recorded_by_account_id,
+                },
             )
         )
     db.commit()
@@ -210,6 +221,7 @@ def missed_doses_flags(db: Session) -> list[MissedDoses]:
         for (pid,) in db.query(Patient.id)
         .join(PatientAppAccount, PatientAppAccount.patient_id == Patient.id)
         .filter(PatientAppAccount.status == STATUS_ACTIVE, Patient.admission_status == AdmissionStatus.DISCHARGED)
+        .distinct()
         .all()
     ]
     flags = []

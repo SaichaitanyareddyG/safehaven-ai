@@ -56,3 +56,26 @@ test('signed out after 15 minutes idle, with a warning first', async ({ page }) 
   await expect(page).toHaveURL(/\/login$/)
   await expect(page.getByTestId('idle-signed-out')).toBeVisible()
 })
+
+test('add a caregiver who gets their own sign-in', async ({ page, browser }) => {
+  const staff = await newStaff()
+  const patient = await newPatientWithApp(staff.token, ['Take Metoprolol 25 mg orally twice daily with food.'])
+  await signInStaff(page, staff.token)
+  await page.goto(`/patients/${patient.id}`)
+
+  await page.getByTestId('caregiver-add').click()
+  await page.fill('#cg-name', 'Priya')
+  await page.fill('#cg-rel', 'daughter')
+  await page.fill('#cg-email', `priya.${Date.now()}@example.com`)
+  await page.getByTestId('caregiver-consent').check()
+  await page.getByTestId('caregiver-invite').click()
+  await expect(page.getByTestId('caregiver-row')).toContainText('Priya')
+
+  // Email is not set up on the test server, so the link is shown to staff.
+  const link = await page.getByTestId('caregivers-section').locator('input[readonly]').inputValue()
+  const phone = await browser.newPage()
+  await phone.goto(link.replace(/^https?:\/\/[^/]+/, ''))
+  await expect(phone.getByRole('heading', { level: 1 })).toContainText('Priya')
+  await expect(phone.getByText("Helping with Maria's care")).toBeVisible()
+  await phone.close()
+})

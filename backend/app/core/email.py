@@ -242,3 +242,36 @@ def send_patient_sign_in_email(to: str, link: str, minutes: int) -> EmailResult:
         product="Patient app",
     )
     return send_email(to, subject, text, html)
+
+
+def send_caregiver_invite_email(to: str, link: str, hours: int) -> EmailResult:
+    # Not even whose care: the inbox may not be private.
+    subject = "You've been invited to help with someone's care in SafeHaven"
+    reason = (
+        "You're receiving this because a hospital care team added you, with the patient's agreement, as someone "
+        "who helps with their care. Not expecting it? You can ignore this email."
+    )
+    text = (
+        "Hello,\n\n"
+        "A hospital care team has added you to SafeHaven, with the patient's agreement, so you can help with "
+        "their care: their medicines and dose times, appointments and care instructions.\n\n"
+        f"Sign in here (the link works once, for {hours} hours):\n{link}\n\n"
+        'After that, open the app and choose "Email me a sign-in link" whenever you need one.'
+        + _signature_text()
+        + "\n\n" + reason
+    )
+    html = _layout(
+        preheader="Sign in to help with medicines, appointments and care instructions.",
+        heading="You've been invited to help",
+        paragraphs=[
+            "A hospital care team has added you to SafeHaven, with the patient's agreement, so you can help with "
+            "their care: their medicines and dose times, appointments and care instructions.",
+            "There is no password to remember: each time, we email you a link like this one.",
+        ],
+        button="Sign in to SafeHaven",
+        link=link,
+        note=f'This link works once and expires in {hours} hours. After that, use "Email me a sign-in link" on the sign-in page.',
+        reason=reason,
+        product="Patient app",
+    )
+    return send_email(to, subject, text, html)

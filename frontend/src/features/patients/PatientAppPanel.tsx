@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AdherenceChart } from '@/features/patients/AdherenceChart'
+import { CaregiversSection } from '@/features/patients/CaregiversSection'
 import { ApiError } from '@/lib/api-client'
 import { formatDate, formatDateTime } from '@/lib/format'
 import type { AppAccessStatus } from '@/types/patients'
@@ -180,6 +181,8 @@ export function PatientAppPanel({ patientId }: { patientId: string }) {
       {(access.status === 'ACTIVE' || access.status === 'EXPIRED' || access.status === 'REVOKED') && (
         <AdherenceChart patientId={patientId} />
       )}
+
+      {access.consent_at && <CaregiversSection patientId={patientId} caregivers={access.caregivers ?? []} />}
 
       {live && (
         <Button

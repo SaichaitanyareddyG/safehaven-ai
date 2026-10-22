@@ -10,8 +10,16 @@ async function call(path: string, init: RequestInit & { token?: string } = {}) {
   return { status: response.status, body: text ? JSON.parse(text) : null }
 }
 
-/** A fresh nurse account (needs ALLOW_SELF_REGISTRATION on the test backend). */
-export async function newStaff() {
+let staffForThisWorker: Promise<{ email: string; token: string }> | null = null
+
+/** A nurse account, one per test worker: sign-up is rate limited (15 a
+ *  minute), so tests share it. Needs ALLOW_SELF_REGISTRATION on the backend. */
+export function newStaff() {
+  staffForThisWorker ??= createStaff()
+  return staffForThisWorker
+}
+
+async function createStaff() {
   const email = `e2e.${Date.now()}.${Math.random().toString(36).slice(2, 7)}@example.com`
   await call('/auth/register', { method: 'POST', body: JSON.stringify({ email, password: 'supersecret123', full_name: 'E2E Nurse' }) })
   const login = await call('/auth/login', { method: 'POST', body: JSON.stringify({ email, password: 'supersecret123' }) })

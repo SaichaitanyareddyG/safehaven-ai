@@ -59,7 +59,19 @@ export interface PatientCreateResponse extends Patient {
 
 export type AppAccessStatus = 'NOT_INVITED' | 'INVITED' | 'ACTIVE' | 'REVOKED' | 'EXPIRED'
 
+export interface Caregiver {
+  id: string
+  display_name: string | null
+  relationship: string | null
+  email: string | null
+  status: AppAccessStatus
+  invited_at: string | null
+  last_sign_in_at: string | null
+}
+
 export interface AppAccess {
+  /** Family members or carers with their own login to this patient's app. */
+  caregivers: Caregiver[]
   status: AppAccessStatus
   email: string | null
   phone: string | null

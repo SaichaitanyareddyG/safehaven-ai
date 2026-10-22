@@ -208,6 +208,10 @@ export function auditEventDescription(event: AuditEvent): string {
       return 'Patient signed in to the patient app'
     case 'PATIENT_APP_ACCESS_REVOKED':
       return 'Patient app access turned off'
+    case 'CAREGIVER_INVITED':
+      return 'Caregiver invited to the patient app'
+    case 'CAREGIVER_ACCESS_REVOKED':
+      return 'Caregiver app access turned off'
     case 'APPOINTMENT_CREATED':
       return 'Appointment booked'
     case 'APPOINTMENT_UPDATED':

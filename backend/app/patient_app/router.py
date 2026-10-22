@@ -1,4 +1,5 @@
 import uuid
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, Response, status
@@ -17,11 +18,14 @@ from app.patient_app import service
 from app.core.config import get_settings
 from app.patient_app import doses as dose_service
 from app.patient_app import push as push_service
-from app.patient_app.models import PushSubscription
+from app.patient_app.models import ROLE_CAREGIVER, PatientAppAccount, PushSubscription
 from app.patient_app.schemas import (
     AdherenceDayRead,
     AdherenceResponse,
     AppAccessRead,
+    CaregiverInviteRequest,
+    CaregiverInviteResponse,
+    CaregiverRead,
     DoseRead,
     DoseRecordRequest,
     MyAudioRequest,
@@ -59,8 +63,21 @@ _EXCHANGE_RATE_LIMIT = "30/minute"
 _LINK_INVALID = "This sign-in link has expired or was already used. Ask for a new one below."
 
 
-def to_access_read(patient: Patient, account) -> AppAccessRead:
+def to_caregiver_read(account) -> CaregiverRead:
+    return CaregiverRead(
+        id=account.id,
+        display_name=account.display_name,
+        relationship=account.relationship,
+        email=account.email,
+        status=service.access_status(account),
+        invited_at=account.invited_at,
+        last_sign_in_at=account.last_sign_in_at,
+    )
+
+
+def to_access_read(patient: Patient, account, db: Session | None = None) -> AppAccessRead:
     return AppAccessRead(
+        caregivers=[to_caregiver_read(c) for c in service.list_caregivers(db, patient.id)] if db is not None else [],
         status=service.access_status(account),
         email=patient.email,
         phone=patient.phone,
@@ -82,7 +99,7 @@ def get_app_access(
         patient = get_patient(db, patient_id)
     except PatientNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found") from exc
-    return to_access_read(patient, service.get_account(db, patient_id))
+    return to_access_read(patient, service.get_account(db, patient_id), db)
 
 
 @staff_router.post("/{patient_id}/app-access/invite", response_model=AppInviteResponse)
@@ -108,7 +125,7 @@ def invite_to_app(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     patient = get_patient(db, patient_id)
     return AppInviteResponse(
-        access=to_access_read(patient, result.account), emailed=result.emailed, problem=result.problem, link=result.link
+        access=to_access_read(patient, result.account, db), emailed=result.emailed, problem=result.problem, link=result.link
     )
 
 
@@ -124,7 +141,48 @@ def revoke_app_access(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found") from exc
     except PatientAppError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    return to_access_read(get_patient(db, patient_id), account)
+    return to_access_read(get_patient(db, patient_id), account, db)
+
+
+@staff_router.post("/{patient_id}/app-access/caregivers", response_model=CaregiverInviteResponse)
+def invite_caregiver(
+    patient_id: uuid.UUID,
+    payload: CaregiverInviteRequest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CaregiverInviteResponse:
+    """Add a family member or carer (or send their invite again)."""
+    try:
+        result = service.invite_caregiver(
+            db,
+            patient_id,
+            uuid.UUID(current_user.id),
+            email=payload.email,
+            name=payload.name,
+            relationship=payload.relationship,
+            consent=payload.consent,
+        )
+    except PatientNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found") from exc
+    except PatientAppError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return CaregiverInviteResponse(
+        caregiver=to_caregiver_read(result.account), emailed=result.emailed, problem=result.problem, link=result.link
+    )
+
+
+@staff_router.post("/{patient_id}/app-access/caregivers/{account_id}/revoke", response_model=CaregiverRead)
+def revoke_caregiver(
+    patient_id: uuid.UUID,
+    account_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CaregiverRead:
+    try:
+        account = service.get_caregiver(db, patient_id, account_id)
+    except PatientAppError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return to_caregiver_read(service.revoke_account(db, account, uuid.UUID(current_user.id)))
 
 
 # --- The patient's own API -----------------------------------------------------
@@ -132,10 +190,16 @@ def revoke_app_access(
 _bearer = HTTPBearer(auto_error=False)
 
 
-def get_signed_in_patient(
+@dataclass(frozen=True)
+class PatientSession:
+    patient: Patient
+    account: PatientAppAccount  # the patient's own login, or a caregiver's
+
+
+def get_patient_session(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     db: Annotated[Session, Depends(get_db)],
-) -> Patient:
+) -> PatientSession:
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Please sign in again",
@@ -144,10 +208,15 @@ def get_signed_in_patient(
     if credentials is None:
         raise unauthorized
     try:
-        patient_id, session_version = decode_patient_token(credentials.credentials)
-        return service.authorize(db, patient_id, session_version)
+        patient_id, account_id, session_version = decode_patient_token(credentials.credentials)
+        patient, account = service.authorize(db, patient_id, account_id, session_version)
     except (InvalidPatientTokenError, PatientAccessDeniedError) as exc:
         raise unauthorized from exc
+    return PatientSession(patient=patient, account=account)
+
+
+def get_signed_in_patient(session: Annotated[PatientSession, Depends(get_patient_session)]) -> Patient:
+    return session.patient
 
 
 @router.post("/request-link", status_code=status.HTTP_202_ACCEPTED)
@@ -173,14 +242,16 @@ def exchange(request: Request, payload: ExchangeRequest, db: Annotated[Session, 
         patient, account = service.exchange_link(db, payload.token)
     except InvalidSignInLinkError as exc:
         raise HTTPException(status_code=status.HTTP_410_GONE, detail=_LINK_INVALID) from exc
-    token, expires_at = create_patient_token(patient.id, account.session_version)
+    token, expires_at = create_patient_token(patient.id, account.id, account.session_version)
     return PatientSessionResponse(access_token=token, expires_at=expires_at)
 
 
 @router.get("/me", response_model=MyProfile)
-def me(patient: Annotated[Patient, Depends(get_signed_in_patient)], db: Annotated[Session, Depends(get_db)]) -> MyProfile:
-    account = service.get_account(db, patient.id)
+def me(session: Annotated[PatientSession, Depends(get_patient_session)]) -> MyProfile:
+    patient, account = session.patient, session.account
     return MyProfile(
+        viewer_role=account.role,
+        viewer_name=account.display_name if account.role == ROLE_CAREGIVER else patient.first_name,
         first_name=patient.first_name,
         last_name=patient.last_name,
         preferred_language=patient.preferred_language,
@@ -296,12 +367,21 @@ def my_doses(
 @router.post("/me/doses", status_code=status.HTTP_204_NO_CONTENT)
 def record_dose(
     payload: DoseRecordRequest,
-    patient: Annotated[Patient, Depends(get_signed_in_patient)],
+    session: Annotated[PatientSession, Depends(get_patient_session)],
     db: Annotated[Session, Depends(get_db)],
 ) -> None:
-    """Taken / Skipped (status null = undo), for today or yesterday only."""
+    """Taken / Skipped (status null = undo), for today or yesterday only.
+    A caregiver can answer for the patient; who answered is kept."""
     try:
-        dose_service.record_dose(db, patient.id, payload.instruction_id, payload.date, payload.time, payload.status)
+        dose_service.record_dose(
+            db,
+            session.patient.id,
+            payload.instruction_id,
+            payload.date,
+            payload.time,
+            payload.status,
+            recorded_by=session.account.id,
+        )
     except dose_service.DoseNotDueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="That dose is not on your schedule") from exc
 
@@ -315,7 +395,7 @@ def push_status() -> PushStatus:
 @router.post("/me/push", status_code=status.HTTP_204_NO_CONTENT)
 def subscribe_push(
     payload: PushSubscribeRequest,
-    patient: Annotated[Patient, Depends(get_signed_in_patient)],
+    session: Annotated[PatientSession, Depends(get_patient_session)],
     db: Annotated[Session, Depends(get_db)],
 ) -> None:
     """Turn reminders on for this phone. Sends one test notification so the
@@ -324,15 +404,21 @@ def subscribe_push(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reminders are not set up on this server")
     if not payload.endpoint.startswith("https://"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Not a push address")
+    patient = session.patient
     existing = db.query(PushSubscription).filter(PushSubscription.endpoint == payload.endpoint).first()
     if existing is None:
         existing = PushSubscription(
-            patient_id=patient.id, endpoint=payload.endpoint, p256dh=payload.keys.p256dh, auth=payload.keys.auth
+            patient_id=patient.id,
+            account_id=session.account.id,
+            endpoint=payload.endpoint,
+            p256dh=payload.keys.p256dh,
+            auth=payload.keys.auth,
         )
         db.add(existing)
     else:
-        # The same phone, now signed in as this patient.
+        # The same phone, now signed in as this login.
         existing.patient_id = patient.id
+        existing.account_id = session.account.id
         existing.p256dh = payload.keys.p256dh
         existing.auth = payload.keys.auth
     db.commit()

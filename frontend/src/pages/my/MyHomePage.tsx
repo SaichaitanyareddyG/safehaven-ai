@@ -20,7 +20,9 @@ export function MyHomePage() {
   const plan = useMyCarePlan()
   const visits = useMyVisits()
 
-  const first = profile.data?.first_name
+  const caregiver = profile.data?.viewer_role === 'CAREGIVER'
+  // A caregiver is greeted by their own name and told whose care they see.
+  const first = caregiver ? profile.data?.viewer_name : profile.data?.first_name
   // Only while admitted: an old visit nobody closed must never say "In hospital now" at home.
   const openVisit =
     profile.data?.admission_status === 'ACTIVE' ? visits.data?.visits.find((v) => v.status === 'OPEN') : undefined
@@ -119,6 +121,7 @@ export function MyHomePage() {
 
 function subtitle(profile: ReturnType<typeof useMyProfile>['data']) {
   if (!profile) return undefined
+  if (profile.viewer_role === 'CAREGIVER') return `Helping with ${profile.first_name}'s care`
   if (profile.admission_status === 'ACTIVE') return profile.room_number ? `In hospital · Room ${profile.room_number}` : 'In hospital'
   return profile.access_expires_at
     ? `At home · this app works until ${formatDate(profile.access_expires_at.slice(0, 10))}`

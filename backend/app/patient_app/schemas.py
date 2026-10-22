@@ -14,6 +14,16 @@ AppAccessStatus = Literal["NOT_INVITED", "INVITED", "ACTIVE", "REVOKED", "EXPIRE
 # --- Staff side -------------------------------------------------------------
 
 
+class CaregiverRead(BaseModel):
+    id: uuid.UUID
+    display_name: str | None
+    relationship: str | None
+    email: str | None
+    status: AppAccessStatus
+    invited_at: datetime | None
+    last_sign_in_at: datetime | None
+
+
 class AppAccessRead(BaseModel):
     status: AppAccessStatus
     email: str | None
@@ -23,6 +33,7 @@ class AppAccessRead(BaseModel):
     activated_at: datetime | None = None
     last_sign_in_at: datetime | None = None
     access_expires_at: datetime | None = None
+    caregivers: list[CaregiverRead] = []
 
 
 class AppInviteRequest(BaseModel):
@@ -32,6 +43,23 @@ class AppInviteRequest(BaseModel):
 
     _validate_email = field_validator("email")(_clean_email)
     _validate_phone = field_validator("phone")(_clean_phone)
+
+
+class CaregiverInviteRequest(BaseModel):
+    email: str = Field(max_length=320)
+    name: str = Field(min_length=1, max_length=200)
+    relationship: str | None = Field(default=None, max_length=100)
+    # The patient agreed to share their care information with this person.
+    consent: bool = False
+
+    _validate_email = field_validator("email")(_clean_email)
+
+
+class CaregiverInviteResponse(BaseModel):
+    caregiver: CaregiverRead
+    emailed: bool
+    problem: str | None = None
+    link: str | None = None
 
 
 class AppInviteResponse(BaseModel):
@@ -59,6 +87,9 @@ class PatientSessionResponse(BaseModel):
 
 
 class MyProfile(BaseModel):
+    # Whose login this is: the patient, or a caregiver viewing their care.
+    viewer_role: Literal["PATIENT", "CAREGIVER"] = "PATIENT"
+    viewer_name: str | None = None
     first_name: str
     last_name: str
     preferred_language: Language

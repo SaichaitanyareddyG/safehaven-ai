@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.encounters.service import close_open_encounters
 from app.patient_access.service import revoke_all_tokens_for_patient
 from app.patient_app.doses import hospital_now
-from app.patient_app.service import on_admission_status_changed
+from app.patient_app.service import on_admission_status_changed, sync_own_account_email
 from app.patients.models import AdmissionStatus, Patient
 from app.patients.schemas import PatientUpdate
 from app.patients.service import update_patient as _update_patient_record
@@ -55,6 +55,9 @@ def update_patient(db: Session, patient_id: uuid.UUID, data: PatientUpdate, upda
         revoke_all_tokens_for_patient(db, patient_id, commit=False)
         end_assignments_for_patient(db, patient_id, commit=False)
         close_open_encounters(db, patient_id, hospital_now().date())
+    if "email" in data.model_fields_set:
+        # Sign-in links go to the login's own email: keep it the patient's.
+        sync_own_account_email(db, patient)
     if data.admission_status is not None:
         # The patient app outlives the stay by a fixed window (and reopens on
         # readmission) — unlike the bedside care link revoked above.

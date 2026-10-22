@@ -7,6 +7,9 @@ export interface PatientSession {
 }
 
 export interface MyProfile {
+  /** Whose login: the patient's own, or a caregiver viewing their care. */
+  viewer_role: 'PATIENT' | 'CAREGIVER'
+  viewer_name: string | null
   first_name: string
   last_name: string
   preferred_language: Language
