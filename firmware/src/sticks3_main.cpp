@@ -85,7 +85,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.5.2";  // 0.5.0: updates over Wi-Fi; 0.5.2: download fix
+static const char *FIRMWARE_VERSION = "0.5.9";  // 0.5.0: updates over Wi-Fi; 0.5.8: rollback bootloader, no reinstall of a failed version
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -525,6 +525,8 @@ static void serviceChargeRadio() {
   }
   // Radio on while charging: rest once the server has had this check-in (or
   // after a minute of trying), then wake again in 5 min.
+  // Never mid-update: the download follows the check-in that offered it.
+  if (backendLink.updating()) return;
   const bool answered = backendLink.heartbeatsAnswered() != heartbeatsAtWake;
   if (answered || now - radioWokeMs > CHARGE_CHECKIN_MAX_MS) {
     nextChargeCheckinMs = now + CHARGE_CHECKIN_MS;
@@ -1475,6 +1477,29 @@ static void startPowerManagement() {
 extern "C" bool verifyRollbackLater() { return true; }
 static const uint32_t FIRMWARE_PROBATION_MS = 10UL * 60UL * 1000UL;
 
+static const char* otaStateName(esp_ota_img_states_t s) {
+  switch (s) {
+    case ESP_OTA_IMG_NEW: return "new";
+    case ESP_OTA_IMG_PENDING_VERIFY: return "on probation";
+    case ESP_OTA_IMG_VALID: return "confirmed";
+    case ESP_OTA_IMG_INVALID: return "invalid";
+    case ESP_OTA_IMG_ABORTED: return "aborted";
+    default: return "not tracked";
+  }
+}
+
+// Serial "ota" and the boot log: which app slot is running, and whether this
+// copy is confirmed or still on probation (can be rolled back).
+static void printOtaState() {
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  const esp_partition_t* boot = esp_ota_get_boot_partition();
+  esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+  const esp_err_t err = running ? esp_ota_get_state_partition(running, &state) : ESP_FAIL;
+  Serial.printf("[OTA] running %s (%s), next boot %s, rollback possible: %s\r\n", running ? running->label : "?",
+                err == ESP_OK ? otaStateName(state) : esp_err_to_name(err), boot ? boot->label : "?",
+                esp_ota_check_rollback_is_possible() ? "yes" : "no");
+}
+
 static void checkFirmwareProbation(uint32_t now) {
   static bool settled = false;
   if (settled) return;
@@ -1550,6 +1575,7 @@ void setup() {
                       : r == ESP_RST_DEEPSLEEP ? "wake from deep sleep"
                                                : "other";
     Serial.printf("Reset reason: %s (%d)\r\n", why, (int)r);
+    printOtaState();
   }
   const bool boardOk = M5.getBoard() == m5::board_t::board_M5StickS3;
   imuOk = imu.begin();
@@ -2400,6 +2426,8 @@ static void runCommand(char *line) {
 #endif
   } else if (!strcmp(line, "status")) {
     printStatus();
+  } else if (!strcmp(line, "ota")) {
+    printOtaState();
   } else if (!strcmp(line, "power")) {
     bool chg = false;
     const bool chgKnown = M5.Power.M5pm1.getBatteryCharge(&chg);

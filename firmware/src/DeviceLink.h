@@ -125,6 +125,18 @@ class DeviceLink {
     String secret = prefs_.isKey("secret") ? prefs_.getString("secret", "") : String();
     strlcpy(secret_, secret.c_str(), sizeof(secret_));
     seq_ = prefs_.getUInt("seq", 0);
+    // Did the last update we installed survive? "ota_try" is written just
+    // before restarting into it. Running something else now means it was
+    // rolled back: remember it so it is never installed again.
+    if (prefs_.isKey("ota_try")) {
+      const String tried = prefs_.getString("ota_try", "");
+      if (tried.length() && tried != fw_) {
+        prefs_.putString("ota_bad", tried);
+        Serial.printf("[OTA] %s was rolled back - it will not be installed again\r\n", tried.c_str());
+      }
+      prefs_.remove("ota_try");
+    }
+    if (prefs_.isKey("ota_bad")) strlcpy(otaBad_, prefs_.getString("ota_bad", "").c_str(), sizeof(otaBad_));
     // Resume the last known assignment so a reboot does not leave an assigned
     // patient unmonitored until the first heartbeat; the heartbeat confirms
     // or clears it.
@@ -163,6 +175,8 @@ class DeviceLink {
   /// freshly installed update stays on probation until then (sticks3_main.cpp
   /// rolls it back if it never does).
   bool firmwareConfirmed() const { return fwConfirmed_; }
+  /// An update is downloading or installing: keep the radio on.
+  bool updating() const { return otaBusy_; }
 
   LinkStatus status() {
     xSemaphoreTake(lock_, portMAX_DELAY);
@@ -627,6 +641,10 @@ class DeviceLink {
     st_.heartbeatOk = true;
     st_.credentialRejected = false;
     rememberCodeLocked(doc["device_code"] | "");
+    // Set BEFORE this check-in counts as answered: on the charger the main
+    // loop rests the radio the moment it sees an answer, which cut off the
+    // download that follows (seen on the band as HTTP -1).
+    otaBusy_ = !doc["firmware_update"].isNull() && h.charging && !restartPending_;
     hbAnswered_ = hbAnswered_ + 1;
     // Server time at the midpoint of the round trip.
     const uint64_t serverMs = doc["server_time_ms"] | (uint64_t)0;
@@ -678,6 +696,7 @@ class DeviceLink {
     if (!fw.isNull() && h.charging) {
       installUpdate(fw["version"] | "", fw["size"] | (uint32_t)0, fw["sha256"] | "", fw["path"] | "");
     }
+    otaBusy_ = false;  // installed and restarting, or given up: either way, done
   }
 
   // ── firmware update over Wi-Fi ─────────────────────────────────────────────
@@ -699,6 +718,7 @@ class DeviceLink {
   void installUpdate(const char* version, uint32_t size, const char* sha256Hex, const char* path) {
     if (!version[0] || !path[0] || strlen(sha256Hex) != 64 || size == 0) return;
     if (!strcmp(version, fw_) || restartPending_) return;
+    if (!strcmp(version, otaBad_)) return;  // failed on this band before (rolled back)
     if (otaTried_ && millis() - lastOtaTryMs_ < kOtaRetryMs) return;
     otaTried_ = true;
     lastOtaTryMs_ = millis();
@@ -778,6 +798,7 @@ class DeviceLink {
       Serial.printf("[OTA] install failed: %s\r\n", Update.errorString());
       return;
     }
+    prefs_.putString("ota_try", version);
     Health now;
     xSemaphoreTake(lock_, portMAX_DELAY);
     now = health_;
@@ -967,6 +988,8 @@ class DeviceLink {
   bool fwConfirmed_ = false;
   bool otaTried_ = false;
   bool restartPending_ = false;
+  volatile bool otaBusy_ = false;
+  char otaBad_[24] = "";
   uint32_t lastOtaTryMs_ = 0;
   // Since boot (RAM survives light sleep): read with the serial "power" command.
   uint32_t hbNew_ = 0, hbReused_ = 0, hbNewMs_ = 0, hbReusedMs_ = 0;
