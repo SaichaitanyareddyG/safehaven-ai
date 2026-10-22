@@ -34,6 +34,10 @@
 #include <mbedtls/sha256.h>
 #include <Update.h>
 #include <esp_ota_ops.h>
+#include <esp_wifi.h>
+#ifdef CONFIG_PM_ENABLE
+#include <esp_pm.h>
+#endif
 
 #include <atomic>
 #include <freertos/FreeRTOS.h>
@@ -326,9 +330,12 @@ class DeviceLink {
   // 60 s (was 30): each check-in wakes the radio for a secure exchange. The
   // backend calls a band offline after 3 min (device_offline_after_seconds).
   static constexpr uint32_t kHeartbeatMs = 60000;
+  static constexpr uint32_t kHeartbeatRetryMs = 10000;
   // A failed update is tried again after this, not on every check-in.
   static constexpr uint32_t kOtaRetryMs = 30UL * 60UL * 1000UL;
   static constexpr int kOtaAttempts = 3;
+  static constexpr uint32_t kOtaPiece = 256UL * 1024UL;  // a few seconds each
+  static constexpr int kOtaPieceRetries = 8;
   static constexpr uint32_t kUrgentHeartbeatMs = 5000;
   static constexpr uint32_t kRetryMs = 10000;
   // Each failed send costs a full secure handshake (radio + processor flat
@@ -502,7 +509,12 @@ class DeviceLink {
 
         if (!secret_[0] && !code[0]) servicePairing();
 
-        const uint32_t interval = urgent_ ? kUrgentHeartbeatMs : kHeartbeatMs;
+        // A failed check-in is retried soon (a few times), not a whole
+        // interval later: on the charger the radio only stays up a minute,
+        // so one failure used to cost five minutes.
+        const uint32_t interval = urgent_                                      ? kUrgentHeartbeatMs
+                                  : (hbFailStreak_ > 0 && hbFailStreak_ <= 3) ? kHeartbeatRetryMs
+                                                                              : kHeartbeatMs;
         if (secret_[0] && (firstHeartbeat || hbNow_ || millis() - lastHeartbeat >= interval)) {
           lastHeartbeat = millis();
           firstHeartbeat = false;
@@ -621,7 +633,8 @@ class DeviceLink {
       xSemaphoreTake(lock_, portMAX_DELAY);
       st_.heartbeatOk = false;
       xSemaphoreGive(lock_);
-      Serial.printf("[LINK] heartbeat failed (HTTP %d)\r\n", rc);
+      ++hbFailStreak_;
+      Serial.printf("[LINK] heartbeat failed (HTTP %d)%s\r\n", rc, hbFailStreak_ <= 3 ? " - trying again in 10 s" : "");
       return;
     }
     JsonDocument doc;
@@ -647,6 +660,7 @@ class DeviceLink {
     xSemaphoreTake(lock_, portMAX_DELAY);
     st_.heartbeatOk = true;
     st_.credentialRejected = false;
+    hbFailStreak_ = 0;
     rememberCodeLocked(doc["device_code"] | "");
     // Set BEFORE this check-in counts as answered: on the charger the main
     // loop rests the radio the moment it sees an answer, which cut off the
@@ -734,6 +748,11 @@ class DeviceLink {
                   (unsigned long)size);
     // A dropped connection mid-download is common on a busy network: try
     // again straight away a couple of times before waiting 30 minutes.
+    // Full speed for the download only. Normal operation keeps Wi-Fi in
+    // maximum modem sleep (the radio dozes about a second at a time), which is
+    // right for small check-ins but stalled a 1.5 MB download at ~200 KB every
+    // time (seen on the band). Restored as soon as this returns.
+    FullSpeed fullSpeed;
     for (int attempt = 1; attempt <= kOtaAttempts; ++attempt) {
       const OtaStep step = tryInstall(version, size, sha256Hex, path);
       if (step != OtaStep::RETRY) return;
@@ -747,81 +766,146 @@ class DeviceLink {
 
   enum class OtaStep { DONE, RETRY, GIVE_UP };
 
-  OtaStep tryInstall(const char* version, uint32_t size, const char* sha256Hex, const char* path) {
+  /// While alive: Wi-Fi radio always on, CPU at full speed, no light sleep.
+  struct FullSpeed {
+    wifi_ps_type_t before = WIFI_PS_NONE;
+#ifdef CONFIG_PM_ENABLE
+    esp_pm_lock_handle_t cpu = nullptr;
+    esp_pm_lock_handle_t awake = nullptr;
+#endif
+    FullSpeed() {
+      esp_wifi_get_ps(&before);
+      esp_wifi_set_ps(WIFI_PS_NONE);
+#ifdef CONFIG_PM_ENABLE
+      if (esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "ota-cpu", &cpu) == ESP_OK) esp_pm_lock_acquire(cpu);
+      if (esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "ota-awake", &awake) == ESP_OK) esp_pm_lock_acquire(awake);
+#endif
+    }
+    ~FullSpeed() {
+#ifdef CONFIG_PM_ENABLE
+      if (awake) {
+        esp_pm_lock_release(awake);
+        esp_pm_lock_delete(awake);
+      }
+      if (cpu) {
+        esp_pm_lock_release(cpu);
+        esp_pm_lock_delete(cpu);
+      }
+#endif
+      esp_wifi_set_ps(before);
+    }
+  };
+
+  enum class PieceResult { OK, DROPPED, REFUSED, WRITE_FAILED };
+
+  /// Bytes [first..last] of the image into the update and the running
+  /// SHA-256. Whatever arrived before a drop is kept and counted in
+  /// `accepted`, so the next request resumes exactly there. (Not
+  /// Update.progress(): that leaves out up to 4 KB still buffered, and
+  /// resuming from it re-sent bytes the update already had — seen on the
+  /// band as a corrupted, aborted install.)
+  PieceResult fetchPiece(const char* path, uint32_t first, uint32_t last, mbedtls_sha256_context& sha,
+                         uint32_t& accepted) {
     HTTPClient http;
     const String url = String(baseUrl_) + path;
-    // The check-in just before left its secure connection open for reuse
-    // (setReuse). A new request on the same client then failed to connect
-    // (HTTP -1, seen on the band): close it and start a fresh one.
+    // The check-in just before may have left its connection open for reuse;
+    // a request on the same client then failed to connect (HTTP -1).
     if (tls_) tlsClient_.stop();
     if (tls_) {
       tlsClient_.setCACert(caPem_);
-      if (!http.begin(tlsClient_, url)) return OtaStep::RETRY;
+      if (!http.begin(tlsClient_, url)) return PieceResult::DROPPED;
     } else if (!http.begin(url)) {
-      return OtaStep::RETRY;
+      return PieceResult::DROPPED;
     }
     http.setReuse(false);
     http.setTimeout(15000);
     http.setConnectTimeout(8000);
     http.addHeader("Authorization", String("Bearer ") + secret_);
+    http.addHeader("Range", String("bytes=") + first + "-" + last);
     const int code = http.GET();
-    if (code != 200 || http.getSize() != (int)size) {
-      Serial.printf("[OTA] download refused (HTTP %d %s, %d bytes)\r\n", code,
-                    code < 0 ? HTTPClient::errorToString(code).c_str() : "", http.getSize());
+    const uint32_t want = last - first + 1;
+    if (code != 206 || http.getSize() != (int)want) {
+      Serial.printf("[OTA] piece %lu-%lu refused (HTTP %d %s)\r\n", (unsigned long)first, (unsigned long)last, code,
+                    code < 0 ? HTTPClient::errorToString(code).c_str() : "");
       http.end();
-      // A network failure is worth another go now; a refusal (404, 401) is not.
-      return code < 0 ? OtaStep::RETRY : OtaStep::GIVE_UP;
+      // A network failure is worth another go; a refusal (404, 401, 416) is not.
+      return code < 0 ? PieceResult::DROPPED : PieceResult::REFUSED;
     }
-    if (!Update.begin(size)) {
-      Serial.printf("[OTA] cannot start: %s\r\n", Update.errorString());
-      http.end();
-      return OtaStep::GIVE_UP;
-    }
-
-    mbedtls_sha256_context sha;
-    mbedtls_sha256_init(&sha);
-    mbedtls_sha256_starts_ret(&sha, 0);
     WiFiClient* stream = http.getStreamPtr();
     static uint8_t buf[2048];
-    uint32_t done = 0;
+    uint32_t got = 0;
     uint32_t lastData = millis();
-    bool writeFailed = false;
-    while (done < size) {
+    while (got < want) {
       const size_t avail = stream->available();
       if (!avail) {
-        // Only a real stall ends it: right after the last bytes the server may
-        // already have closed while TLS still holds data for us.
-        if (millis() - lastData > 20000) break;
+        if (millis() - lastData > 15000) break;
         if (!http.connected() && millis() - lastData > 2000) break;
         vTaskDelay(pdMS_TO_TICKS(5));
         continue;
       }
-      size_t want = avail < sizeof(buf) ? avail : sizeof(buf);
-      if (want > size - done) want = size - done;
-      const int n = stream->readBytes(buf, want);
-      if (n <= 0) break;
-      mbedtls_sha256_update_ret(&sha, buf, n);
-      if (Update.write(buf, n) != (size_t)n) {
-        writeFailed = true;
-        break;
+      size_t n = avail < sizeof(buf) ? avail : sizeof(buf);
+      if (n > want - got) n = want - got;
+      const int r = stream->readBytes(buf, n);
+      if (r <= 0) break;
+      mbedtls_sha256_update_ret(&sha, buf, r);
+      if (Update.write(buf, r) != (size_t)r) {
+        http.end();
+        return PieceResult::WRITE_FAILED;
       }
-      done += n;
+      got += r;
+      accepted += r;
       lastData = millis();
     }
     http.end();
+    return got == want ? PieceResult::OK : PieceResult::DROPPED;
+  }
+
+  OtaStep tryInstall(const char* version, uint32_t size, const char* sha256Hex, const char* path) {
+    if (!Update.begin(size)) {
+      Serial.printf("[OTA] cannot start: %s\r\n", Update.errorString());
+      return OtaStep::GIVE_UP;
+    }
+    mbedtls_sha256_context sha;
+    mbedtls_sha256_init(&sha);
+    mbedtls_sha256_starts_ret(&sha, 0);
+
+    // In pieces: one long transfer was reset part-way by the hosting proxy
+    // (the band writes flash as it reads, so a whole image takes 30-50 s).
+    // A dropped piece is asked for again from where it stopped.
+    uint32_t done = 0;
+    int pieceFailures = 0;
+    const uint32_t started = millis();
+    while (done < size) {
+      const uint32_t last = (done + kOtaPiece < size ? done + kOtaPiece : size) - 1;
+      const PieceResult r = fetchPiece(path, done, last, sha, done);
+      if (r == PieceResult::WRITE_FAILED) {
+        mbedtls_sha256_free(&sha);
+        Update.abort();
+        Serial.printf("[OTA] flash write failed at %lu bytes: %s\r\n", (unsigned long)done, Update.errorString());
+        return OtaStep::GIVE_UP;
+      }
+      if (r == PieceResult::REFUSED || (r == PieceResult::DROPPED && ++pieceFailures > kOtaPieceRetries)) {
+        mbedtls_sha256_free(&sha);
+        Update.abort();
+        Serial.printf("[OTA] download stopped at %lu of %lu bytes\r\n", (unsigned long)done, (unsigned long)size);
+        return r == PieceResult::REFUSED ? OtaStep::GIVE_UP : OtaStep::RETRY;
+      }
+      if (r == PieceResult::DROPPED) vTaskDelay(pdMS_TO_TICKS(2000));
+      Serial.printf("[OTA] %lu of %lu bytes (%lu s)%s\r\n", (unsigned long)done, (unsigned long)size,
+                    (unsigned long)((millis() - started) / 1000), r == PieceResult::DROPPED ? " - piece dropped, resuming" : "");
+    }
     uint8_t digest[32];
     mbedtls_sha256_finish_ret(&sha, digest);
     mbedtls_sha256_free(&sha);
     char hex[65];
     for (int i = 0; i < 32; ++i) snprintf(hex + 2 * i, 3, "%02x", digest[i]);
-
-    if (writeFailed || done != size || strcmp(hex, sha256Hex) != 0) {
+    if (strcmp(hex, sha256Hex) != 0) {
       Update.abort();
-      Serial.printf("[OTA] %s (%lu of %lu bytes, %lu ms since the last data)\r\n",
-                    writeFailed ? "flash write failed" : done != size ? "download incomplete" : "fingerprint mismatch",
-                    (unsigned long)done, (unsigned long)size, (unsigned long)(millis() - lastData));
-      return writeFailed ? OtaStep::GIVE_UP : OtaStep::RETRY;
+      Serial.println("[OTA] fingerprint mismatch - not installed");
+      return OtaStep::RETRY;
     }
+    Serial.printf("[OTA] downloaded in %lu s (%d dropped piece%s resumed)\r\n", (unsigned long)((millis() - started) / 1000),
+                  pieceFailures, pieceFailures == 1 ? "" : "s");
     if (!Update.end(true)) {
       Serial.printf("[OTA] install failed: %s\r\n", Update.errorString());
       return OtaStep::GIVE_UP;
@@ -1018,6 +1102,7 @@ class DeviceLink {
   bool otaTried_ = false;
   bool restartPending_ = false;
   volatile bool otaBusy_ = false;
+  uint8_t hbFailStreak_ = 0;
   char otaBad_[24] = "";
   uint32_t lastOtaTryMs_ = 0;
   // Since boot (RAM survives light sleep): read with the serial "power" command.
