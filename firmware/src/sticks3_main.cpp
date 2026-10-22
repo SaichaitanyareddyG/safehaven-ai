@@ -85,7 +85,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.6.8";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating
+static const char *FIRMWARE_VERSION = "0.6.9";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -425,9 +425,12 @@ static bool localTime(struct tm &out) {
 }
 
 // ── screen power ─────────────────────────────────────────────────────────────
+static void holdAwakeForScreen(bool on);  // light sleep would make the backlight flicker
+
 static void screenWake(const char *why) {
   lastActivityMs = millis();
   if (screenOn) return;
+  holdAwakeForScreen(true);
   M5.Display.wakeup();
   M5.Display.setBrightness(screen == Screen::TEST ? BRIGHTNESS_TEST : BRIGHTNESS_HOME);
   screenOn = true;
@@ -440,6 +443,7 @@ static void screenSleep() {
   if (!screenOn) return;
   M5.Display.setBrightness(0);
   M5.Display.sleep();
+  holdAwakeForScreen(false);
   screenOn = false;
   screenOnTotalMs += millis() - screenOnSinceMs;
   Serial.println("[SCREEN] off");
@@ -1455,7 +1459,22 @@ static void updateSleepLock(bool usbPowered) {
   Serial.printf("[POWER] light sleep %s\r\n", usbPowered ? "paused (USB power)" : "active (on battery)");
 }
 
+// The backlight is PWM-dimmed, and its PWM stops while the chip light-sleeps
+// (50 times a second, between IMU samples): on battery the lit screen visibly
+// flickered, like a lamp on a failing supply (reported on the band). So the
+// chip stays awake while the screen is on — at most 15 s at a time.
+static esp_pm_lock_handle_t screenAwakeLock = nullptr;
+static bool screenAwakeHeld = false;
+static void holdAwakeForScreen(bool on) {
+  if (!screenAwakeLock || on == screenAwakeHeld) return;
+  if (on) esp_pm_lock_acquire(screenAwakeLock);
+  else esp_pm_lock_release(screenAwakeLock);
+  screenAwakeHeld = on;
+}
+
 static void startPowerManagement() {
+  esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "screen", &screenAwakeLock);
+  holdAwakeForScreen(screenOn);  // the screen starts lit
   esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "usb", &usbAwakeLock);
   esp_pm_lock_acquire(usbAwakeLock);  // awake until servicePower knows we are on battery
   usbAwakeHeld = true;
@@ -1467,6 +1486,9 @@ static void startPowerManagement() {
   Serial.printf("[POWER] light sleep %s (CPU %d-%d MHz)\r\n", err == ESP_OK ? "on" : esp_err_to_name(err),
                 pm.min_freq_mhz, pm.max_freq_mhz);
 }
+#endif
+#ifndef SH_LOW_POWER
+static void holdAwakeForScreen(bool) {}  // no light sleep in this build: nothing to hold
 #endif
 
 // Firmware updates over Wi-Fi (DeviceLink::installUpdate). A freshly
