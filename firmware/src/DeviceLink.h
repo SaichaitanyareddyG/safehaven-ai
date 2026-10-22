@@ -128,13 +128,19 @@ class DeviceLink {
     // Did the last update we installed survive? "ota_try" is written just
     // before restarting into it. Running something else now means it was
     // rolled back: remember it so it is never installed again.
+    // (If we ARE that version, the note stays until this firmware is
+    // confirmed by reaching the backend: starting up proves nothing. Clearing
+    // it here let a broken update erase the evidence before it was rolled
+    // back, and the old firmware then installed it again — seen on the band.)
     if (prefs_.isKey("ota_try")) {
       const String tried = prefs_.getString("ota_try", "");
-      if (tried.length() && tried != fw_) {
-        prefs_.putString("ota_bad", tried);
-        Serial.printf("[OTA] %s was rolled back - it will not be installed again\r\n", tried.c_str());
+      if (tried != fw_) {
+        if (tried.length()) {
+          prefs_.putString("ota_bad", tried);
+          Serial.printf("[OTA] %s was rolled back - it will not be installed again\r\n", tried.c_str());
+        }
+        prefs_.remove("ota_try");
       }
-      prefs_.remove("ota_try");
     }
     if (prefs_.isKey("ota_bad")) strlcpy(otaBad_, prefs_.getString("ota_bad", "").c_str(), sizeof(otaBad_));
     // Resume the last known assignment so a reboot does not leave an assigned
@@ -322,6 +328,7 @@ class DeviceLink {
   static constexpr uint32_t kHeartbeatMs = 60000;
   // A failed update is tried again after this, not on every check-in.
   static constexpr uint32_t kOtaRetryMs = 30UL * 60UL * 1000UL;
+  static constexpr int kOtaAttempts = 3;
   static constexpr uint32_t kUrgentHeartbeatMs = 5000;
   static constexpr uint32_t kRetryMs = 10000;
   // Each failed send costs a full secure handshake (radio + processor flat
@@ -704,6 +711,7 @@ class DeviceLink {
   void confirmRunningFirmware() {
     if (fwConfirmed_) return;
     fwConfirmed_ = true;
+    if (prefs_.isKey("ota_try")) prefs_.remove("ota_try");  // this update made it
     const esp_partition_t* running = esp_ota_get_running_partition();
     esp_ota_img_states_t state;
     if (running && esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY) {
@@ -724,7 +732,22 @@ class DeviceLink {
     lastOtaTryMs_ = millis();
     Serial.printf("[OTA] installing %s (%lu bytes) - band on the charger, not monitoring\r\n", version,
                   (unsigned long)size);
+    // A dropped connection mid-download is common on a busy network: try
+    // again straight away a couple of times before waiting 30 minutes.
+    for (int attempt = 1; attempt <= kOtaAttempts; ++attempt) {
+      const OtaStep step = tryInstall(version, size, sha256Hex, path);
+      if (step != OtaStep::RETRY) return;
+      if (attempt < kOtaAttempts) {
+        Serial.printf("[OTA] trying again (%d of %d)\r\n", attempt + 1, kOtaAttempts);
+        vTaskDelay(pdMS_TO_TICKS(3000));
+      }
+    }
+    Serial.println("[OTA] not installed - will try again in 30 minutes");
+  }
 
+  enum class OtaStep { DONE, RETRY, GIVE_UP };
+
+  OtaStep tryInstall(const char* version, uint32_t size, const char* sha256Hex, const char* path) {
     HTTPClient http;
     const String url = String(baseUrl_) + path;
     // The check-in just before left its secure connection open for reuse
@@ -733,9 +756,9 @@ class DeviceLink {
     if (tls_) tlsClient_.stop();
     if (tls_) {
       tlsClient_.setCACert(caPem_);
-      if (!http.begin(tlsClient_, url)) return;
+      if (!http.begin(tlsClient_, url)) return OtaStep::RETRY;
     } else if (!http.begin(url)) {
-      return;
+      return OtaStep::RETRY;
     }
     http.setReuse(false);
     http.setTimeout(15000);
@@ -743,15 +766,16 @@ class DeviceLink {
     http.addHeader("Authorization", String("Bearer ") + secret_);
     const int code = http.GET();
     if (code != 200 || http.getSize() != (int)size) {
-      Serial.printf("[OTA] download refused (HTTP %d %s, %d bytes) - not installed\r\n", code,
+      Serial.printf("[OTA] download refused (HTTP %d %s, %d bytes)\r\n", code,
                     code < 0 ? HTTPClient::errorToString(code).c_str() : "", http.getSize());
       http.end();
-      return;
+      // A network failure is worth another go now; a refusal (404, 401) is not.
+      return code < 0 ? OtaStep::RETRY : OtaStep::GIVE_UP;
     }
     if (!Update.begin(size)) {
       Serial.printf("[OTA] cannot start: %s\r\n", Update.errorString());
       http.end();
-      return;
+      return OtaStep::GIVE_UP;
     }
 
     mbedtls_sha256_context sha;
@@ -765,7 +789,10 @@ class DeviceLink {
     while (done < size) {
       const size_t avail = stream->available();
       if (!avail) {
-        if (!http.connected() || millis() - lastData > 20000) break;
+        // Only a real stall ends it: right after the last bytes the server may
+        // already have closed while TLS still holds data for us.
+        if (millis() - lastData > 20000) break;
+        if (!http.connected() && millis() - lastData > 2000) break;
         vTaskDelay(pdMS_TO_TICKS(5));
         continue;
       }
@@ -790,13 +817,14 @@ class DeviceLink {
 
     if (writeFailed || done != size || strcmp(hex, sha256Hex) != 0) {
       Update.abort();
-      Serial.printf("[OTA] %s - not installed, will try again later\r\n",
-                    writeFailed ? "flash write failed" : done != size ? "download incomplete" : "fingerprint mismatch");
-      return;
+      Serial.printf("[OTA] %s (%lu of %lu bytes, %lu ms since the last data)\r\n",
+                    writeFailed ? "flash write failed" : done != size ? "download incomplete" : "fingerprint mismatch",
+                    (unsigned long)done, (unsigned long)size, (unsigned long)(millis() - lastData));
+      return writeFailed ? OtaStep::GIVE_UP : OtaStep::RETRY;
     }
     if (!Update.end(true)) {
       Serial.printf("[OTA] install failed: %s\r\n", Update.errorString());
-      return;
+      return OtaStep::GIVE_UP;
     }
     prefs_.putString("ota_try", version);
     Health now;
@@ -808,11 +836,12 @@ class DeviceLink {
       // wrist. The new firmware starts the next time it is on the charger.
       restartPending_ = true;
       Serial.printf("[OTA] %s installed - restarts next time the band is on the charger\r\n", version);
-      return;
+      return OtaStep::DONE;
     }
     Serial.printf("[OTA] %s installed - restarting\r\n", version);
     vTaskDelay(pdMS_TO_TICKS(300));
     ESP.restart();
+    return OtaStep::DONE;  // not reached
   }
 
   // ── device-initiated pairing ───────────────────────────────────────────────

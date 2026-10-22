@@ -85,7 +85,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.5.9";  // 0.5.0: updates over Wi-Fi; 0.5.8: rollback bootloader, no reinstall of a failed version
+static const char *FIRMWARE_VERSION = "0.5.13";  // 0.5.0: updates over Wi-Fi; 0.5.13: retries, never reinstalls a rolled-back version
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
