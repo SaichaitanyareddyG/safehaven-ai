@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -10,10 +11,15 @@ from app.core.db import get_db
 from app.orchestration import patient_ops
 from app.patients import service
 from app.patients.models import AdmissionStatus
+from app.appointments.service import list_appointments
+from app.audit.models import ActorType, AuditEventType
+from app.audit.service import record_event
+from app.patient_access.service import build_care_plan
 from app.patient_app import service as app_service
 from app.patient_app.doses import missed_doses_flags
 from app.patients.schemas import (
     AppInviteOutcome,
+    CarePlanPrintout,
     MissedDosesFlag,
     MissedDosesResponse,
     PatientCreate,
@@ -78,6 +84,43 @@ def missed_doses(
             MissedDosesFlag(patient_id=f.patient_id, date=f.day, missed=f.missed, skipped=f.skipped)
             for f in missed_doses_flags(db)
         ]
+    )
+
+
+@router.get("/{patient_id}/care-plan-printout", response_model=CarePlanPrintout)
+def care_plan_printout(
+    patient_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CarePlanPrintout:
+    """The printable care plan: the same approved content the patient sees,
+    plus upcoming appointments. Printing is recorded: a paper copy of a
+    care plan leaves the system."""
+    try:
+        patient = service.get_patient(db, patient_id)
+    except PatientNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found") from exc
+    plan = build_care_plan(db, patient)
+    now = datetime.now(timezone.utc)
+    upcoming = [a for a in list_appointments(db, patient.id, include_cancelled=False) if a.starts_at >= now]
+    record_event(
+        db,
+        event_type=AuditEventType.CARE_PLAN_PRINTED,
+        actor_type=ActorType.CLINICIAN,
+        actor_id=uuid.UUID(current_user.id),
+        patient_id=patient.id,
+        entity_type="Patient",
+        entity_id=patient.id,
+    )
+    db.commit()
+    return CarePlanPrintout(
+        patient_first_name=patient.first_name,
+        patient_last_name=patient.last_name,
+        patient_code=patient.patient_code,
+        date_of_birth=patient.date_of_birth,
+        care_plan=plan,
+        appointments=upcoming,
+        printed_at=now,
     )
 
 

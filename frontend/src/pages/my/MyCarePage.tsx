@@ -1,3 +1,6 @@
+import { Printer } from 'lucide-react'
+import { Link } from 'react-router-dom'
+
 import { MyAppLayout, MyCard, MyLoadError, MyLoading, MySectionTitle } from '@/features/patient-app/MyAppLayout'
 import { AllergiesCard, CareInstructionCard } from '@/features/patient-app/MyCards'
 import { useMyCarePlan } from '@/features/patient-app/use-my-data'
@@ -13,6 +16,14 @@ export function MyCarePage() {
       {isError && <MyLoadError />}
       {data && (
         <>
+          <Link
+            to="/my/print"
+            className="flex min-h-12 items-center justify-center gap-2 rounded-xl border-[1.5px] border-[#C9D6DB] bg-white text-base font-semibold text-[#0F6383]"
+            data-testid="my-print-link"
+          >
+            <Printer className="h-5 w-5" aria-hidden="true" />
+            Print or save my care plan as PDF
+          </Link>
           {data.allergies.length > 0 && <AllergiesCard allergies={data.allergies} />}
           <MySectionTitle>Care instructions</MySectionTitle>
           {instructions.length === 0 && (

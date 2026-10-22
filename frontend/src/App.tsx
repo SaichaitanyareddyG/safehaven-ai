@@ -22,6 +22,10 @@ const ChangePasswordPage = lazy(() => import('@/pages/ChangePasswordPage').then(
 const UsersPage = lazy(() => import('@/pages/UsersPage').then((m) => ({ default: m.UsersPage })))
 const SetPasswordPage = lazy(() => import('@/pages/SetPasswordPage').then((m) => ({ default: m.SetPasswordPage })))
 const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage').then((m) => ({ default: m.ForgotPasswordPage })))
+const MyPrintPage = lazy(() => import('@/pages/my/MyPrintPage').then((m) => ({ default: m.MyPrintPage })))
+const PrintCarePlanPage = lazy(() =>
+  import('@/pages/PrintCarePlanPage').then((m) => ({ default: m.PrintCarePlanPage })),
+)
 const MyAskPage = lazy(() => import('@/pages/my/MyAskPage').then((m) => ({ default: m.MyAskPage })))
 const MyCarePage = lazy(() => import('@/pages/my/MyCarePage').then((m) => ({ default: m.MyCarePage })))
 const MyHomePage = lazy(() => import('@/pages/my/MyHomePage').then((m) => ({ default: m.MyHomePage })))
@@ -51,12 +55,21 @@ export default function App() {
               <Route path="/my/visits" element={<MyVisitsPage />} />
               <Route path="/my/care" element={<MyCarePage />} />
               <Route path="/my/ask" element={<MyAskPage />} />
+              <Route path="/my/print" element={<MyPrintPage />} />
               <Route path="/my/*" element={<Navigate to="/my" replace />} />
               <Route
                 path="/patients"
                 element={
                   <ProtectedRoute>
                     <PatientListPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/patients/:patientId/print"
+                element={
+                  <ProtectedRoute>
+                    <PrintCarePlanPage />
                   </ProtectedRoute>
                 }
               />

@@ -103,3 +103,13 @@ export interface MissedDosesFlag {
   missed: number
   skipped: number
 }
+
+export interface CarePlanPrintout {
+  patient_first_name: string
+  patient_last_name: string
+  patient_code: string
+  date_of_birth: string
+  care_plan: import('@/types/patient-access').PatientCarePlanResponse
+  appointments: import('@/types/appointments').Appointment[]
+  printed_at: string
+}

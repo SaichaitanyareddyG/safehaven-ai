@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, LogOut } from 'lucide-react'
+import { ArrowLeft, LogOut, Printer } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -106,6 +106,10 @@ export function PatientDetailPage() {
           <div className="flex items-center gap-2">
             <AdmissionStatusBadge status={patient.admission_status} />
             <CreateCareLinkDialog patientId={patient.id} />
+            <Button variant="outline" size="sm" onClick={() => navigate(`/patients/${patient.id}/print`)} data-testid="print-care-plan-link">
+              <Printer className="h-4 w-4" />
+              Print care plan
+            </Button>
           </div>
         </CardHeader>
         <CardContent>

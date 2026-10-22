@@ -112,3 +112,21 @@ class MissedDosesFlag(BaseModel):
 
 class MissedDosesResponse(BaseModel):
     flags: list[MissedDosesFlag]
+
+
+class CarePlanPrintout(BaseModel):
+    """Everything the printed care plan shows, in one call (staff)."""
+
+    patient_first_name: str
+    patient_last_name: str
+    patient_code: str
+    date_of_birth: date
+    care_plan: "PatientCarePlanResponse"
+    appointments: list["AppointmentRead"]
+    printed_at: datetime
+
+
+from app.appointments.schemas import AppointmentRead  # noqa: E402
+from app.patient_access.schemas import PatientCarePlanResponse  # noqa: E402
+
+CarePlanPrintout.model_rebuild()

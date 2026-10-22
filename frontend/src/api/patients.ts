@@ -3,6 +3,7 @@ import type {
   AdmissionStatus,
   AppAccess,
   AppInviteResponse,
+  CarePlanPrintout,
   Caregiver,
   MissedDosesFlag,
   Patient,
@@ -70,4 +71,8 @@ export function inviteCaregiver(
 
 export function revokeCaregiver(patientId: string, caregiverId: string): Promise<Caregiver> {
   return apiRequest<Caregiver>(`/patients/${patientId}/app-access/caregivers/${caregiverId}/revoke`, { method: 'POST' })
+}
+
+export function getCarePlanPrintout(patientId: string): Promise<CarePlanPrintout> {
+  return apiRequest<CarePlanPrintout>(`/patients/${patientId}/care-plan-printout`)
 }

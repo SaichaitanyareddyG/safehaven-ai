@@ -252,6 +252,8 @@ export function auditEventDescription(event: AuditEvent): string {
       return event.event_metadata['reason'] === 'patient_discharged'
         ? 'Patient care link auto-revoked (discharge)'
         : 'Patient care link revoked'
+    case 'CARE_PLAN_PRINTED':
+      return 'Care plan printed by staff'
     case 'CARE_PLAN_VIEWED':
       return 'Patient viewed their care plan'
     case 'PATIENT_CHAT_EMERGENCY_FLAGGED':
