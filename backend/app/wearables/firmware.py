@@ -43,18 +43,38 @@ def current_release(db: Session) -> FirmwareRelease | None:
     return db.query(FirmwareRelease).filter(FirmwareRelease.is_current.is_(True)).first()
 
 
+def _version_key(version: str | None) -> tuple[int, ...] | None:
+    """"0.5.10" -> (0, 5, 10). None for anything else ("0.4.0-link", "dev")."""
+    if not version:
+        return None
+    parts = version.strip().split(".")
+    if not all(p.isdigit() for p in parts):
+        return None
+    return tuple(int(p) for p in parts)
+
+
 def update_offer(db: Session, running_version: str | None, charging: bool) -> FirmwareRelease | None:
-    """The release this band should install now, if any: a different
-    version is current, and the band is on its charger (not monitoring)."""
+    """The release this band should install now, if any: the current one is
+    NEWER than what the band runs, and the band is on its charger (not
+    monitoring). Never a downgrade: a band flashed by cable with a newer
+    build keeps it. A band reporting a version that is not plain numbers
+    (an old or bench build) is offered the release."""
     if not charging:
         return None
     release = current_release(db)
     if release is None or release.version == running_version:
         return None
+    newest, running = _version_key(release.version), _version_key(running_version)
+    if newest is None:
+        return None
+    if running is not None and newest <= running:
+        return None
     return release
 
 
 def publish(db: Session, version: str, image: bytes, notes: str | None = None) -> FirmwareRelease:
+    if _version_key(version) is None:
+        raise ValueError("Version must be plain numbers, like 0.5.2")
     if not image or image[0] != 0xE9:  # every ESP32 app image starts with this magic byte
         raise ValueError("Not an ESP32 firmware image")
     existing = db.query(FirmwareRelease).filter(FirmwareRelease.version == version).first()

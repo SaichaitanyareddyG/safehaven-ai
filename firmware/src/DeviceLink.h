@@ -707,6 +707,10 @@ class DeviceLink {
 
     HTTPClient http;
     const String url = String(baseUrl_) + path;
+    // The check-in just before left its secure connection open for reuse
+    // (setReuse). A new request on the same client then failed to connect
+    // (HTTP -1, seen on the band): close it and start a fresh one.
+    if (tls_) tlsClient_.stop();
     if (tls_) {
       tlsClient_.setCACert(caPem_);
       if (!http.begin(tlsClient_, url)) return;
@@ -715,10 +719,12 @@ class DeviceLink {
     }
     http.setReuse(false);
     http.setTimeout(15000);
+    http.setConnectTimeout(8000);
     http.addHeader("Authorization", String("Bearer ") + secret_);
     const int code = http.GET();
     if (code != 200 || http.getSize() != (int)size) {
-      Serial.printf("[OTA] download refused (HTTP %d, %d bytes) - not installed\r\n", code, http.getSize());
+      Serial.printf("[OTA] download refused (HTTP %d %s, %d bytes) - not installed\r\n", code,
+                    code < 0 ? HTTPClient::errorToString(code).c_str() : "", http.getSize());
       http.end();
       return;
     }

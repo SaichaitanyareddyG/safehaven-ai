@@ -72,3 +72,13 @@ def test_a_version_change_is_recorded(client, band, db_session):
     _beat(client, band, version="0.5.0")
     event = db_session.query(AuditEvent).filter_by(event_type="WEARABLE_FIRMWARE_CHANGED").one()
     assert event.event_metadata == {"from": "0.4.0", "to": "0.5.0"}
+
+
+def test_never_offers_an_older_version(client, band, db_session):
+    publish(db_session, "0.5.1", IMAGE)
+    assert _beat(client, band, version="0.5.2")["firmware_update"] is None  # newer by cable: keep it
+    assert _beat(client, band, version="0.5.0")["firmware_update"]["version"] == "0.5.1"
+    assert _beat(client, band, version="0.4.0-link")["firmware_update"]["version"] == "0.5.1"  # old naming
+    assert _beat(client, band, version="0.5.10")["firmware_update"] is None  # numeric, not text, order
+    with pytest.raises(ValueError):
+        publish(db_session, "0.6.0-beta", IMAGE)
