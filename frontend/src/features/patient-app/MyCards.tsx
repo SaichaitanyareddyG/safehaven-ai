@@ -1,4 +1,5 @@
-import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
+import { format } from 'date-fns'
+import { AlertTriangle, Bell, ChevronDown, ChevronUp } from 'lucide-react'
 import { useState } from 'react'
 
 import { ListenButton } from '@/components/ListenButton'
@@ -7,6 +8,7 @@ import { courseEnded, textFor } from '@/features/patient-app/use-my-data'
 import { formatDate, formatDateTime } from '@/lib/format'
 import { instructionIcon, instructionTypeLabel } from '@/lib/instruction-icons'
 import { textDirection } from '@/lib/language-labels'
+import type { Appointment } from '@/types/appointments'
 import type { PatientAllergyView, PatientCareInstructionView } from '@/types/patient-access'
 import type { MyVisit } from '@/types/patient-app'
 import type { Language } from '@/types/patients'
@@ -187,5 +189,35 @@ function ScheduleFacts({ medicine }: { medicine: PatientCareInstructionView }) {
       <Fact label="When" value={when} />
       <Fact label="Until" value={until} />
     </div>
+  )
+}
+
+/** One booked appointment: a date tile, what, when, where and the care
+ *  team's note. */
+export function AppointmentCard({ appointment, compact = false }: { appointment: Appointment; compact?: boolean }) {
+  const start = new Date(appointment.starts_at)
+  return (
+    <MyCard className="flex flex-col gap-3" data-testid="my-appointment">
+      <div className="flex items-center gap-4">
+        <div className="flex h-[60px] w-14 shrink-0 flex-col items-center justify-center rounded-xl bg-[#E2F0F5] text-[#0B5068]">
+          <span className="text-xs font-semibold tracking-wider">{format(start, 'MMM').toUpperCase()}</span>
+          <span className="text-[22px] leading-none font-semibold">{format(start, 'd')}</span>
+        </div>
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-[17px] font-semibold">{appointment.title}</span>
+          <span className="text-base text-[#53656E]">{format(start, 'EEE, h:mm a')}</span>
+          {appointment.location && <span className="text-base text-[#53656E]">{appointment.location}</span>}
+        </div>
+      </div>
+      {!compact && appointment.notes && (
+        <p className="rounded-xl bg-[#F3F7F8] px-3 py-2 text-base leading-snug">{appointment.notes}</p>
+      )}
+      {!compact && (
+        <p className="flex items-center gap-2 text-sm text-[#53656E]">
+          <Bell className="h-4 w-4 text-[#0F6383]" aria-hidden="true" />
+          Reminder the evening before and 2 hours before, if reminders are on
+        </p>
+      )}
+    </MyCard>
   )
 }

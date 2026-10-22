@@ -1,5 +1,6 @@
 import { ApiError, apiRequest } from '@/lib/api-client'
 import { getPatientToken } from '@/lib/auth-storage'
+import type { Appointment } from '@/types/appointments'
 import type { PatientCarePlanResponse } from '@/types/patient-access'
 import type { ChatMessageListResponse, ChatSendResponse } from '@/types/patient-chat'
 import type {
@@ -82,4 +83,8 @@ export async function getMyAudio(text: string): Promise<Blob> {
   })
   if (!response.ok) throw new ApiError(response.status, 'Speech is not available right now')
   return response.blob()
+}
+
+export function getMyAppointments(): Promise<{ results: Appointment[] }> {
+  return apiRequest<{ results: Appointment[] }>('/patient-app/me/appointments', { asPatient: true })
 }

@@ -38,3 +38,4 @@ from app.patient_app.models import (  # noqa: F401
     PatientSignInLink,
     PushSubscription,
 )
+from app.appointments.models import Appointment, AppointmentReminderSent  # noqa: F401

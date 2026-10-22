@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     dashboard_url: str = "http://localhost:5173"
     invite_link_ttl_hours: int = 24
     reset_link_ttl_minutes: int = 60
+    # Email active admins when the server or a page hits an unexpected error
+    # (app/core/error_alerts.py). Needs RESEND_API_KEY too.
+    error_alerts_enabled: bool = True
 
     # Patient app (app/patient_app/). The first invite lasts longer than a
     # staff one: a patient may not open email the day they are admitted.

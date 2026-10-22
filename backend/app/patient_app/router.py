@@ -5,6 +5,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.appointments import service as appointment_service
+from app.appointments.schemas import AppointmentListResponse
 from app.auth.dependencies import get_current_user
 from app.auth.provider import AuthenticatedUser
 from app.core.db import get_db
@@ -195,6 +197,14 @@ def my_care_plan(
     """Medicines (current and past), care instructions, conditions and
     allergies — exactly what the printed care link shows."""
     return build_care_plan(db, patient)
+
+
+@router.get("/me/appointments", response_model=AppointmentListResponse)
+def my_appointments(
+    patient: Annotated[Patient, Depends(get_signed_in_patient)], db: Annotated[Session, Depends(get_db)]
+) -> AppointmentListResponse:
+    """Booked appointments, soonest first; cancelled ones are left out."""
+    return AppointmentListResponse(results=appointment_service.list_appointments(db, patient.id, include_cancelled=False))
 
 
 @router.get("/me/visits", response_model=MyVisitsResponse)

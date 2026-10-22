@@ -1,9 +1,11 @@
 import asyncio
+import logging
 import contextlib
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -11,10 +13,13 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.allergies.router import router as allergies_router
+from app.appointments.router import router as appointments_router
 from app.audit.router import router as audit_router
 from app.auth.admin_router import router as admin_users_router
 from app.auth.router import router as auth_router
 from app.conditions.router import router as conditions_router
+from app.core import error_alerts
+from app.core.client_errors import router as client_errors_router
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.rate_limit import limiter
@@ -32,6 +37,7 @@ from app.patient_chat.router import router as patient_chat_router
 from app.patients.router import router as patients_router
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -56,6 +62,29 @@ app = FastAPI(
 )
 
 app.state.limiter = limiter
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    """Any error no route handled: a plain message with a reference for the
+    person, a log line and a (throttled) alert to the admins — never the
+    stack trace, which would leak internals."""
+    reference = error_alerts.new_reference()
+    route = getattr(request.scope.get("route"), "path", None) or "unknown route"
+    logger.exception("Unhandled error ref=%s", reference)
+    error_alerts.report("server", f"{request.method} {route}", type(exc).__name__, error_alerts.app_frame(exc), reference)
+    response = JSONResponse(
+        status_code=500,
+        content={"detail": f"Something went wrong on our side. If it keeps happening, quote reference {reference}."},
+    )
+    # This response is built outside the CORS middleware; without these the
+    # browser hides it and the person only sees "couldn't reach SafeHaven".
+    origin = request.headers.get("origin")
+    if origin and origin in settings.cors_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
+    return response
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
@@ -71,6 +100,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(client_errors_router)
 app.include_router(admin_users_router)
 app.include_router(patients_router)
 app.include_router(instructions_router)
@@ -84,6 +114,7 @@ app.include_router(conditions_router)
 app.include_router(allergies_router)
 app.include_router(patient_chat_router)
 app.include_router(encounters_router)
+app.include_router(appointments_router)
 app.include_router(medication_verification_router)
 app.include_router(wearables_router)
 # Separate router, separate path prefix, separate auth dependency: a device

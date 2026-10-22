@@ -2,10 +2,11 @@ import { ChevronRight, MessageCircle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import { MyAppLayout, MyCard, MyLoadError, MyLoading, MySectionTitle } from '@/features/patient-app/MyAppLayout'
-import { AllergiesCard, CurrentStayCard } from '@/features/patient-app/MyCards'
+import { AllergiesCard, AppointmentCard, CurrentStayCard } from '@/features/patient-app/MyCards'
 import { RemindersCard, TodaysDoses } from '@/features/patient-app/MyDoses'
-import { useMyCarePlan, useMyDoses, useMyProfile, useMyVisits } from '@/features/patient-app/use-my-data'
+import { useMyAppointments, useMyCarePlan, useMyDoses, useMyProfile, useMyVisits } from '@/features/patient-app/use-my-data'
 import { formatDate } from '@/lib/format'
+import { useNow } from '@/lib/use-now'
 
 function greeting(): string {
   const hour = new Date().getHours()
@@ -26,6 +27,9 @@ export function MyHomePage() {
   const medicines = plan.data?.instructions.filter((i) => i.instruction_type === 'MEDICATION') ?? []
   const otherCount = (plan.data?.instructions.length ?? 0) - medicines.length
   const doses = useMyDoses()
+  const appointments = useMyAppointments()
+  const now = useNow()
+  const nextAppointment = appointments.data?.results.find((a) => new Date(a.starts_at).getTime() >= now)
   const stopped = plan.data?.past_medications.filter((m) => m.past_reason === 'STOPPED') ?? []
 
   return (
@@ -81,6 +85,15 @@ export function MyHomePage() {
               </MyCard>
             </Link>
           )}
+        </>
+      )}
+
+      {nextAppointment && (
+        <>
+          <MySectionTitle>Next appointment</MySectionTitle>
+          <Link to="/my/visits" className="block">
+            <AppointmentCard appointment={nextAppointment} compact />
+          </Link>
         </>
       )}
 

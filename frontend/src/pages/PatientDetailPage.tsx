@@ -18,6 +18,7 @@ import { CreateInstructionDialog } from '@/features/instructions/CreateInstructi
 import { InstructionList } from '@/features/instructions/InstructionList'
 import { PatientChatTranscript } from '@/features/patient-chat/PatientChatTranscript'
 import { CreateCareLinkDialog } from '@/features/patients/CreateCareLinkDialog'
+import { AppointmentsPanel } from '@/features/patients/AppointmentsPanel'
 import { EncountersPanel } from '@/features/patients/EncountersPanel'
 import { PatientAllergiesPanel } from '@/features/patients/PatientAllergiesPanel'
 import { MissedDosesBanner } from '@/features/patients/MissedDoses'
@@ -168,6 +169,9 @@ export function PatientDetailPage() {
           </div>
           <div className="mt-6 border-t pt-4">
             <EncountersPanel patientId={patient.id} />
+          </div>
+          <div className="mt-6 border-t pt-4">
+            <AppointmentsPanel patientId={patient.id} />
           </div>
           <div className="mt-6 border-t pt-4">
             <PatientAppPanel patientId={patient.id} />
