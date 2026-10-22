@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Eye, EyeOff, Lock } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { z } from 'zod'
@@ -32,7 +32,9 @@ export function LoginPage() {
   const location = useLocation()
   const [serverError, setServerError] = useState<string | null>(null)
   // Shown once, after an automatic sign-out (features/auth/IdleSignOut.tsx).
-  // Read on render, cleared in an effect (React may run initializers twice).
+  // Cleared by IdleSignOut at the next sign-in, not on display: right
+  // after an automatic sign-out the page can reload (a background request
+  // finds the session gone), and the reason must still be shown.
   const [signedOutIdle] = useState(() => {
     try {
       return sessionStorage.getItem(IDLE_NOTE_KEY) === '1'
@@ -40,13 +42,6 @@ export function LoginPage() {
       return false
     }
   })
-  useEffect(() => {
-    try {
-      sessionStorage.removeItem(IDLE_NOTE_KEY)
-    } catch {
-      // nothing to clear
-    }
-  }, [])
   const [showPassword, setShowPassword] = useState(false)
 
   const {

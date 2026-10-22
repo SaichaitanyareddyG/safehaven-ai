@@ -64,6 +64,11 @@ export function IdleSignOut() {
 
   useEffect(() => {
     if (!userId) return
+    try {
+      sessionStorage.removeItem(IDLE_NOTE_KEY)  // signed in again: the note has done its job
+    } catch {
+      // nothing to clear
+    }
     lastLocal.current = Date.now()
     markActive()
     let lastWrite = 0
