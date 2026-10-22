@@ -21,11 +21,3 @@ export const GENERATE_STEPS = [
   'Checking nothing was added',
   'Final safety check',
 ]
-
-export const TRANSLATE_STEPS = [
-  'Translating into the patient’s preferred language',
-  'Back-translating to English to verify meaning',
-  'Re-extracting facts from the back-translation',
-  'Comparing back-translated facts to the original',
-  'Finalizing translation safety verdict',
-]

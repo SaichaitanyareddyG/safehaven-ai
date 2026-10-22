@@ -4,7 +4,6 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { formatDate } from '@/lib/format'
-import { LANGUAGE_LABEL } from '@/lib/language-labels'
 import { listPatients } from '@/api/patients'
 import { AppLayout } from '@/components/AppLayout'
 import { AdmissionStatusBadge } from '@/components/StatusBadge'
@@ -74,7 +73,6 @@ export function PatientListPage() {
               <TableHead className="hidden sm:table-cell">Code</TableHead>
               <TableHead className="hidden md:table-cell">Date of birth</TableHead>
               <TableHead>Room</TableHead>
-              <TableHead className="hidden md:table-cell">Language</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
@@ -82,21 +80,21 @@ export function PatientListPage() {
             {isLoading &&
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={6}>
+                  <TableCell colSpan={5}>
                     <Skeleton className="h-5 w-full" />
                   </TableCell>
                 </TableRow>
               ))}
             {isError && (
               <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-sm text-destructive">
+                <TableCell colSpan={5} className="py-8 text-center text-sm text-destructive">
                   Failed to load patients.
                 </TableCell>
               </TableRow>
             )}
             {data && data.results.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
                   No patients found.
                 </TableCell>
               </TableRow>
@@ -118,9 +116,6 @@ export function PatientListPage() {
                   {formatDate(patient.date_of_birth)}
                 </TableCell>
                 <TableCell className="text-muted-foreground">{patient.room_number ?? '—'}</TableCell>
-                <TableCell className="hidden text-muted-foreground md:table-cell">
-                  {LANGUAGE_LABEL[patient.preferred_language] ?? patient.preferred_language}
-                </TableCell>
                 <TableCell>
                   <AdmissionStatusBadge status={patient.admission_status} />
                 </TableCell>

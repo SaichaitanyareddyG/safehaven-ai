@@ -5,8 +5,7 @@ import { useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
-import { analyzeInstruction, generatePatientOutput, getInstruction, requestTranslations } from '@/api/instructions'
-import { getPatient } from '@/api/patients'
+import { analyzeInstruction, generatePatientOutput, getInstruction } from '@/api/instructions'
 import { AiProcessingOverlay } from '@/components/AiProcessingOverlay'
 import { AppLayout } from '@/components/AppLayout'
 import { InstructionStatusBadge } from '@/components/StatusBadge'
@@ -26,12 +25,10 @@ import {
   TryAgainButton,
 } from '@/features/instructions/InstructionActions'
 import { PatientOutputPanel } from '@/features/instructions/PatientOutputPanel'
-import { TranslationsPanel } from '@/features/instructions/TranslationsPanel'
 import { VersionHistory } from '@/features/instructions/VersionHistory'
-import { ANALYZE_STEPS, GENERATE_STEPS, TRANSLATE_STEPS } from '@/lib/ai-processing-steps'
+import { ANALYZE_STEPS, GENERATE_STEPS } from '@/lib/ai-processing-steps'
 import { ApiError } from '@/lib/api-client'
 import { describeReviewReason } from '@/lib/review-reason'
-import type { Language } from '@/types/patients'
 
 export function InstructionWorkflowPage() {
   const { instructionId } = useParams<{ instructionId: string }>()
@@ -44,12 +41,6 @@ export function InstructionWorkflowPage() {
     enabled: !!instructionId,
   })
 
-  const { data: patient } = useQuery({
-    queryKey: ['patient', instruction?.patient_id],
-    queryFn: () => getPatient(instruction!.patient_id),
-    enabled: !!instruction,
-  })
-
   const version = instruction?.current_version
   const extraction = version?.extraction ?? null
   const latestOutput = version?.patient_outputs.at(-1) ?? null
@@ -59,12 +50,9 @@ export function InstructionWorkflowPage() {
   // click. Approval stays a deliberate, manual clinician action always (see
   // ApproveButton below) — that's the non-negotiable "clinician approves"
   // half of "AI proposes, validation decides, clinician approves", not a UX
-  // choice. Translation auto-triggers only after approval, only for the
-  // patient's own preferred language, and is still independently validated
-  // before it can ever reach the patient — see requestTranslations.
+  // choice. The product is English only, so nothing is translated.
   const analyzedRef = useRef(false)
   const generatedRef = useRef(false)
-  const translatedRef = useRef(false)
 
   const invalidateInstruction = (updated: { patient_id: string }) => {
     queryClient.setQueryData(['instruction', instructionId], (previous: typeof instruction) =>
@@ -94,19 +82,6 @@ export function InstructionWorkflowPage() {
     },
   })
 
-  const autoTranslateMutation = useMutation({
-    mutationFn: (languages: Language[]) => requestTranslations(instructionId!, languages),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['instruction', instructionId] })
-      toast.success('Preferred-language translation complete')
-    },
-    onError: (error) => {
-      toast.error(
-        error instanceof ApiError ? `Automatic translation failed: ${error.message}` : 'Automatic translation failed',
-      )
-    },
-  })
-
   useEffect(() => {
     if (!instruction || analyzedRef.current || autoAnalyzeMutation.isPending) return
     if (instruction.status === 'DRAFT') {
@@ -124,17 +99,6 @@ export function InstructionWorkflowPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instruction?.status, extraction?.completeness_status, latestOutput])
-
-  useEffect(() => {
-    if (!instruction || !patient || !latestOutput || translatedRef.current || autoTranslateMutation.isPending) return
-    if (instruction.status !== 'APPROVED') return
-    if (patient.preferred_language === 'ENGLISH') return
-    const alreadyTranslated = latestOutput.translations.some((t) => t.language === patient.preferred_language)
-    if (alreadyTranslated) return
-    translatedRef.current = true
-    autoTranslateMutation.mutate([patient.preferred_language])
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instruction?.status, patient?.preferred_language, latestOutput])
 
   if (isLoading) {
     return (
@@ -162,7 +126,6 @@ export function InstructionWorkflowPage() {
         steps={GENERATE_STEPS}
         active={autoGenerateMutation.isPending}
       />
-      <AiProcessingOverlay title="Translating for Patient" steps={TRANSLATE_STEPS} active={autoTranslateMutation.isPending} />
 
       <Button variant="ghost" size="sm" className="mb-4 -ml-2" onClick={() => navigate(`/patients/${instruction.patient_id}`)}>
         <ArrowLeft className="h-4 w-4" />
@@ -289,21 +252,6 @@ export function InstructionWorkflowPage() {
             {instruction.status === 'READY_FOR_APPROVAL' && <ApproveButton instructionId={instruction.id} />}
             {canReject && <RejectDialog instructionId={instruction.id} />}
           </div>
-        )}
-
-        {instruction.status === 'APPROVED' && latestOutput && (
-          <Card>
-            <CardHeader className="pb-2">
-              <p className="text-sm font-medium">Translations</p>
-            </CardHeader>
-            <CardContent>
-              <TranslationsPanel
-                instructionId={instruction.id}
-                translations={latestOutput.translations}
-                disabled={autoTranslateMutation.isPending}
-              />
-            </CardContent>
-          </Card>
         )}
 
         <VersionHistory versions={instruction.versions} />

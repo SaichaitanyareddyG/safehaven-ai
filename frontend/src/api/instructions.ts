@@ -7,9 +7,7 @@ import type {
   ClinicalStatus,
   InstructionStatus,
   TranscriptionResponse,
-  TranslationResultItem,
 } from '@/types/instructions'
-import type { Language } from '@/types/patients'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
@@ -105,15 +103,5 @@ export function updateClinicalStatus(instructionId: string, newStatus: ClinicalS
   return apiRequest<CareInstructionRead>(`/instructions/${instructionId}/clinical-status`, {
     method: 'PATCH',
     body: { status: newStatus },
-  })
-}
-
-export function requestTranslations(
-  instructionId: string,
-  languages: Language[],
-): Promise<Record<string, TranslationResultItem>> {
-  return apiRequest<Record<string, TranslationResultItem>>(`/instructions/${instructionId}/translations`, {
-    method: 'POST',
-    body: { languages },
   })
 }

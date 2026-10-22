@@ -5,7 +5,6 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { formatDate } from '@/lib/format'
-import { LANGUAGE_LABEL } from '@/lib/language-labels'
 import { getPatient, updatePatient } from '@/api/patients'
 import { AppLayout } from '@/components/AppLayout'
 import { AdmissionStatusBadge } from '@/components/StatusBadge'
@@ -112,10 +111,6 @@ export function PatientDetailPage() {
             <div>
               <dt className="text-muted-foreground">Room</dt>
               <dd className="font-medium">{patient.room_number ?? '—'}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Preferred language</dt>
-              <dd className="font-medium">{LANGUAGE_LABEL[patient.preferred_language] ?? patient.preferred_language}</dd>
             </div>
             <div className="flex items-end">
               {patient.admission_status === 'ACTIVE' && (

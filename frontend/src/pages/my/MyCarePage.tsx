@@ -4,7 +4,7 @@ import { useMyCarePlan } from '@/features/patient-app/use-my-data'
 
 export function MyCarePage() {
   const { data, isLoading, isError } = useMyCarePlan()
-  const language = data?.preferred_language ?? 'ENGLISH'
+  const language = 'ENGLISH' as const // English only
   const instructions = data?.instructions.filter((i) => i.instruction_type !== 'MEDICATION') ?? []
 
   return (

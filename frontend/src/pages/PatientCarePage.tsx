@@ -9,9 +9,8 @@ import { Button } from '@/components/ui/button'
 import { PatientChatPanel } from '@/features/patient-chat/PatientChatPanel'
 import { ComprehensionFeedback } from '@/features/patient-feedback/ComprehensionFeedback'
 import { instructionIcon, instructionTypeLabel } from '@/lib/instruction-icons'
-import { ALL_LANGUAGES, LANGUAGE_NATIVE_LABEL, textDirection } from '@/lib/language-labels'
+import { LANGUAGE_NATIVE_LABEL, textDirection } from '@/lib/language-labels'
 import { cn } from '@/lib/utils'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { Language } from '@/types/patients'
 import type {
   PatientAllergyView,
@@ -31,8 +30,8 @@ export function PatientCarePage() {
     retry: false,
   })
 
-  const [selectedLanguage, setSelectedLanguage] = useState<Language | null>(null)
-  const activeLanguage = selectedLanguage ?? data?.preferred_language ?? 'ENGLISH'
+  // English only.
+  const activeLanguage: Language = 'ENGLISH'
 
   if (!token) {
     return <CareLinkProblem message="This link is missing information. Please ask your care team for a new one." />
@@ -54,30 +53,6 @@ export function PatientCarePage() {
     <CareShell>
       <p className="text-xl text-muted-foreground">Hello, {data.patient_first_name}</p>
       <h1 className="mt-1 text-3xl font-bold tracking-tight sm:text-4xl">Today's Care Plan</h1>
-
-      {/* One language picker instead of 11 buttons filling the first screen. */}
-      <div className="mt-6 flex items-center justify-center gap-3">
-        <label htmlFor="care-language" className="text-lg text-muted-foreground">
-          Language
-        </label>
-        <Select value={activeLanguage} onValueChange={(value) => setSelectedLanguage(value as Language)}>
-          <SelectTrigger id="care-language" className="h-12 min-w-44 text-lg" data-testid="care-language-select">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {ALL_LANGUAGES.map((language) => (
-              <SelectItem
-                key={language}
-                value={language}
-                className="py-2.5 text-lg"
-                data-testid={`care-language-button-${language.toLowerCase()}`}
-              >
-                {LANGUAGE_NATIVE_LABEL[language]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
 
       {data.allergies.length > 0 && <AllergiesCard allergies={data.allergies} />}
 

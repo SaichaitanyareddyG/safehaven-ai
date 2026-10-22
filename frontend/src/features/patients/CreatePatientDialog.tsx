@@ -20,10 +20,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ApiError } from '@/lib/api-client'
-import { ALL_LANGUAGES, LANGUAGE_NATIVE_LABEL } from '@/lib/language-labels'
-import type { Language } from '@/types/patients'
 
 const patientSchema = z.object({
   first_name: z.string().min(1, 'First name is required'),
@@ -36,7 +33,6 @@ const patientSchema = z.object({
   // Required in the form even though the API accepts it as optional — the
   // whole point is that registration should ask, not that the server insists.
   reason_for_visit: z.string().trim().min(1, 'Why has the patient come in?'),
-  preferred_language: z.enum(ALL_LANGUAGES as [Language, ...Language[]]),
   email: z.union([z.literal(''), z.string().trim().email('Enter a valid email address')]).optional(),
   phone: z.string().optional(),
   app_consent: z.boolean().optional(),
@@ -53,12 +49,11 @@ export function CreatePatientDialog() {
     register,
     handleSubmit,
     reset,
-    setValue,
     watch,
     formState: { errors, isSubmitting },
   } = useForm<PatientFormValues>({
     resolver: zodResolver(patientSchema),
-    defaultValues: { preferred_language: 'ENGLISH', app_consent: false },
+    defaultValues: { app_consent: false },
   })
   const email = watch('email')?.trim() ?? ''
   const consent = watch('app_consent') ?? false
@@ -67,6 +62,8 @@ export function CreatePatientDialog() {
     mutationFn: (values: PatientFormValues) =>
       createPatient({
         ...values,
+        // English only.
+        preferred_language: 'ENGLISH',
         room_number: values.room_number || null,
         email: values.email?.trim() || null,
         phone: values.phone?.trim() || null,
@@ -148,31 +145,6 @@ export function CreatePatientDialog() {
             {errors.reason_for_visit && (
               <p className="text-sm text-destructive">{errors.reason_for_visit.message}</p>
             )}
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="preferred_language">Preferred language</Label>
-            <Select
-              value={watch('preferred_language')}
-              onValueChange={(value) => setValue('preferred_language', value as PatientFormValues['preferred_language'])}
-            >
-              <SelectTrigger id="preferred_language" className="w-full" data-testid="preferred-language-select">
-                <SelectValue />
-              </SelectTrigger>
-              {/* Driven off ALL_LANGUAGES so a language added to the enum can
-                  never be missing from the one place a patient's language is
-                  actually set. */}
-              <SelectContent>
-                {ALL_LANGUAGES.map((language) => (
-                  <SelectItem
-                    key={language}
-                    value={language}
-                    data-testid={`preferred-language-option-${language.toLowerCase()}`}
-                  >
-                    {LANGUAGE_NATIVE_LABEL[language]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </div>
           <fieldset className="space-y-4 rounded-lg border p-4">
             <legend className="px-1 text-sm font-medium">Patient app</legend>
