@@ -81,3 +81,8 @@ export function pairWearable(pairingCode: string, deviceCode: string): Promise<W
     body: { pairing_code: pairingCode, device_code: deviceCode },
   })
 }
+
+/** Let this band install the new firmware off its charger at its next check-in. */
+export function requestBandUpdateNow(deviceId: string): Promise<WearableDevice> {
+  return apiRequest<WearableDevice>(`/wearable-devices/${deviceId}/update-now`, { method: 'POST' })
+}

@@ -181,7 +181,15 @@ def heartbeat(
                 status=alert.status,
                 last_event_at_ms=int(stamp.timestamp() * 1000),
             )
-    offer = firmware.update_offer(db, payload.firmware_version, payload.charging)
+    found = firmware.update_offer(
+        db,
+        payload.firmware_version,
+        payload.charging,
+        assigned=assignment is not None,
+        battery_percent=payload.battery_percent,
+        update_requested_at=device.update_requested_at,
+    )
+    offer, on_battery = found if found else (None, False)
     return DeviceHeartbeatResponse(
         server_time_ms=int(time.time() * 1000),
         device_code=device.device_code,
@@ -189,7 +197,11 @@ def heartbeat(
         alert=alert_view,
         firmware_update=(
             FirmwareUpdateView(
-                version=offer.version, size=offer.size, sha256=offer.sha256, path=f"/device-api/firmware/{offer.id}"
+                version=offer.version,
+                size=offer.size,
+                sha256=offer.sha256,
+                path=f"/device-api/firmware/{offer.id}",
+                allow_on_battery=on_battery,
             )
             if offer is not None
             else None

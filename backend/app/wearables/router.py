@@ -13,6 +13,7 @@ than inventing the first RBAC here, and it is recorded as a known gap
 """
 
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -23,8 +24,10 @@ from app.auth.provider import AuthenticatedUser
 from app.core.db import get_db
 from app.core.rate_limit import limiter
 from app.patients.service import PatientNotFoundError
-from app.wearables import service
-from app.wearables.models import AlertStatus
+from app.audit.models import ActorType, AuditEventType
+from app.audit.service import record_event
+from app.wearables import firmware, service
+from app.wearables.models import AlertStatus, WearableDevice
 from app.wearables.schemas import (
     DeviceAssignmentCreate,
     DeviceAssignmentRead,
@@ -81,10 +84,44 @@ def list_devices(
     # and the alert queue never disagree about which devices are silent.
     service.sweep_offline_devices(db)
     devices = service.list_devices(db)
+
+    def newer(device):
+        release = firmware.newer_release(db, device.firmware_version) if device.firmware_version else None
+        return release.version if release else None
+
     return WearableDeviceListResponse(
         total=len(devices),
-        results=[service.to_read(device, assignment) for device, assignment in devices],
+        results=[service.to_read(device, assignment, newer(device)) for device, assignment in devices],
     )
+
+
+@router.post("/wearable-devices/{device_id}/update-now", response_model=WearableDeviceRead)
+def request_update_now(
+    device_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> WearableDeviceRead:
+    """Let this band install the published firmware off its charger, at its
+    next check-in (30%+ battery). Valid for 2 hours."""
+    device = db.get(WearableDevice, device_id)
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    release = firmware.newer_release(db, device.firmware_version)
+    if release is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This band already runs the latest firmware")
+    device.update_requested_at = datetime.now(timezone.utc)
+    record_event(
+        db,
+        event_type=AuditEventType.WEARABLE_UPDATE_REQUESTED,
+        actor_type=ActorType.CLINICIAN,
+        actor_id=uuid.UUID(current_user.id),
+        entity_type="WearableDevice",
+        entity_id=device.id,
+        event_metadata={"to": release.version},
+    )
+    db.commit()
+    assignment = service.active_assignment_for_device(db, device.id)
+    return service.to_read(device, assignment, release.version)
 
 
 @router.post("/wearable-devices/{device_id}/enrollment-code", response_model=WearableDeviceRegistered)

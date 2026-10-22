@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
-import { Plus, Watch } from 'lucide-react'
+import { Download, Plus, Watch } from 'lucide-react'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
-import { listWearableDevices, pairWearable } from '@/api/safety-monitoring'
+import { listWearableDevices, pairWearable, requestBandUpdateNow } from '@/api/safety-monitoring'
 import { AppLayout } from '@/components/AppLayout'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -20,6 +21,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { ApiError } from '@/lib/api-client'
 import type { WearableDevice } from '@/types/safety-monitoring'
 
 const DEVICES_QUERY_KEY = ['wearable-devices']
@@ -39,6 +41,7 @@ export function DevicesPage() {
     refetchInterval: 10_000,
   })
   const devices = data?.results ?? []
+  const [updating, setUpdating] = useState<WearableDevice | null>(null)
 
   return (
     <AppLayout>
@@ -71,6 +74,7 @@ export function DevicesPage() {
               <TableHead>Battery</TableHead>
               <TableHead className="hidden sm:table-cell">Last check-in</TableHead>
               <TableHead className="hidden md:table-cell">Firmware</TableHead>
+              <TableHead className="text-right">Update</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -96,6 +100,9 @@ export function DevicesPage() {
                     : 'Never'}
                 </TableCell>
                 <TableCell className="hidden text-muted-foreground md:table-cell">{d.firmware_version ?? '—'}</TableCell>
+                <TableCell className="text-right">
+                  <UpdateCell device={d} onAsk={() => setUpdating(d)} />
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -103,6 +110,7 @@ export function DevicesPage() {
       )}
 
       <AddDeviceDialog open={adding} onOpenChange={setAdding} />
+      <UpdateNowDialog device={updating} onClose={() => setUpdating(null)} />
     </AppLayout>
   )
 }
@@ -223,6 +231,70 @@ function AddDeviceDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
               </Button>
             </>
           )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** A newer firmware is published: updates by itself on the charger; staff
+ *  can also let it update on battery. */
+function UpdateCell({ device, onAsk }: { device: WearableDevice; onAsk: () => void }) {
+  if (!device.update_available) return <span className="text-xs text-muted-foreground">Up to date</span>
+  if (device.update_requested_at) {
+    return <Badge variant="secondary">Updating to {device.update_available} at next check-in</Badge>
+  }
+  if (device.charging) {
+    return <span className="text-xs text-muted-foreground">Updating to {device.update_available} on the charger</span>
+  }
+  return (
+    <Button size="sm" variant="outline" onClick={onAsk} data-testid="band-update-now">
+      <Download className="h-4 w-4" />
+      Update now ({device.update_available})
+    </Button>
+  )
+}
+
+function UpdateNowDialog({ device, onClose }: { device: WearableDevice | null; onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: () => requestBandUpdateNow(device!.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: DEVICES_QUERY_KEY })
+      toast.success(`${device?.device_code} will update at its next check-in (within a minute or two)`)
+      onClose()
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not request the update'),
+  })
+  const lowBattery = device?.battery_percent != null && device.battery_percent < 30
+  return (
+    <Dialog open={!!device} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            Update {device?.device_code} to {device?.update_available} now?
+          </DialogTitle>
+          <DialogDescription>
+            Bands normally update by themselves on the charger. Updating now, off the charger:
+          </DialogDescription>
+        </DialogHeader>
+        <ul className="list-disc space-y-1 pl-5 text-sm">
+          {device?.assigned && (
+            <li>
+              <strong>Its patient's alerts may arrive a few minutes late</strong> while it downloads (up to about 5
+              minutes), and it restarts once.
+            </li>
+          )}
+          <li>It needs at least 30% battery{lowBattery ? ` — it has ${device?.battery_percent}%, so it will wait` : ''}.</li>
+          <li>If the new version cannot reach SafeHaven, the band goes back to the old one by itself.</li>
+        </ul>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={mutation.isPending} onClick={() => mutation.mutate()} data-testid="band-update-confirm">
+            Update now
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

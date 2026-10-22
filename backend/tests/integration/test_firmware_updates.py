@@ -18,30 +18,52 @@ def _staff(client):
 
 
 @pytest.fixture()
-def band(client):
-    staff = _staff(client)
-    code = client.post("/wearable-devices", json={"device_code": "SH-TEST-1"}, headers=staff).json()["enrollment_code"]
+def staff(client):
+    return _staff(client)
+
+
+@pytest.fixture()
+def band(client, staff):
+    registered = client.post("/wearable-devices", json={"device_code": "SH-TEST-1"}, headers=staff).json()
+    code = registered["enrollment_code"]
     secret = client.post("/device-api/enroll", json={"enrollment_code": code, "hardware_id": "EFUSE-TEST01"}).json()[
         "device_secret"
     ]
-    return {"Authorization": f"Bearer {secret}"}
+    return {"Authorization": f"Bearer {secret}", "device_id": registered["device"]["id"]}
 
 
-def _beat(client, band, version="0.4.0", charging=True):
+def _headers(band):
+    return {"Authorization": band["Authorization"]}
+
+
+def _assign(client, staff, band):
+    patient = client.post(
+        "/patients", json={"first_name": "A", "last_name": "B", "date_of_birth": "1950-01-01"}, headers=staff
+    ).json()
+    resp = client.post(
+        f"/patients/{patient['id']}/wearable-assignment",
+        json={"device_id": band["device_id"], "monitoring_profile": "STANDARD"},
+        headers=staff,
+    )
+    assert resp.status_code == 201, resp.text
+
+
+def _beat(client, band, version="0.4.0", charging=True, battery=80):
     resp = client.post(
         "/device-api/heartbeat",
-        json={"battery_percent": 80, "firmware_version": version, "charging": charging, "sensor_ok": True},
-        headers=band,
+        json={"battery_percent": battery, "firmware_version": version, "charging": charging, "sensor_ok": True},
+        headers=_headers(band),
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
 
 
-def test_offered_only_on_the_charger_and_only_when_different(client, band, db_session):
+def test_a_band_on_a_patient_updates_only_on_the_charger(client, staff, band, db_session):
+    _assign(client, staff, band)
     assert _beat(client, band)["firmware_update"] is None  # nothing published
     publish(db_session, "0.5.0", IMAGE)
 
-    assert _beat(client, band, charging=False)["firmware_update"] is None  # on a wrist: never
+    assert _beat(client, band, charging=False)["firmware_update"] is None  # on a wrist: not by itself
     offer = _beat(client, band, charging=True)["firmware_update"]
     assert offer["version"] == "0.5.0" and offer["size"] == len(IMAGE)
     assert offer["sha256"] == hashlib.sha256(IMAGE).hexdigest()
@@ -53,7 +75,7 @@ def test_download_needs_a_band_credential(client, band, db_session):
     path = f"/device-api/firmware/{release.id}"
     assert client.get(path).status_code == 401
     assert client.get(path, headers={"Authorization": "Bearer not-a-band"}).status_code == 401
-    resp = client.get(path, headers=band)
+    resp = client.get(path, headers=_headers(band))
     assert resp.status_code == 200 and resp.content == IMAGE
 
 
@@ -88,10 +110,38 @@ def test_download_in_pieces(client, band, db_session):
     image = bytes([0xE9]) + bytes(range(256)) * 40
     release = publish(db_session, "0.6.0", image)
     path = f"/device-api/firmware/{release.id}"
-    first = client.get(path, headers={**band, "Range": "bytes=0-1023"})
+    first = client.get(path, headers={**_headers(band), "Range": "bytes=0-1023"})
     assert first.status_code == 206 and first.content == image[:1024]
     assert first.headers["content-range"] == f"bytes 0-1023/{len(image)}"
-    rest = client.get(path, headers={**band, "Range": "bytes=1024-"})
+    rest = client.get(path, headers={**_headers(band), "Range": "bytes=1024-"})
     assert rest.status_code == 206 and first.content + rest.content == image
-    beyond = client.get(path, headers={**band, "Range": f"bytes={len(image) + 5}-"})
+    beyond = client.get(path, headers={**_headers(band), "Range": f"bytes={len(image) + 5}-"})
     assert beyond.status_code == 416
+
+
+def test_a_free_band_updates_on_battery_with_enough_charge(client, band, db_session):
+    publish(db_session, "0.5.0", IMAGE)
+    offer = _beat(client, band, charging=False, battery=80)["firmware_update"]
+    assert offer["version"] == "0.5.0" and offer["allow_on_battery"] is True
+    assert _beat(client, band, charging=False, battery=25)["firmware_update"] is None  # too low
+    assert _beat(client, band, charging=True, battery=10)["firmware_update"]["allow_on_battery"] is False
+
+
+def test_update_now_lets_a_band_on_a_patient_update_on_battery(client, staff, band, db_session):
+    _assign(client, staff, band)
+    publish(db_session, "0.5.0", IMAGE)
+    _beat(client, band, charging=False)
+    device = client.get("/wearable-devices", headers=staff).json()["results"][0]
+    assert device["update_available"] == "0.5.0" and device["update_requested_at"] is None
+
+    resp = client.post(f"/wearable-devices/{band['device_id']}/update-now", headers=staff)
+    assert resp.status_code == 200 and resp.json()["update_requested_at"]
+    offer = _beat(client, band, charging=False, battery=60)["firmware_update"]
+    assert offer["version"] == "0.5.0" and offer["allow_on_battery"] is True
+    assert _beat(client, band, charging=False, battery=20)["firmware_update"] is None  # still needs 30%
+
+    # Once it runs the new version the request is done.
+    _beat(client, band, version="0.5.0", charging=False)
+    device = client.get("/wearable-devices", headers=staff).json()["results"][0]
+    assert device["update_requested_at"] is None and device["update_available"] is None
+    assert client.post(f"/wearable-devices/{band['device_id']}/update-now", headers=staff).status_code == 409

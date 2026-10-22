@@ -102,6 +102,8 @@ class AuditEventType(str, enum.Enum):
     WEARABLE_DEVICE_REVOKED = "WEARABLE_DEVICE_REVOKED"
     # A band reported different firmware than before (an update installed).
     WEARABLE_FIRMWARE_CHANGED = "WEARABLE_FIRMWARE_CHANGED"
+    # Staff let a band update off its charger ("Update now").
+    WEARABLE_UPDATE_REQUESTED = "WEARABLE_UPDATE_REQUESTED"
     # Assignment events ARE patient-scoped, so they appear on the patient's
     # activity timeline. UNASSIGNED is recorded with actor_type SYSTEM when the
     # discharge cascade ended it, and CLINICIAN when staff did it deliberately.

@@ -87,6 +87,10 @@ class WearableDevice(Base):
     # On its charger, as of the last heartbeat. A charging band is off the
     # wrist and has paused detection: its patient is NOT being monitored.
     charging: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Staff pressed "Update now" (Bands page): this band may install the
+    # published firmware on battery, outside its charger. Cleared when it
+    # reports the new version. See app/wearables/firmware.py.
+    update_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)

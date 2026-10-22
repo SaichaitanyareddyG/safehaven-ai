@@ -136,7 +136,9 @@ def _new_enrollment_code() -> str:
     return "".join(secrets.choice(_ENROLLMENT_ALPHABET) for _ in range(_ENROLLMENT_LENGTH))
 
 
-def to_read(device: WearableDevice, assignment: DeviceAssignment | None = None) -> WearableDeviceRead:
+def to_read(
+    device: WearableDevice, assignment: DeviceAssignment | None = None, newer: str | None = None
+) -> WearableDeviceRead:
     """`online` is only meaningful for an assigned device: an unassigned one
     sitting in a drawer is idle, not offline, and flagging it would fill the
     fleet view with false problems."""
@@ -153,6 +155,8 @@ def to_read(device: WearableDevice, assignment: DeviceAssignment | None = None) 
         enrolled=device.credential_hash is not None,
         online=assignment is not None and not device_is_offline(device, assignment),
         assigned=assignment is not None,
+        update_available=newer,
+        update_requested_at=device.update_requested_at,
     )
 
 
@@ -1256,6 +1260,7 @@ def record_heartbeat(
             entity_id=device.id,
             event_metadata={"from": device.firmware_version, "to": payload.firmware_version},
         )
+        device.update_requested_at = None  # done
     device.firmware_version = payload.firmware_version
     device.charging = payload.charging
 

@@ -13,7 +13,7 @@ carry the ward Wi-Fi settings.
 
 import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Boolean, DateTime, Integer, LargeBinary, String, Text
 from sqlalchemy.dialects.postgresql import UUID
@@ -53,14 +53,17 @@ def _version_key(version: str | None) -> tuple[int, ...] | None:
     return tuple(int(p) for p in parts)
 
 
-def update_offer(db: Session, running_version: str | None, charging: bool) -> FirmwareRelease | None:
-    """The release this band should install now, if any: the current one is
-    NEWER than what the band runs, and the band is on its charger (not
-    monitoring). Never a downgrade: a band flashed by cable with a newer
-    build keeps it. A band reporting a version that is not plain numbers
-    (an old or bench build) is offered the release."""
-    if not charging:
-        return None
+# Off the charger a band needs at least this much battery to update.
+MIN_BATTERY_FOR_UPDATE = 30
+# How long an "Update now" request stays good.
+UPDATE_REQUEST_TTL = timedelta(hours=2)
+
+
+def newer_release(db: Session, running_version: str | None) -> FirmwareRelease | None:
+    """The published release if it is NEWER than what the band runs. Never a
+    downgrade: a band flashed by cable with a newer build keeps it. A band
+    reporting a version that is not plain numbers (an old or bench build) is
+    offered the release."""
     release = current_release(db)
     if release is None or release.version == running_version:
         return None
@@ -70,6 +73,34 @@ def update_offer(db: Session, running_version: str | None, charging: bool) -> Fi
     if running is not None and newest <= running:
         return None
     return release
+
+
+def update_offer(
+    db: Session,
+    running_version: str | None,
+    charging: bool,
+    *,
+    assigned: bool = True,
+    battery_percent: int | None = None,
+    update_requested_at: datetime | None = None,
+) -> tuple[FirmwareRelease, bool] | None:
+    """(release, allowed on battery) for this check-in, or None.
+
+    On the charger a band is not monitoring: any newer release is offered.
+    On battery only with 30%+ charge, and only if the band is not on a
+    patient, or staff pressed "Update now" for it: while it downloads its
+    alerts can be delayed by a few minutes, and it restarts once."""
+    release = newer_release(db, running_version)
+    if release is None:
+        return None
+    if charging:
+        return release, False
+    if battery_percent is None or battery_percent < MIN_BATTERY_FOR_UPDATE:
+        return None
+    requested = update_requested_at is not None and update_requested_at > datetime.now(timezone.utc) - UPDATE_REQUEST_TTL
+    if not assigned or requested:
+        return release, True
+    return None
 
 
 def publish(db: Session, version: str, image: bytes, notes: str | None = None) -> FirmwareRelease:

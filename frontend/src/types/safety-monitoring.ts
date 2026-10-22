@@ -78,6 +78,10 @@ export interface WearableDevice {
   /** Derived: currently monitoring a patient. `online` cannot distinguish
    *  "free" from "assigned but silent", so this is separate. */
   assigned: boolean
+  /** A newer published firmware this band has not installed yet. */
+  update_available?: string | null
+  /** Staff pressed "Update now": it may update off its charger (2 hours). */
+  update_requested_at?: string | null
 }
 
 export interface WearableDeviceListResponse {

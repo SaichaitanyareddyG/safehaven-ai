@@ -46,6 +46,10 @@ class WearableDeviceRead(BaseModel):
     # dialog would offer devices that are already monitoring someone else, and
     # the nurse would only find out from a 409.
     assigned: bool
+    # A newer published firmware this band has not installed yet, and whether
+    # staff asked for it to update now (off the charger).
+    update_available: str | None = None
+    update_requested_at: datetime | None = None
 
 
 class WearableDeviceListResponse(BaseModel):
@@ -359,6 +363,9 @@ class FirmwareUpdateView(BaseModel):
     sha256: str
     # GET with the device credential.
     path: str
+    # True: install now even though the band is not on its charger (it is not
+    # on a patient, or staff pressed "Update now").
+    allow_on_battery: bool = False
 
 
 class PairingStartRequest(BaseModel):

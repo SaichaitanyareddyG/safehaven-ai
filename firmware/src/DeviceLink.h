@@ -665,7 +665,7 @@ class DeviceLink {
     // Set BEFORE this check-in counts as answered: on the charger the main
     // loop rests the radio the moment it sees an answer, which cut off the
     // download that follows (seen on the band as HTTP -1).
-    otaBusy_ = !doc["firmware_update"].isNull() && h.charging && !restartPending_;
+    otaBusy_ = !doc["firmware_update"].isNull() && updateAllowedNow(doc["firmware_update"], h) && !restartPending_;
     hbAnswered_ = hbAnswered_ + 1;
     // Server time at the midpoint of the round trip.
     const uint64_t serverMs = doc["server_time_ms"] | (uint64_t)0;
@@ -711,16 +711,24 @@ class DeviceLink {
       vTaskDelay(pdMS_TO_TICKS(300));
       ESP.restart();
     }
-    // Offered only while the band is on its charger (backend rule), and
-    // checked again here: never install on a band that is monitoring.
+    // On the charger; or on battery when the backend says so (the band is on
+    // no patient, or staff pressed "Update now") and there is charge to spare.
+    // Checked here too: the band never relies on the server alone for this.
     JsonVariantConst fw = doc["firmware_update"];
-    if (!fw.isNull() && h.charging) {
-      installUpdate(fw["version"] | "", fw["size"] | (uint32_t)0, fw["sha256"] | "", fw["path"] | "");
+    if (!fw.isNull() && updateAllowedNow(fw, h)) {
+      installUpdate(fw["version"] | "", fw["size"] | (uint32_t)0, fw["sha256"] | "", fw["path"] | "", !h.charging);
     }
     otaBusy_ = false;  // installed and restarting, or given up: either way, done
   }
 
   // ── firmware update over Wi-Fi ─────────────────────────────────────────────
+  static constexpr int kMinBatteryForUpdate = 30;
+
+  static bool updateAllowedNow(JsonVariantConst fw, const Health& h) {
+    if (h.charging) return true;
+    return (fw["allow_on_battery"] | false) && h.batteryPct >= kMinBatteryForUpdate;
+  }
+
   // The first answered heartbeat proves this firmware does its job: keep it.
   void confirmRunningFirmware() {
     if (fwConfirmed_) return;
@@ -737,7 +745,9 @@ class DeviceLink {
   /// Download into the spare app slot with the device credential, check the
   /// SHA-256 against the backend's, then restart into it (now, or the next
   /// time the band is on its charger).
-  void installUpdate(const char* version, uint32_t size, const char* sha256Hex, const char* path) {
+  void installUpdate(const char* version, uint32_t size, const char* sha256Hex, const char* path,
+                     bool onBattery = false) {
+    onBatteryUpdate_ = onBattery;
     if (!version[0] || !path[0] || strlen(sha256Hex) != 64 || size == 0) return;
     if (!strcmp(version, fw_) || restartPending_) return;
     if (!strcmp(version, otaBad_)) return;  // failed on this band before (rolled back)
@@ -915,9 +925,10 @@ class DeviceLink {
     xSemaphoreTake(lock_, portMAX_DELAY);
     now = health_;
     xSemaphoreGive(lock_);
-    if (!now.charging) {
+    if (!now.charging && !onBatteryUpdate_) {
       // Unplugged during the download: never restart a band that may be on a
       // wrist. The new firmware starts the next time it is on the charger.
+      // (Unless this update was allowed on battery: then restart now.)
       restartPending_ = true;
       Serial.printf("[OTA] %s installed - restarts next time the band is on the charger\r\n", version);
       return OtaStep::DONE;
@@ -1102,6 +1113,7 @@ class DeviceLink {
   bool otaTried_ = false;
   bool restartPending_ = false;
   volatile bool otaBusy_ = false;
+  bool onBatteryUpdate_ = false;
   uint8_t hbFailStreak_ = 0;
   char otaBad_[24] = "";
   uint32_t lastOtaTryMs_ = 0;
