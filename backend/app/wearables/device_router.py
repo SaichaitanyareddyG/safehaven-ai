@@ -8,6 +8,7 @@ returns patient data: a device never learns who it is monitoring
 """
 
 import base64
+import re
 import time
 import uuid
 from urllib.parse import quote
@@ -196,8 +197,11 @@ def heartbeat(
     )
 
 
+_RANGE = re.compile(r"^bytes=(\d+)-(\d*)$")
+
+
 @router.get("/firmware/{release_id}")
-@limiter.limit("6/hour")
+@limiter.limit("120/hour")
 def download_firmware(
     request: Request,
     release_id: uuid.UUID,
@@ -205,11 +209,29 @@ def download_firmware(
     device: Annotated[WearableDevice, Depends(get_current_device)],
 ) -> Response:
     """The firmware image, for an enrolled band only (it carries ward Wi-Fi
-    settings, so it is never public)."""
+    settings, so it is never public).
+
+    Honours "Range: bytes=a-b": the band fetches the image in short pieces.
+    One 1.5 MB response took the band 30-50 s to take in (it writes flash as
+    it reads) and the hosting proxy reset such long transfers part-way."""
     release = db.get(firmware.FirmwareRelease, release_id)
     if release is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such firmware")
-    return Response(content=release.image, media_type="application/octet-stream")
+    image = release.image
+    wanted = request.headers.get("range")
+    if wanted is None:
+        return Response(content=image, media_type="application/octet-stream", headers={"Accept-Ranges": "bytes"})
+    match = _RANGE.match(wanted.strip())
+    start = int(match.group(1)) if match else -1
+    end = min(int(match.group(2)), len(image) - 1) if match and match.group(2) else len(image) - 1
+    if not match or start >= len(image) or start > end:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{len(image)}"})
+    return Response(
+        content=image[start : end + 1],
+        status_code=206,
+        media_type="application/octet-stream",
+        headers={"Content-Range": f"bytes {start}-{end}/{len(image)}", "Accept-Ranges": "bytes"},
+    )
 
 
 @router.post("/events", response_model=SensorEventAccepted)

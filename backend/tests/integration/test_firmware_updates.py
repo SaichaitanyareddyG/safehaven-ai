@@ -82,3 +82,16 @@ def test_never_offers_an_older_version(client, band, db_session):
     assert _beat(client, band, version="0.5.10")["firmware_update"] is None  # numeric, not text, order
     with pytest.raises(ValueError):
         publish(db_session, "0.6.0-beta", IMAGE)
+
+
+def test_download_in_pieces(client, band, db_session):
+    image = bytes([0xE9]) + bytes(range(256)) * 40
+    release = publish(db_session, "0.6.0", image)
+    path = f"/device-api/firmware/{release.id}"
+    first = client.get(path, headers={**band, "Range": "bytes=0-1023"})
+    assert first.status_code == 206 and first.content == image[:1024]
+    assert first.headers["content-range"] == f"bytes 0-1023/{len(image)}"
+    rest = client.get(path, headers={**band, "Range": "bytes=1024-"})
+    assert rest.status_code == 206 and first.content + rest.content == image
+    beyond = client.get(path, headers={**band, "Range": f"bytes={len(image) + 5}-"})
+    assert beyond.status_code == 416
