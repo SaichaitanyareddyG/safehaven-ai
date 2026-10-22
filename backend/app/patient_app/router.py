@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 from app.appointments import service as appointment_service
 from app.appointments.schemas import AppointmentListResponse
 from app.auth.dependencies import get_current_user
+from app.reports import service as report_service
+from app.reports.router import file_response as report_file_response
+from app.reports.schemas import ReportListResponse
 from app.auth.provider import AuthenticatedUser
 from app.core.db import get_db
 from app.core.rate_limit import limiter
@@ -276,6 +279,31 @@ def my_appointments(
 ) -> AppointmentListResponse:
     """Booked appointments, soonest first; cancelled ones are left out."""
     return AppointmentListResponse(results=appointment_service.list_appointments(db, patient.id, include_cancelled=False))
+
+
+@router.get("/me/reports", response_model=ReportListResponse)
+def my_reports(
+    patient: Annotated[Patient, Depends(get_signed_in_patient)], db: Annotated[Session, Depends(get_db)]
+) -> ReportListResponse:
+    """Only reports staff chose to share."""
+    return ReportListResponse(results=report_service.list_reports(db, patient.id, shared_only=True))
+
+
+@router.get("/me/reports/{report_id}/file")
+def open_my_report(
+    report_id: uuid.UUID,
+    session: Annotated[PatientSession, Depends(get_patient_session)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    try:
+        report = report_service.get_report(db, report_id, with_data=True)
+    except report_service.ReportNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found") from exc
+    # Same answer for "not yours" and "not shared": nothing to learn by guessing ids.
+    if report.patient_id != session.patient.id or not report.shared_with_patient:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+    report_service.record_view(db, report, viewer_role=session.account.role)
+    return report_file_response(report)
 
 
 @router.get("/me/visits", response_model=MyVisitsResponse)

@@ -218,6 +218,18 @@ export function auditEventDescription(event: AuditEvent): string {
       return 'Appointment changed'
     case 'APPOINTMENT_CANCELLED':
       return 'Appointment cancelled'
+    case 'REPORT_UPLOADED':
+      return 'Report uploaded'
+    case 'REPORT_VIEWED':
+      return event.actor_type === 'PATIENT' ? 'Report opened in the patient app' : 'Report opened by staff'
+    case 'REPORT_SHARED':
+      return 'Report shared with the patient'
+    case 'REPORT_UNSHARED':
+      return 'Report hidden from the patient'
+    case 'REPORT_UPDATED':
+      return 'Report details changed'
+    case 'REPORT_REMOVED':
+      return 'Report removed'
     case 'INSTRUCTION_CREATED':
       return 'Care instruction created'
     case 'INSTRUCTION_ANALYSIS_STARTED':

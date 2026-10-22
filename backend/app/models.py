@@ -40,3 +40,4 @@ from app.patient_app.models import (  # noqa: F401
 )
 from app.appointments.models import Appointment, AppointmentReminderSent  # noqa: F401
 from app.wearables.firmware import FirmwareRelease  # noqa: F401
+from app.reports.models import PatientReport  # noqa: F401

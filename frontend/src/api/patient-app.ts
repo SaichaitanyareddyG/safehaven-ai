@@ -2,6 +2,7 @@ import { ApiError, apiRequest } from '@/lib/api-client'
 import { getPatientToken } from '@/lib/auth-storage'
 import type { Appointment } from '@/types/appointments'
 import type { PatientCarePlanResponse } from '@/types/patient-access'
+import type { PatientReport } from '@/types/reports'
 import type { ChatMessageListResponse, ChatSendResponse } from '@/types/patient-chat'
 import type {
   AdherenceResponse,
@@ -87,4 +88,8 @@ export async function getMyAudio(text: string): Promise<Blob> {
 
 export function getMyAppointments(): Promise<{ results: Appointment[] }> {
   return apiRequest<{ results: Appointment[] }>('/patient-app/me/appointments', { asPatient: true })
+}
+
+export function getMyReports(): Promise<{ results: PatientReport[] }> {
+  return apiRequest<{ results: PatientReport[] }>('/patient-app/me/reports', { asPatient: true })
 }

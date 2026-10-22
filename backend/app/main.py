@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.allergies.router import router as allergies_router
 from app.appointments.router import router as appointments_router
+from app.reports.router import router as reports_router
 from app.audit.router import router as audit_router
 from app.auth.admin_router import router as admin_users_router
 from app.auth.router import router as auth_router
@@ -115,6 +116,7 @@ app.include_router(allergies_router)
 app.include_router(patient_chat_router)
 app.include_router(encounters_router)
 app.include_router(appointments_router)
+app.include_router(reports_router)
 app.include_router(medication_verification_router)
 app.include_router(wearables_router)
 # Separate router, separate path prefix, separate auth dependency: a device

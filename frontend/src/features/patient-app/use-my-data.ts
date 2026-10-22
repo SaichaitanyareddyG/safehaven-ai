@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { useEffect } from 'react'
 
-import { getMyAppointments, getMyCarePlan, getMyDoses, getMyProfile, getMyVisits } from '@/api/patient-app'
+import { getMyAppointments, getMyCarePlan, getMyDoses, getMyProfile, getMyReports, getMyVisits } from '@/api/patient-app'
 import { getPatientToken } from '@/lib/auth-storage'
 import type { PatientCareInstructionView } from '@/types/patient-access'
 import type { Language } from '@/types/patients'
@@ -22,6 +22,10 @@ export function useMyDoses() {
 
 export function useMyAppointments() {
   return useQuery({ queryKey: ['my', 'appointments'], queryFn: getMyAppointments, enabled: !!getPatientToken() })
+}
+
+export function useMyReports() {
+  return useQuery({ queryKey: ['my', 'reports'], queryFn: getMyReports, enabled: !!getPatientToken() })
 }
 
 export function useMyVisits() {

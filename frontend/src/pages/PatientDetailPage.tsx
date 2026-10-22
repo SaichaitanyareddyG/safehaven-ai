@@ -26,6 +26,7 @@ import { useMissedDoses } from '@/features/patients/use-missed-doses'
 import { PatientAppPanel } from '@/features/patients/PatientAppPanel'
 import { AdministrationHistoryPanel } from '@/features/medication-verification/AdministrationHistoryPanel'
 import { PatientConditionsPanel } from '@/features/patients/PatientConditionsPanel'
+import { ReportsPanel } from '@/features/patients/ReportsPanel'
 import { SafetyEventHistoryPanel } from '@/features/safety-monitoring/SafetyEventHistoryPanel'
 import { WearableDevicePanel } from '@/features/safety-monitoring/WearableDevicePanel'
 import { ApiError } from '@/lib/api-client'
@@ -176,6 +177,9 @@ export function PatientDetailPage() {
           </div>
           <div className="mt-6 border-t pt-4">
             <AppointmentsPanel patientId={patient.id} />
+          </div>
+          <div className="mt-6 border-t pt-4">
+            <ReportsPanel patientId={patient.id} />
           </div>
           <div className="mt-6 border-t pt-4">
             <PatientAppPanel patientId={patient.id} />

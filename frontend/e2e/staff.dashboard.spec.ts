@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { newPatientWithApp, newStaff, signInStaff } from './helpers'
+import { linkPath, newPatientWithApp, newStaff, signInStaff } from './helpers'
 
 test('register a patient with an app invite, English only', async ({ page }) => {
   const staff = await newStaff()
@@ -78,4 +78,40 @@ test('add a caregiver who gets their own sign-in', async ({ page, browser }) => 
   await expect(phone.getByRole('heading', { level: 1 })).toContainText('Priya')
   await expect(phone.getByText("Helping with Maria's care")).toBeVisible()
   await phone.close()
+})
+
+test('upload a report, share it, and the patient sees it', async ({ page, browser }) => {
+  const staff = await newStaff()
+  const patient = await newPatientWithApp(staff.token)
+  await signInStaff(page, staff.token)
+  await page.goto(`/patients/${patient.id}`)
+
+  await page.getByTestId('report-add').click()
+  // A tiny real PNG (the server checks the bytes, not the name).
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  await page.getByTestId('report-file').setInputFiles({ name: 'xray.png', mimeType: 'image/png', buffer: png })
+  await page.fill('#report-title', 'Chest X-ray')
+  await page.getByTestId('report-share').check()
+  await page.getByTestId('report-upload').click()
+  await expect(page.getByTestId('report-row')).toContainText('Shared with patient')
+
+  const phone = await browser.newPage()
+  await phone.goto(linkPath(patient.inviteLink))
+  await expect(phone).toHaveURL(/\/my$/) // signed in
+  await phone.goto('/my/care')
+  await expect(phone.getByTestId('my-report')).toContainText('Chest X-ray')
+  await phone.close()
+})
+
+test('print the care plan', async ({ page }) => {
+  const staff = await newStaff()
+  const patient = await newPatientWithApp(staff.token, ['Take Metoprolol 25 mg orally twice daily with food.'])
+  await signInStaff(page, staff.token)
+  await page.goto(`/patients/${patient.id}`)
+  await page.getByTestId('print-care-plan-link').click()
+  await expect(page.getByTestId('care-plan-document')).toContainText('Metoprolol')
+  await expect(page.getByTestId('care-plan-document')).toContainText('8:00 AM, 8:00 PM')
 })
