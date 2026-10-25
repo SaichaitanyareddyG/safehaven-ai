@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     dashboard_url: str = "http://localhost:5173"
     invite_link_ttl_hours: int = 24
     reset_link_ttl_minutes: int = 60
+    # Encrypts the Wi-Fi passwords bands are given (app/wearables/wifi.py).
+    # A Fernet key (Fernet.generate_key()). Unset: derived from JWT_SECRET_KEY.
+    wifi_secret_key: str | None = None
     # Email active admins when the server or a page hits an unexpected error
     # (app/core/error_alerts.py). Needs RESEND_API_KEY too.
     error_alerts_enabled: bool = True

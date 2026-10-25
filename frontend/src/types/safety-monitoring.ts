@@ -149,3 +149,21 @@ export interface QrResolveResult {
   monitoring_profile: MonitoringProfile
   assigned_at: string
 }
+
+/** A Wi-Fi network the bands know. The password is never sent back. */
+export interface WifiNetwork {
+  id: string
+  label: string
+  ssid: string
+  security: 'PSK' | 'EAP'
+  username: string | null
+  created_at: string
+}
+
+export interface WifiNetworkCreate {
+  label: string
+  ssid: string
+  security: 'PSK' | 'EAP'
+  password: string
+  username?: string | null
+}

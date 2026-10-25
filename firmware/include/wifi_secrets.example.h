@@ -25,3 +25,11 @@
 // Hosted backend (Render / Tailscale Funnel): trust the public roots instead
 // of the development CA in backend_ca.h.
 // #define SH_BACKEND_USE_PUBLIC_ROOTS
+
+// Backup setup hotspot: any band joins a Wi-Fi with this name and password
+// when none of its own networks is in range. Staff turn it on as a phone
+// hotspot in a new place, then add the real Wi-Fi on the dashboard (Bands >
+// Wi-Fi networks) or on the band (TEST screen, hold the front button).
+// Leave the password empty to turn the backup hotspot off.
+#define SH_SETUP_SSID "SafeHaven-Setup"
+#define SH_SETUP_PASSWORD ""

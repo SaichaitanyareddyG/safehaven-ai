@@ -39,6 +39,8 @@
 #include <M5Unified.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <DNSServer.h>
+#include <WebServer.h>
 #include <esp_timer.h>
 #include <esp_ota_ops.h>
 #ifdef SH_LOW_POWER
@@ -78,6 +80,14 @@
 #ifndef SH_BACKEND_URL
 #define SH_BACKEND_URL ""
 #endif
+// Backup setup hotspot (see loadWifiConfig): a phone hotspot staff can turn
+// on anywhere. Off unless wifi_secrets.h gives it a password.
+#ifndef SH_SETUP_SSID
+#define SH_SETUP_SSID "SafeHaven-Setup"
+#endif
+#ifndef SH_SETUP_PASSWORD
+#define SH_SETUP_PASSWORD ""
+#endif
 
 using namespace safehaven;
 using ui::HomeModel;
@@ -85,7 +95,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.7.1";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts
+static const char *FIRMWARE_VERSION = "0.7.2";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -315,40 +325,115 @@ static EventType lastEvent = EventType::NONE;
 static uint64_t lastEventMs = 0;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-// The network: set by staff over USB (`wifi ...`, kept in NVS) or, on the
-// bench, compiled in from wifi_secrets.h. A hospital network is normally
-// WPA2-Enterprise — a login per device (PEAP/MSCHAPv2) — not a shared password.
+// The networks the band knows, best first:
+//   1. set on the band itself: the Wi-Fi setup page or the `wifi` USB command
+//   2. the list admins keep on the dashboard's Bands page (synced at check-in)
+//   3. compiled in from wifi_secrets.h (bench)
+//   4. the backup setup hotspot: staff turn on a phone hotspot with this name
+//      and password (wifi_secrets.h) and any band joins it
+// With more than one, the band scans and joins the strongest it can see; the
+// backup hotspot only when nothing else is in range. A hospital network is
+// normally WPA2-Enterprise — a login per device (PEAP/MSCHAPv2).
+enum class WifiSource : uint8_t { BAND, DASHBOARD, BUILT_IN, SETUP_HOTSPOT };
 struct WifiConfig {
   bool enterprise = false;
-  bool fromNvs = false;
+  WifiSource source = WifiSource::BAND;
   char ssid[33] = "";
   char identity[65] = "";  // outer (anonymous) identity; often the same as the username
   char user[65] = "";
   char pass[65] = "";
 };
-static WifiConfig wifiCfg;
+static const int MAX_WIFI = 2 + kMaxSavedWifi + 1;
+static WifiConfig wifiNets[MAX_WIFI];
+static int wifiNetCount = 0;
+static WifiConfig wifiCfg;          // the one being joined / in use
+static int wifiCurrent = -1;        // its index in wifiNets
+static int wifiLastGood = -1;       // tried first next time, without a scan
+static uint32_t wifiSkip = 0;       // failed since the last success: passed over
+static bool wifiJoining = false, wifiScanning = false;
 
-static void loadWifiConfig() {
-  wifiCfg = WifiConfig{};
-  Preferences p;
-  if (p.begin("wifi", true)) {
-    if (p.isKey("ssid")) {
-      wifiCfg.fromNvs = true;
-      wifiCfg.enterprise = p.getBool("eap", false);
-      p.getString("ssid", wifiCfg.ssid, sizeof(wifiCfg.ssid));
-      p.getString("ident", wifiCfg.identity, sizeof(wifiCfg.identity));
-      p.getString("user", wifiCfg.user, sizeof(wifiCfg.user));
-      p.getString("pass", wifiCfg.pass, sizeof(wifiCfg.pass));
-    }
-    p.end();
-  }
-  if (!wifiCfg.fromNvs && strcmp(SH_WIFI_SSID, "your-2.4GHz-network-name") != 0) {
-    strlcpy(wifiCfg.ssid, SH_WIFI_SSID, sizeof(wifiCfg.ssid));
-    strlcpy(wifiCfg.pass, SH_WIFI_PASSWORD, sizeof(wifiCfg.pass));
+static const char *wifiSourceName(WifiSource s) {
+  switch (s) {
+    case WifiSource::BAND: return "set on the band";
+    case WifiSource::DASHBOARD: return "from the dashboard";
+    case WifiSource::BUILT_IN: return "in wifi_secrets.h";
+    default: return "backup setup hotspot";
   }
 }
 
-static bool wifiConfigured() { return wifiCfg.ssid[0] != 0; }
+static void addWifi(const WifiConfig &w) {
+  if (!w.ssid[0] || wifiNetCount >= MAX_WIFI) return;
+  for (int i = 0; i < wifiNetCount; ++i)
+    if (!strcmp(wifiNets[i].ssid, w.ssid)) return;  // the higher-priority entry wins
+  wifiNets[wifiNetCount++] = w;
+}
+
+static void loadWifiConfig() {
+  char keep[33];
+  strlcpy(keep, wifiCurrent >= 0 ? wifiNets[wifiCurrent].ssid : "", sizeof(keep));
+  char good[33];
+  strlcpy(good, wifiLastGood >= 0 ? wifiNets[wifiLastGood].ssid : "", sizeof(good));
+  memset(wifiNets, 0, sizeof(wifiNets));
+  wifiNetCount = 0;
+  Preferences p;
+  if (p.begin("wifi", true)) {
+    if (p.isKey("ssid")) {
+      WifiConfig w;
+      w.source = WifiSource::BAND;
+      w.enterprise = p.getBool("eap", false);
+      p.getString("ssid", w.ssid, sizeof(w.ssid));
+      p.getString("ident", w.identity, sizeof(w.identity));
+      p.getString("user", w.user, sizeof(w.user));
+      p.getString("pass", w.pass, sizeof(w.pass));
+      addWifi(w);
+    }
+    p.end();
+  }
+  if (p.begin("wifinets", true)) {
+    const int n = min<int>(p.getUChar("n", 0), kMaxSavedWifi);
+    static SavedWifi saved[kMaxSavedWifi];
+    if (n && p.getBytes("list", saved, sizeof(SavedWifi) * n) == sizeof(SavedWifi) * n) {
+      for (int i = 0; i < n; ++i) {
+        WifiConfig w;
+        w.source = WifiSource::DASHBOARD;
+        w.enterprise = saved[i].enterprise;
+        strlcpy(w.ssid, saved[i].ssid, sizeof(w.ssid));
+        strlcpy(w.identity, saved[i].identity, sizeof(w.identity));
+        strlcpy(w.user, saved[i].user, sizeof(w.user));
+        strlcpy(w.pass, saved[i].pass, sizeof(w.pass));
+        addWifi(w);
+      }
+    }
+    memset(saved, 0, sizeof(saved));
+    p.end();
+  }
+  if (strcmp(SH_WIFI_SSID, "your-2.4GHz-network-name") != 0) {
+    WifiConfig w;
+    w.source = WifiSource::BUILT_IN;
+    strlcpy(w.ssid, SH_WIFI_SSID, sizeof(w.ssid));
+    strlcpy(w.pass, SH_WIFI_PASSWORD, sizeof(w.pass));
+    addWifi(w);
+  }
+  if (SH_SETUP_SSID[0] && strlen(SH_SETUP_PASSWORD) >= 8) {
+    WifiConfig w;
+    w.source = WifiSource::SETUP_HOTSPOT;
+    strlcpy(w.ssid, SH_SETUP_SSID, sizeof(w.ssid));
+    strlcpy(w.pass, SH_SETUP_PASSWORD, sizeof(w.pass));
+    addWifi(w);
+  }
+  // Same networks, new positions: keep pointing at the ones in use.
+  wifiCurrent = wifiLastGood = -1;
+  wifiSkip = 0;
+  for (int i = 0; i < wifiNetCount; ++i) {
+    if (keep[0] && !strcmp(wifiNets[i].ssid, keep)) wifiCurrent = i;
+    if (good[0] && !strcmp(wifiNets[i].ssid, good)) wifiLastGood = i;
+  }
+  if (wifiCurrent >= 0) wifiCfg = wifiNets[wifiCurrent];
+  else if (wifiNetCount) wifiCfg = wifiNets[0];
+  else wifiCfg = WifiConfig{};
+}
+
+static bool wifiConfigured() { return wifiNetCount > 0; }
 
 static uint32_t settleLeftS() {
   const uint64_t now = clock_.millis();
@@ -450,8 +535,10 @@ static void screenSleep() {
 }
 
 // ── Wi-Fi ────────────────────────────────────────────────────────────────────
-static void startWifi() {
-  if (!wifiConfigured()) return;
+static void joinWifi(int i) {
+  wifiCurrent = i;
+  wifiCfg = wifiNets[i];
+  wifiJoining = true;
   lastWifiAttemptMs = millis();
   WiFi.mode(WIFI_STA);
   // Deepest modem sleep: the radio wakes only every few beacons (the default
@@ -477,9 +564,59 @@ static void startWifi() {
     esp_wifi_set_config(WIFI_IF_STA, &conf);
   }
   esp_wifi_connect();
-  Serial.printf("WiFi: connecting to %s (%s, set %s)...\r\n", wifiCfg.ssid,
-                wifiCfg.enterprise ? "WPA2-Enterprise" : "password",
-                wifiCfg.fromNvs ? "over USB" : "in wifi_secrets.h");
+  Serial.printf("WiFi: connecting to %s (%s, %s)...\r\n", wifiCfg.ssid,
+                wifiCfg.enterprise ? "WPA2-Enterprise" : "password", wifiSourceName(wifiCfg.source));
+}
+
+/// One network: join it. Several: the last one that worked, straight away
+/// (cheap, and right almost every time); otherwise look around first.
+static void startWifi() {
+  if (!wifiConfigured()) return;
+  lastWifiAttemptMs = millis();
+  if (wifiNetCount == 1) {
+    joinWifi(0);
+    return;
+  }
+  if (wifiLastGood >= 0 && !(wifiSkip & (1u << wifiLastGood))) {
+    joinWifi(wifiLastGood);
+    return;
+  }
+  WiFi.mode(WIFI_STA);
+  // Asynchronous: detection keeps running while the radio looks (~2 s).
+  if (WiFi.scanNetworks(true, false, false, 120) == WIFI_SCAN_FAILED) return;
+  wifiScanning = true;
+  wifiJoining = false;
+}
+
+/// The scan finished: join the strongest known network in range. The backup
+/// setup hotspot only when no other is; networks that just failed are passed
+/// over until every one in range has failed.
+static void pickWifi(int found) {
+  int best = -1, bestRssi = -1000;
+  bool anyKnown = false;
+  for (int pass = 0; pass < 2 && best < 0; ++pass) {
+    for (int k = 0; k < found; ++k) {
+      const String ssid = WiFi.SSID(k);
+      for (int i = 0; i < wifiNetCount; ++i) {
+        if (strcmp(wifiNets[i].ssid, ssid.c_str()) != 0) continue;
+        anyKnown = true;
+        if (pass == 0 && (wifiSkip & (1u << i))) continue;
+        int rssi = WiFi.RSSI(k);
+        if (wifiNets[i].source == WifiSource::SETUP_HOTSPOT) rssi -= 200;
+        if (rssi > bestRssi) {
+          best = i;
+          bestRssi = rssi;
+        }
+      }
+    }
+    if (best < 0 && anyKnown) wifiSkip = 0;  // all tried: start over
+  }
+  WiFi.scanDelete();
+  if (best < 0) {
+    Serial.printf("WiFi: none of the %d known network(s) in range (%d seen)\r\n", wifiNetCount, found);
+    return;
+  }
+  joinWifi(best);
 }
 
 static uint8_t wifiFailures = 0;
@@ -499,6 +636,8 @@ static uint32_t heartbeatsAtWake = 0;
 
 static void radioRest() {
   if (radioResting) return;
+  WiFi.scanDelete();
+  wifiScanning = false;
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   radioResting = true;
@@ -516,8 +655,9 @@ static void radioWake(const char *why) {
 }
 
 static bool chargeQuietWanted();
+static bool wifiSetupActive();
 static void serviceChargeRadio() {
-  if (!wifiConfigured()) return;
+  if (!wifiConfigured() || wifiSetupActive()) return;
   const unsigned long now = millis();
   if (!chargeQuietWanted()) {
     if (radioResting) radioWake("off the charger");
@@ -540,12 +680,22 @@ static void serviceChargeRadio() {
 
 // Non-blocking: detection must keep running while Wi-Fi comes and goes.
 static void serviceWifi() {
-  if (!wifiConfigured() || radioResting) return;
+  if (!wifiConfigured() || radioResting || wifiSetupActive()) return;
+  if (wifiScanning) {
+    const int found = WiFi.scanComplete();
+    if (found == WIFI_SCAN_RUNNING) return;
+    wifiScanning = false;
+    if (found >= 0) pickWifi(found);
+    return;
+  }
   const bool up = WiFi.status() == WL_CONNECTED;
   if (up && !wifiAnnounced) {
     wifiAnnounced = true;
     wifiFailures = 0;
-    Serial.print("WiFi connected, Device IP: ");
+    wifiJoining = false;
+    wifiLastGood = wifiCurrent;
+    wifiSkip = 0;
+    Serial.printf("WiFi connected to %s, Device IP: ", wifiCfg.ssid);
     Serial.print(WiFi.localIP());
     Serial.printf(", RSSI %d dBm\r\n", WiFi.RSSI());
     configTzTime(TIMEZONE, "pool.ntp.org", "time.google.com");
@@ -560,10 +710,301 @@ static void serviceWifi() {
     const unsigned long wait = WIFI_RETRY_MS << (wifiFailures < 2 ? wifiFailures : 2);
     if (millis() - lastWifiAttemptMs > wait) {
       if (wifiFailures < 8) ++wifiFailures;
+      // The network just tried did not take us: try the others first.
+      if (wifiJoining && wifiCurrent >= 0 && wifiNetCount > 1) wifiSkip |= 1u << wifiCurrent;
+      wifiJoining = false;
       WiFi.disconnect();
       startWifi();
     }
   }
+}
+
+// ── Wi-Fi setup from a phone ─────────────────────────────────────────────────
+// For a band that has moved somewhere its networks are not: staff open the
+// TEST screen (hold both buttons), then hold the front button 3 s. The band
+// starts its own hotspot, password shown on its screen (and as a QR the phone
+// camera joins), and the page that opens on the phone lists the networks the
+// band can see. The chosen network is saved only once the band has joined it,
+// so a typo never replaces a working setting. Closes after 10 minutes.
+// Detection keeps running throughout; an alert still takes the screen.
+using ui::SetupStep;
+static void setScreen(Screen s, const char *why);
+static const unsigned long SETUP_MAX_MS = 10UL * 60 * 1000;
+static const unsigned long SETUP_TRY_MS = 20000;
+static const unsigned long SETUP_DONE_MS = 8000;  // "Connected" stays this long
+static bool setupOn = false;
+static SetupStep setupStep = SetupStep::WAITING;
+static unsigned long setupSinceMs = 0, setupStepMs = 0;
+static char setupAp[33] = "", setupPass[10] = "";
+static WifiConfig setupTry;  // the network being tried, saved once it joins
+static DNSServer *setupDns = nullptr;
+static WebServer *setupWeb = nullptr;
+static const int SETUP_SEEN_MAX = 20;
+static char setupSeen[SETUP_SEEN_MAX][33];
+static int8_t setupSeenRssi[SETUP_SEEN_MAX];
+static bool setupSeenOpen[SETUP_SEEN_MAX];
+static int setupSeenN = 0;
+static bool setupScanning = false;
+
+static bool wifiSetupActive() { return setupOn; }
+static void wifiSetupStop(const char *why);
+
+static void setupStepTo(SetupStep s) {
+  setupStep = s;
+  setupStepMs = millis();
+  forceRedraw = true;
+}
+
+static String htmlEscape(const char *in) {
+  String out;
+  for (; *in; ++in) {
+    switch (*in) {
+      case '&': out += "&amp;"; break;
+      case '<': out += "&lt;"; break;
+      case '>': out += "&gt;"; break;
+      case '"': out += "&quot;"; break;
+      case '\'': out += "&#39;"; break;
+      default: out += *in;
+    }
+  }
+  return out;
+}
+
+static void setupScan() {
+  if (setupScanning) return;
+  if (WiFi.scanNetworks(true, false, false, 150) != WIFI_SCAN_FAILED) setupScanning = true;
+}
+
+static void setupTakeScan(int found) {
+  setupSeenN = 0;
+  for (int k = 0; k < found && setupSeenN < SETUP_SEEN_MAX; ++k) {
+    const String ssid = WiFi.SSID(k);
+    if (ssid.isEmpty() || ssid == setupAp) continue;
+    bool dup = false;
+    for (int i = 0; i < setupSeenN; ++i) dup |= ssid == setupSeen[i];
+    if (dup) continue;  // the strongest of several access points comes first
+    strlcpy(setupSeen[setupSeenN], ssid.c_str(), sizeof(setupSeen[0]));
+    setupSeenRssi[setupSeenN] = (int8_t)WiFi.RSSI(k);
+    setupSeenOpen[setupSeenN] = WiFi.encryptionType(k) == WIFI_AUTH_OPEN;
+    ++setupSeenN;
+  }
+  WiFi.scanDelete();
+}
+
+static void setupPage() {
+  const bool trying = setupStep == SetupStep::TRYING;
+  String h;
+  h.reserve(4096);
+  h += F("<!doctype html><html><head><meta charset=utf-8>"
+         "<meta name=viewport content='width=device-width,initial-scale=1'>");
+  if (trying || setupScanning) h += F("<meta http-equiv=refresh content=3>");
+  h += F("<title>SafeHaven band Wi-Fi</title><style>"
+         "body{font-family:system-ui,sans-serif;margin:0;background:#F3F7F8;color:#16252C}"
+         "header{background:#143440;color:#E6F0F3;padding:20px}h1{margin:0;font-size:22px}"
+         "main{padding:16px;max-width:480px;margin:auto}"
+         ".card{background:#fff;border-radius:14px;padding:16px;margin-bottom:14px}"
+         "label.net{display:flex;justify-content:space-between;align-items:center;padding:12px 4px;"
+         "border-bottom:1px solid #E3EBEE;font-size:17px}label.net input{margin-right:10px;transform:scale(1.3)}"
+         "input[type=text],input[type=password]{width:100%;box-sizing:border-box;height:48px;font-size:17px;"
+         "border:1.5px solid #C9D6DB;border-radius:10px;padding:0 12px;margin:6px 0 12px}"
+         "button{width:100%;height:52px;border:0;border-radius:12px;background:#0F6383;color:#fff;font-size:18px;"
+         "font-weight:600}.muted{color:#53656E;font-size:14px}.ok{color:#0B6B4F;font-weight:600}"
+         ".bad{color:#9A4A00;font-weight:600}a{color:#0F6383}</style></head><body><header><h1>Wi-Fi for ");
+  const LinkStatus ls = backendLink.status();
+  h += htmlEscape(ls.deviceCode[0] ? ls.deviceCode : setupAp);
+  h += F("</h1></header><main>");
+  if (trying) {
+    h += F("<div class=card><p>Joining <b>");
+    h += htmlEscape(setupTry.ssid);
+    h += F("</b>&hellip; this takes a few seconds. Your phone may drop off this page for a moment.</p></div>");
+  } else if (setupStep == SetupStep::JOINED) {
+    h += F("<div class=card><p class=ok>Connected to ");
+    h += htmlEscape(setupTry.ssid);
+    h += F(".</p><p>Saved: the band uses this Wi-Fi from now on. Its hotspot closes now; "
+           "you can go back to your usual Wi-Fi.</p></div>");
+  } else if (setupStep == SetupStep::FAILED) {
+    h += F("<div class=card><p class=bad>Could not join ");
+    h += htmlEscape(setupTry.ssid);
+    h += F(".</p><p class=muted>Check the password (capitals matter) and that the network is 2.4 GHz.</p></div>");
+  }
+  if (setupStep != SetupStep::JOINED) {
+    h += F("<form class=card method=post action=/join><p><b>Choose the Wi-Fi</b></p>");
+    if (setupScanning && !setupSeenN) h += F("<p class=muted>Looking for networks&hellip;</p>");
+    for (int i = 0; i < setupSeenN; ++i) {
+      const int r = setupSeenRssi[i];
+      h += F("<label class=net><span><input type=radio name=net value=\"");
+      h += htmlEscape(setupSeen[i]);
+      h += F("\">");
+      h += htmlEscape(setupSeen[i]);
+      h += F("</span><span class=muted>");
+      h += r > -60 ? F("strong") : r > -72 ? F("good") : F("weak");
+      if (setupSeenOpen[i]) h += F(", open");
+      h += F("</span></label>");
+    }
+    h += F("<p class=muted><a href=/scan>Look again</a> &middot; Not listed? 5 GHz networks do not work; "
+           "a hidden one can be typed below.</p>"
+           "<input type=text name=other placeholder='Other network name' autocapitalize=off autocorrect=off>"
+           "<label>Password<input type=password name=pass autocomplete=off></label>"
+           "<details><summary class=muted>Sign-in with a username (WPA2-Enterprise)</summary>"
+           "<input type=text name=user placeholder=Username autocapitalize=off autocorrect=off></details>"
+           "<button>Connect</button></form>");
+  }
+  h += F("<p class=muted>The band keeps checking for falls while you do this.</p></main></body></html>");
+  setupWeb->sendHeader("Cache-Control", "no-store");
+  setupWeb->send(200, "text/html", h);
+}
+
+static void setupRedirect() {
+  setupWeb->sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/", true);
+  setupWeb->send(302, "text/plain", "");
+}
+
+static void setupJoin() {
+  String ssid = setupWeb->arg("other");
+  ssid.trim();
+  if (ssid.isEmpty()) ssid = setupWeb->arg("net");
+  const String pass = setupWeb->arg("pass");
+  String user = setupWeb->arg("user");
+  user.trim();
+  const bool eap = !user.isEmpty();
+  if (ssid.isEmpty() || ssid.length() > 32 || pass.length() > 63 || user.length() > 64 ||
+      (!eap && !pass.isEmpty() && pass.length() < 8) || (eap && pass.isEmpty())) {
+    setupTry = WifiConfig{};
+    strlcpy(setupTry.ssid, ssid.isEmpty() ? "(no network chosen)" : ssid.c_str(), sizeof(setupTry.ssid));
+    setupStepTo(SetupStep::FAILED);
+    setupRedirect();
+    return;
+  }
+  setupTry = WifiConfig{};
+  setupTry.source = WifiSource::BAND;
+  setupTry.enterprise = eap;
+  strlcpy(setupTry.ssid, ssid.c_str(), sizeof(setupTry.ssid));
+  strlcpy(setupTry.user, user.c_str(), sizeof(setupTry.user));
+  strlcpy(setupTry.pass, pass.c_str(), sizeof(setupTry.pass));
+  setupRedirect();  // answer first: joining moves the radio to that network's channel
+  WiFi.disconnect(false);
+  if (eap) {
+    WiFi.begin(setupTry.ssid, WPA2_AUTH_PEAP, setupTry.user, setupTry.user, setupTry.pass, nullptr, nullptr, nullptr,
+               0, nullptr, true);
+  } else {
+    WiFi.begin(setupTry.ssid, setupTry.pass);
+  }
+  setupStepTo(SetupStep::TRYING);
+  Serial.printf("[SETUP] trying %s\r\n", setupTry.ssid);
+}
+
+static void wifiSetupStart(const char *why) {
+  if (setupOn) return;
+  setupOn = true;
+  setupSinceMs = millis();
+  setupStepTo(SetupStep::WAITING);
+  setupSeenN = 0;
+  // The band's own name, so two bands set up side by side are not confused.
+  const LinkStatus ls = backendLink.status();
+  const char *code = ls.deviceCode;
+  if (code[0]) snprintf(setupAp, sizeof(setupAp), "SafeHaven %s", code);
+  else snprintf(setupAp, sizeof(setupAp), "SafeHaven %04X", (unsigned)(ESP.getEfuseMac() >> 32) & 0xFFFF);
+  snprintf(setupPass, sizeof(setupPass), "%08lu", (unsigned long)(esp_random() % 100000000UL));
+  // Anything the normal Wi-Fi code was doing stops here; it resumes after.
+  WiFi.scanDelete();
+  wifiScanning = false;
+  radioResting = false;
+  WiFi.disconnect(false);
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.setSleep(false);
+  WiFi.softAP(setupAp, setupPass, 6, 0, 2);
+  setupDns = new DNSServer();
+  setupDns->start(53, "*", WiFi.softAPIP());  // every name leads to the page: phones open it by themselves
+  setupWeb = new WebServer(80);
+  setupWeb->on("/", HTTP_GET, setupPage);
+  setupWeb->on("/join", HTTP_POST, setupJoin);
+  setupWeb->on("/scan", HTTP_GET, [] {
+    setupScan();
+    setupRedirect();
+  });
+  setupWeb->onNotFound(setupRedirect);
+  setupWeb->begin();
+  setupScan();
+  screenWake("Wi-Fi setup");
+  setScreen(Screen::HOME, "Wi-Fi setup");
+  Serial.printf("[SETUP] Wi-Fi setup on (%s): hotspot \"%s\", password on the band's screen, page %s\r\n", why,
+                setupAp, WiFi.softAPIP().toString().c_str());
+}
+
+static void wifiSetupStop(const char *why) {
+  if (!setupOn) return;
+  setupWeb->stop();
+  delete setupWeb;
+  setupWeb = nullptr;
+  setupDns->stop();
+  delete setupDns;
+  setupDns = nullptr;
+  WiFi.scanDelete();
+  setupScanning = false;
+  WiFi.softAPdisconnect(true);
+  WiFi.disconnect(false);
+  WiFi.mode(WIFI_STA);
+  setupOn = false;
+  memset(setupPass, 0, sizeof(setupPass));
+  memset(&setupTry, 0, sizeof(setupTry));
+  forceRedraw = true;
+  wifiAnnounced = false;
+  wifiFailures = 0;
+  startWifi();  // with the power settings of normal use
+  Serial.printf("[SETUP] Wi-Fi setup off (%s)\r\n", why);
+}
+
+static void serviceWifiSetup() {
+  if (!setupOn) return;
+  setupDns->processNextRequest();
+  setupWeb->handleClient();
+  const unsigned long now = millis();
+  if (setupScanning) {
+    const int found = WiFi.scanComplete();
+    if (found != WIFI_SCAN_RUNNING) {
+      setupScanning = false;
+      if (found >= 0) setupTakeScan(found);
+    }
+  }
+  if (setupStep == SetupStep::WAITING && WiFi.softAPgetStationNum() > 0) setupStepTo(SetupStep::PHONE);
+  if (setupStep == SetupStep::TRYING) {
+    if (WiFi.status() == WL_CONNECTED) {
+      // Joined: now it is worth keeping. Same place the `wifi` command uses.
+      Preferences p;
+      p.begin("wifi", false);
+      p.clear();
+      p.putBool("eap", setupTry.enterprise);
+      p.putString("ssid", setupTry.ssid);
+      if (setupTry.enterprise) p.putString("user", setupTry.user);
+      p.putString("pass", setupTry.pass);
+      p.end();
+      loadWifiConfig();
+      wifiLastGood = 0;  // the band-set network is always first
+      setupStepTo(SetupStep::JOINED);
+      Serial.printf("[SETUP] joined %s - saved\r\n", setupTry.ssid);
+    } else if (now - setupStepMs > SETUP_TRY_MS) {
+      WiFi.disconnect(false);
+      setupStepTo(SetupStep::FAILED);
+      Serial.printf("[SETUP] could not join %s\r\n", setupTry.ssid);
+    }
+  }
+  if (setupStep == SetupStep::JOINED && now - setupStepMs > SETUP_DONE_MS) {
+    wifiSetupStop("joined");
+    backendLink.requestHeartbeat();
+  } else if (now - setupSinceMs > SETUP_MAX_MS) {
+    wifiSetupStop("10 minutes up");
+  }
+}
+
+static void fillWifiSetup(HomeModel &m) {
+  m.view = HomeView::WIFI_SETUP;
+  m.setupStep = setupStep;
+  strlcpy(m.setupAp, setupAp, sizeof(m.setupAp));
+  strlcpy(m.setupPass, setupPass, sizeof(m.setupPass));
+  strlcpy(m.setupNet, setupTry.ssid, sizeof(m.setupNet));
+  snprintf(m.setupQr, sizeof(m.setupQr), "WIFI:T:WPA;S:%s;P:%s;;", setupAp, setupPass);
+  const unsigned long left = SETUP_MAX_MS - min(SETUP_MAX_MS, millis() - setupSinceMs);
+  m.setupLeftS = (uint16_t)(left / 1000);
 }
 
 static uint8_t wifiBars() {
@@ -1315,6 +1756,7 @@ static void buildHome(HomeModel &m) {
 #ifdef SH_TALK
   else if (talkActive()) fillTalk(m);
 #endif
+  else if (setupOn) fillWifiSetup(m);
   else if (!startupDone()) m.view = HomeView::STARTING;
   else if (needsPairing) m.view = HomeView::ADD_BAND;
   else if (m.charging || now < chargingSplashUntilMs) m.view = HomeView::CHARGING;
@@ -1367,8 +1809,7 @@ static void buildTest(ui::TestModel &t) {
 static bool holdsScreenOn(const HomeModel &m) {
   return m.view == HomeView::STARTING || m.view == HomeView::ADD_BAND || m.view == HomeView::GETTING_READY ||
          m.view == HomeView::ALERT || (m.view == HomeView::CHARGING && millis() < chargingSplashUntilMs) ||
-         m.view == HomeView::CHECK ||
-         m.view == HomeView::TALK;
+         m.view == HomeView::CHECK || m.view == HomeView::TALK || m.view == HomeView::WIFI_SETUP;
 }
 
 static void serviceScreen() {
@@ -2018,6 +2459,9 @@ static void fillTalk(HomeModel &m) {
 }
 #endif  // SH_TALK
 
+static const unsigned long SETUP_HOLD_MS = 3000;
+static bool setupHoldFired = false;
+
 static void handleButtons() {
   const unsigned long now = millis();
 
@@ -2052,12 +2496,28 @@ static void handleButtons() {
     if (!comboFired && now - comboSinceMs >= TEST_COMBO_MS) {
       comboFired = true;
       screenWake("staff gesture");
+      if (setupOn) {
+        wifiSetupStop("cancelled on the band");
+        return;
+      }
       setScreen(screen == Screen::HOME ? Screen::TEST : Screen::HOME, "held both buttons");
     }
     return;
   }
   comboSinceMs = 0;
   comboFired = false;
+
+  // Wi-Fi setup (staff): on the TEST screen, hold the front button alone 3 s.
+  if (!M5.BtnA.isPressed()) setupHoldFired = false;
+  if (!setupHoldFired && screen == Screen::TEST && !setupOn && M5.BtnA.pressedFor(SETUP_HOLD_MS) &&
+      !M5.BtnB.isPressed()) {
+    setupHoldFired = true;
+    helpFired = true;  // this same press must not count as a help request on HOME
+    swallowClicks = true;
+    beep(2200, 80);
+    wifiSetupStart("front button held on the TEST screen");
+    return;
+  }
 
   // Wake on the press itself, so the screen feels instant; that press is then spent.
   if (!screenOn && (M5.BtnA.wasPressed() || M5.BtnB.wasPressed())) {
@@ -2359,7 +2819,8 @@ static int splitWords(char *line, char *out[], int max) {
   return n;
 }
 
-/// wifi show | wifi psk <ssid> <password> | wifi eap <ssid> <username> <password> [identity] | wifi clear
+static void wifiSetupStart(const char *why);
+/// wifi show | wifi psk <ssid> <password> | wifi eap <ssid> <username> <password> [identity] | wifi clear | wifi setup
 static void wifiCommand(char *args) {
   char *w[6];
   const int n = splitWords(args, w, 6);
@@ -2387,20 +2848,29 @@ static void wifiCommand(char *args) {
     p.end();
   } else if (strcmp(sub, "show") != 0) {
     Serial.println("wifi show | wifi psk \"<ssid>\" \"<password>\" | "
-                   "wifi eap \"<ssid>\" \"<username>\" \"<password>\" [\"<identity>\"] | wifi clear");
+                   "wifi eap \"<ssid>\" \"<username>\" \"<password>\" [\"<identity>\"] | wifi clear | "
+                   "wifi setup (hotspot + phone page)");
+    return;
+  }
+  if (!strcmp(sub, "setup")) {
+    wifiSetupStart("serial");
     return;
   }
   if (strcmp(sub, "show") != 0) {
+    wifiCurrent = wifiLastGood = -1;  // a new choice: look again
     loadWifiConfig();
     WiFi.disconnect();
     wifiAnnounced = false;
     startWifi();
   }
-  // Never print the password.
-  Serial.printf("[WIFI] %s | %s | %s%s%s | set %s\r\n", wifiCfg.ssid[0] ? wifiCfg.ssid : "(none)",
-                wifiCfg.enterprise ? "WPA2-Enterprise" : "password", wifiCfg.enterprise ? "user " : "",
-                wifiCfg.enterprise ? wifiCfg.user : "", wifiCfg.pass[0] ? " (password stored)" : "",
-                wifiCfg.fromNvs ? "over USB" : "in wifi_secrets.h");
+  // Never print a password.
+  if (!wifiNetCount) Serial.println("[WIFI] no networks");
+  for (int i = 0; i < wifiNetCount; ++i) {
+    const WifiConfig &w = wifiNets[i];
+    Serial.printf("[WIFI] %d. %s | %s%s%s | %s%s\r\n", i + 1, w.ssid, w.enterprise ? "WPA2-Enterprise, user " : "password",
+                  w.enterprise ? w.user : "", w.pass[0] ? " (password stored)" : "", wifiSourceName(w.source),
+                  i == wifiCurrent && WiFi.status() == WL_CONNECTED ? "  <- connected" : "");
+  }
 }
 
 static void runCommand(char *line) {
@@ -2493,7 +2963,7 @@ static void handleSerial() {
 // alert, check or conversation in progress. An unpaired band on the charger
 // keeps its radio on so staff can pair it from the dashboard.
 static bool chargeQuietWanted() {
-  if (!onCharger || benchMode) return false;
+  if (!onCharger || benchMode || setupOn) return false;
   const LinkStatus ls = backendLink.status();
   if (!ls.enrolled || ls.credentialRejected || ls.queueDepth > 0) return false;
   if (alertActive || attentionActive || checkActive) return false;
@@ -2508,6 +2978,15 @@ void loop() {
   pumpSensor();  // first, every pass: detection never waits for the UI
   serviceChargeRadio();
   serviceWifi();
+  serviceWifiSetup();
+  {
+    // A new network list from the dashboard: use it from the next attempt on.
+    static uint32_t wifiGen = 0;
+    if (backendLink.wifiListGeneration() != wifiGen) {
+      wifiGen = backendLink.wifiListGeneration();
+      loadWifiConfig();
+    }
+  }
   serviceAssignment();
   handleButtons();
   handleSerial();

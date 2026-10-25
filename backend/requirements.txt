@@ -27,3 +27,4 @@ edge-tts>=7.2,<8.0
 pytest>=8.3,<9.0
 httpx>=0.27,<0.28
 pywebpush==2.0.3
+cryptography>=42  # Wi-Fi passwords for bands, encrypted at rest (app/wearables/wifi.py)

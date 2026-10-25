@@ -76,6 +76,17 @@ struct TalkResult {
   size_t audioLen;
 };
 
+/// A Wi-Fi network from the dashboard's list, as the band keeps it (NVS
+/// namespace "wifinets": "ver", "n", blob "list").
+struct SavedWifi {
+  uint8_t enterprise;
+  char ssid[33];
+  char identity[65];
+  char user[65];
+  char pass[65];
+};
+static constexpr int kMaxSavedWifi = 8;
+
 struct LinkStatus {
   bool configured = false;      // a backend URL is set
   bool enrolled = false;        // a device secret is stored
@@ -260,6 +271,9 @@ class DeviceLink {
   }
   /// Counts heartbeats the server answered (200): the caller can wait for one.
   uint32_t heartbeatsAnswered() const { return hbAnswered_; }
+  /// Goes up each time a new Wi-Fi list from the dashboard is saved: the
+  /// caller reloads its networks.
+  uint32_t wifiListGeneration() const { return wifiGen_; }
 
   void requestEnroll(const char* code) {
     xSemaphoreTake(lock_, portMAX_DELAY);
@@ -662,6 +676,8 @@ class DeviceLink {
     st_.credentialRejected = false;
     hbFailStreak_ = 0;
     rememberCodeLocked(doc["device_code"] | "");
+    const char* wv = doc["wifi_networks_version"] | "";
+    const bool wifiChanged = wv[0] && strcmp(wv, wifiVer_) != 0;
     // Set BEFORE this check-in counts as answered: on the charger the main
     // loop rests the radio the moment it sees an answer, which cut off the
     // download that follows (seen on the band as HTTP -1).
@@ -706,6 +722,7 @@ class DeviceLink {
     }
 
     confirmRunningFirmware();
+    if (wifiChanged) syncWifiNetworks();
     if (restartPending_ && h.charging) {
       Serial.println("[OTA] back on the charger - restarting into the new firmware");
       vTaskDelay(pdMS_TO_TICKS(300));
@@ -719,6 +736,57 @@ class DeviceLink {
       installUpdate(fw["version"] | "", fw["size"] | (uint32_t)0, fw["sha256"] | "", fw["path"] | "", !h.charging);
     }
     otaBusy_ = false;  // installed and restarting, or given up: either way, done
+  }
+
+  // ── Wi-Fi networks from the dashboard ──────────────────────────────────────
+  /// Fetch the list admins keep on the Bands page and save it. A failure
+  /// leaves the old list and version: the next check-in tries again.
+  void syncWifiNetworks() {
+    HTTPClient http;
+    const String url = String(baseUrl_) + "/device-api/wifi-networks";
+    if (tls_) tlsClient_.stop();
+    if (tls_) {
+      tlsClient_.setCACert(caPem_);
+      if (!http.begin(tlsClient_, url)) return;
+    } else if (!http.begin(url)) {
+      return;
+    }
+    http.setReuse(false);
+    http.setTimeout(8000);
+    http.setConnectTimeout(6000);
+    http.addHeader("Authorization", String("Bearer ") + secret_);
+    const int code = http.GET();
+    const String body = code == 200 ? http.getString() : String();
+    http.end();
+    JsonDocument doc;
+    if (code != 200 || deserializeJson(doc, body)) {
+      Serial.printf("[WIFI] could not fetch the network list (HTTP %d)\r\n", code);
+      return;
+    }
+    static SavedWifi nets[kMaxSavedWifi];
+    memset(nets, 0, sizeof(nets));
+    int n = 0;
+    for (JsonVariantConst v : doc["networks"].as<JsonArrayConst>()) {
+      if (n >= kMaxSavedWifi) break;
+      SavedWifi& w = nets[n];
+      w.enterprise = strcmp(v["security"] | "PSK", "EAP") == 0;
+      strlcpy(w.ssid, v["ssid"] | "", sizeof(w.ssid));
+      strlcpy(w.identity, v["identity"] | "", sizeof(w.identity));
+      strlcpy(w.user, v["username"] | "", sizeof(w.user));
+      strlcpy(w.pass, v["password"] | "", sizeof(w.pass));
+      if (w.ssid[0]) ++n;
+    }
+    Preferences p;
+    if (!p.begin("wifinets", false)) return;
+    p.clear();
+    if (n) p.putBytes("list", nets, sizeof(SavedWifi) * n);
+    p.putUChar("n", (uint8_t)n);
+    strlcpy(wifiVer_, doc["version"] | "", sizeof(wifiVer_));
+    p.putString("ver", wifiVer_);
+    p.end();
+    memset(nets, 0, sizeof(nets));  // passwords out of RAM
+    wifiGen_ = wifiGen_ + 1;
+    Serial.printf("[WIFI] network list from the dashboard saved: %d network(s)\r\n", n);
   }
 
   // ── firmware update over Wi-Fi ─────────────────────────────────────────────
@@ -1149,6 +1217,8 @@ class DeviceLink {
   volatile bool urgent_ = false;
   volatile bool hbNow_ = false;
   volatile uint32_t hbAnswered_ = 0;
+  volatile uint32_t wifiGen_ = 0;
+  char wifiVer_[24] = "";
   uint32_t bootId_ = 0;
   Health health_;
   LinkStatus st_;

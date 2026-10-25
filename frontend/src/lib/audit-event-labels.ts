@@ -292,6 +292,14 @@ export function auditEventDescription(event: AuditEvent): string {
       return `Band update requested${
         typeof event.event_metadata['to'] === 'string' ? ` (to ${String(event.event_metadata['to'])})` : ''
       }`
+    case 'WIFI_NETWORK_ADDED':
+      return `Wi-Fi network added for bands${
+        typeof event.event_metadata['ssid'] === 'string' ? `: ${String(event.event_metadata['ssid'])}` : ''
+      }`
+    case 'WIFI_NETWORK_REMOVED':
+      return `Wi-Fi network removed from bands${
+        typeof event.event_metadata['ssid'] === 'string' ? `: ${String(event.event_metadata['ssid'])}` : ''
+      }`
     case 'WEARABLE_FIRMWARE_CHANGED':
       return `Band software updated${
         typeof event.event_metadata['to'] === 'string' ? ` to ${String(event.event_metadata['to'])}` : ''

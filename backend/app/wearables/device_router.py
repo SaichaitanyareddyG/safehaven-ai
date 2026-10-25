@@ -24,8 +24,10 @@ from app.core.rate_limit import limiter
 from app.wearables import service, talk as band_talk
 from app.wearables.dependencies import get_current_device
 from app.wearables.models import WearableDevice
-from app.wearables import firmware
+from app.wearables import firmware, wifi
 from app.wearables.schemas import (
+    BandWifiNetwork,
+    BandWifiNetworksResponse,
     FirmwareUpdateView,
     TalkReply,
     TalkTextRequest,
@@ -206,6 +208,21 @@ def heartbeat(
             if offer is not None
             else None
         ),
+        wifi_networks_version=wifi.version(db),
+    )
+
+
+@router.get("/wifi-networks", response_model=BandWifiNetworksResponse)
+@limiter.limit("30/hour")
+def wifi_networks(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    device: Annotated[WearableDevice, Depends(get_current_device)],
+) -> BandWifiNetworksResponse:
+    """The Wi-Fi networks admins listed, with passwords, for an enrolled band
+    only. The band keeps them and joins the strongest one it can see."""
+    return BandWifiNetworksResponse(
+        version=wifi.version(db), networks=[BandWifiNetwork(**n) for n in wifi.for_band(db)]
     )
 
 

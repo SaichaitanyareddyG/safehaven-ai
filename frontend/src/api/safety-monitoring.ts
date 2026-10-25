@@ -10,6 +10,8 @@ import type {
   SensorEventListResponse,
   WearableDevice,
   WearableDeviceListResponse,
+  WifiNetwork,
+  WifiNetworkCreate,
 } from '@/types/safety-monitoring'
 
 /**
@@ -85,4 +87,17 @@ export function pairWearable(pairingCode: string, deviceCode: string): Promise<W
 /** Let this band install the new firmware off its charger at its next check-in. */
 export function requestBandUpdateNow(deviceId: string): Promise<WearableDevice> {
   return apiRequest<WearableDevice>(`/wearable-devices/${deviceId}/update-now`, { method: 'POST' })
+}
+
+/** Wi-Fi networks every band joins (admins only). */
+export function listWifiNetworks(): Promise<{ items: WifiNetwork[]; version: string }> {
+  return apiRequest(`/wifi-networks`)
+}
+
+export function addWifiNetwork(body: WifiNetworkCreate): Promise<WifiNetwork> {
+  return apiRequest<WifiNetwork>(`/wifi-networks`, { method: 'POST', body })
+}
+
+export function removeWifiNetwork(id: string): Promise<void> {
+  return apiRequest<void>(`/wifi-networks/${id}`, { method: 'DELETE' })
 }

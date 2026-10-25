@@ -355,6 +355,9 @@ class DeviceHeartbeatResponse(BaseModel):
     # Only while the band is on its charger, and only when a different
     # version is published (app/wearables/firmware.py).
     firmware_update: "FirmwareUpdateView | None" = None
+    # Changes whenever an admin edits the Wi-Fi list; the band fetches
+    # /device-api/wifi-networks when it differs from the one it holds.
+    wifi_networks_version: str | None = None
 
 
 class FirmwareUpdateView(BaseModel):
@@ -422,3 +425,43 @@ class TalkReply(BaseModel):
     audio_format: str = "pcm-u8-16000-mono"
     audio_b64: str | None
     timings_ms: dict[str, int]
+
+
+class WifiNetworkCreate(BaseModel):
+    label: str = Field(default="", max_length=100)
+    ssid: str = Field(min_length=1, max_length=32)
+    security: Literal["PSK", "EAP"] = "PSK"
+    password: str = Field(min_length=1, max_length=128)
+    username: str | None = Field(default=None, max_length=64)
+    identity: str | None = Field(default=None, max_length=64)
+
+
+class WifiNetworkRead(BaseModel):
+    """Never carries the password."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    label: str
+    ssid: str
+    security: str
+    username: str | None
+    created_at: datetime
+
+
+class WifiNetworkListResponse(BaseModel):
+    items: list[WifiNetworkRead]
+    version: str
+
+
+class BandWifiNetwork(BaseModel):
+    ssid: str
+    security: str
+    password: str
+    username: str | None = None
+    identity: str | None = None
+
+
+class BandWifiNetworksResponse(BaseModel):
+    version: str
+    networks: list[BandWifiNetwork]

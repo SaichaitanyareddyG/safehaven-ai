@@ -89,8 +89,10 @@ struct SmoothFont {
 };
 
 enum class HomeView : uint8_t {
-  STARTING, ADD_BAND, NOT_PAIRED, GETTING_READY, MONITORING, LOW_BATTERY, CHARGING, ALERT, CHECK, TALK
+  STARTING, ADD_BAND, NOT_PAIRED, GETTING_READY, MONITORING, LOW_BATTERY, CHARGING, ALERT, CHECK, TALK, WIFI_SETUP
 };
+/// Wi-Fi setup from a phone: where it has got to.
+enum class SetupStep : uint8_t { WAITING, PHONE, TRYING, JOINED, FAILED };
 /// "Talk to SafeHaven": the avatar's face for each moment.
 enum class Mood : uint8_t { READY, LISTENING, THINKING, SPEAKING, CONCERNED, SLEEPY };
 /// Which alert screen. BENCH is used while no backend is linked: it must say
@@ -146,6 +148,13 @@ struct HomeModel {
   // Charging: minutes to full (-1 not known yet), and full
   int16_t chargeMins;
   bool chargeFull;
+  // Wi-Fi setup: the band's own hotspot, its password, the network being tried
+  SetupStep setupStep;
+  char setupAp[33];
+  char setupPass[10];
+  char setupNet[33];
+  char setupQr[96];  // "WIFI:T:WPA;S:...;P:...;;": the phone camera joins
+  uint16_t setupLeftS;
 };
 
 /// What the TEST screen shows. Redrawn at a fixed rate, not on change.
@@ -212,6 +221,7 @@ class StickUi {
       case HomeView::ALERT: alert(m); break;
       case HomeView::CHECK: areYouOk(m); break;
       case HomeView::TALK: talk(m); break;
+      case HomeView::WIFI_SETUP: wifiSetup(m); break;
     }
     if (push) c.pushSprite(0, 0);
   }
@@ -310,7 +320,7 @@ class StickUi {
       snprintf(buf, sizeof(buf), "fall check resting %lus", (unsigned long)t.fallRestS);
       text(bodyBold_, buf, CX, 232, AMBER_TEXT, middle_center);
     } else {
-      text(small_, "Hold both: exit  \xc2\xb7  B: clear", CX, 232, TEXT3, middle_center);
+      text(small_, "Front: Wi-Fi \xc2\xb7 both: exit \xc2\xb7 B: clear", CX, 232, TEXT3, middle_center);
     }
     if (push) c.pushSprite(0, 0);
   }
@@ -637,6 +647,49 @@ class StickUi {
     text(small_, "A new code appears every", CX, 186, TEXT3, middle_center);
     text(small_, "10 minutes", CX, 198, TEXT3, middle_center);
     text(small_, "SAFEHAVEN \xc2\xb7 new band", CX, 228, TEXT3, middle_center);
+  }
+
+  /// Wi-Fi setup (staff): join the band's hotspot from a phone, by the QR or
+  /// by name and password, and pick the network on the page that opens.
+  void wifiSetup(const HomeModel& m) {
+    auto& c = canvas_;
+    barFor(m);
+    text(title_, "Wi-Fi setup", CX, 32, TEXT, middle_center);
+    char buf[48];
+    if (m.setupStep == SetupStep::WAITING || m.setupStep == SetupStep::PHONE) {
+      const int tile = 104, tx = (W - tile) / 2, ty = 44, quiet = 6;
+      c.fillRoundRect(tx, ty, tile, tile, 6, rgb(0xFF, 0xFF, 0xFF));
+      c.qrcode(m.setupQr, tx + quiet, ty + quiet, tile - 2 * quiet, 1, false);
+      if (m.setupStep == SetupStep::PHONE) {
+        text(bodyBold_, "Phone connected", CX, 160, TEAL, middle_center);
+        text(small_, "Pick the Wi-Fi on the", CX, 176, TEXT2, middle_center);
+        text(small_, "page (or 192.168.4.1)", CX, 188, TEXT2, middle_center);
+      } else {
+        text(small_, "Scan with a phone, or join", CX, 158, TEXT2, middle_center);
+        text(bodyBold_, m.setupAp, CX, 172, TEXT, middle_center);
+        snprintf(buf, sizeof(buf), "password %s", m.setupPass);
+        text(bodyBold_, buf, CX, 188, TEAL, middle_center);
+      }
+    } else {
+      c.fillRoundRect(10, 52, 115, 120, 8, SURFACE);
+      const bool ok = m.setupStep == SetupStep::JOINED;
+      const bool bad = m.setupStep == SetupStep::FAILED;
+      text(bodyBold_, ok ? "Connected to" : bad ? "Could not join" : "Joining", CX, 80, ok ? TEAL : bad ? AMBER_TEXT : TEXT2,
+           middle_center);
+      text(bodyBold_, m.setupNet, CX, 100, TEXT, middle_center);
+      if (ok) {
+        text(small_, "Saved. This band uses", CX, 130, TEXT2, middle_center);
+        text(small_, "it from now on.", CX, 142, TEXT2, middle_center);
+      } else if (bad) {
+        text(small_, "Check the password", CX, 130, TEXT2, middle_center);
+        text(small_, "on the phone and retry", CX, 142, TEXT2, middle_center);
+      } else {
+        text(small_, "a few seconds...", CX, 130, TEXT3, middle_center);
+      }
+    }
+    snprintf(buf, sizeof(buf), "closes in %u:%02u", m.setupLeftS / 60, m.setupLeftS % 60);
+    text(small_, buf, CX, 210, TEXT3, middle_center);
+    text(small_, "Hold both: cancel", CX, 228, TEXT3, middle_center);
   }
 
   /// Uncertain fall / possible faint: ask before calling anyone. Amber, not

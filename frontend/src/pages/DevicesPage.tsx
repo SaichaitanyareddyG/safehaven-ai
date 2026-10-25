@@ -21,7 +21,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { WifiNetworksSection } from '@/features/safety-monitoring/WifiNetworksSection'
 import { ApiError } from '@/lib/api-client'
+import { useAuth } from '@/lib/auth-context'
 import type { WearableDevice } from '@/types/safety-monitoring'
 
 const DEVICES_QUERY_KEY = ['wearable-devices']
@@ -42,6 +44,7 @@ export function DevicesPage() {
   })
   const devices = data?.results ?? []
   const [updating, setUpdating] = useState<WearableDevice | null>(null)
+  const { user } = useAuth()
 
   return (
     <AppLayout>
@@ -108,6 +111,8 @@ export function DevicesPage() {
           </TableBody>
         </Table>
       )}
+
+      {user?.role === 'admin' && <WifiNetworksSection />}
 
       <AddDeviceDialog open={adding} onOpenChange={setAdding} />
       <UpdateNowDialog device={updating} onClose={() => setUpdating(null)} />

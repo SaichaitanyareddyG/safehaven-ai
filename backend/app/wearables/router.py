@@ -19,14 +19,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, require_admin
 from app.auth.provider import AuthenticatedUser
 from app.core.db import get_db
 from app.core.rate_limit import limiter
 from app.patients.service import PatientNotFoundError
 from app.audit.models import ActorType, AuditEventType
 from app.audit.service import record_event
-from app.wearables import firmware, service
+from app.wearables import firmware, service, wifi
 from app.wearables.models import AlertStatus, WearableDevice
 from app.wearables.schemas import (
     DeviceAssignmentCreate,
@@ -43,6 +43,9 @@ from app.wearables.schemas import (
     WearableDeviceListResponse,
     WearableDeviceRead,
     WearableDeviceRegistered,
+    WifiNetworkCreate,
+    WifiNetworkListResponse,
+    WifiNetworkRead,
 )
 
 router = APIRouter(tags=["wearable-devices"])
@@ -395,3 +398,63 @@ def pair_device(
             status_code=status.HTTP_409_CONFLICT, detail="A device with that label already exists"
         ) from exc
     return service.to_read(device)
+
+
+# Wi-Fi networks for every band. Admins only: these are the hospital's Wi-Fi
+# passwords. They go to the bands and are never shown again.
+Admin = Annotated[AuthenticatedUser, Depends(require_admin)]
+
+
+@router.get("/wifi-networks", response_model=WifiNetworkListResponse)
+def list_wifi_networks(db: Annotated[Session, Depends(get_db)], admin: Admin) -> WifiNetworkListResponse:
+    return WifiNetworkListResponse(
+        items=[WifiNetworkRead.model_validate(n) for n in wifi.list_networks(db)], version=wifi.version(db)
+    )
+
+
+@router.post("/wifi-networks", response_model=WifiNetworkRead, status_code=status.HTTP_201_CREATED)
+def add_wifi_network(
+    payload: WifiNetworkCreate, db: Annotated[Session, Depends(get_db)], admin: Admin
+) -> WifiNetworkRead:
+    """Every band picks it up at its next check-in (within about 5 minutes)."""
+    try:
+        network = wifi.add_network(
+            db,
+            uuid.UUID(admin.id),
+            label=payload.label,
+            ssid=payload.ssid,
+            security=payload.security,
+            password=payload.password,
+            username=payload.username,
+            identity=payload.identity,
+        )
+    except wifi.WifiError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    record_event(
+        db,
+        event_type=AuditEventType.WIFI_NETWORK_ADDED,
+        actor_type=ActorType.CLINICIAN,
+        actor_id=uuid.UUID(admin.id),
+        entity_type="WifiNetwork",
+        entity_id=network.id,
+        event_metadata={"ssid": network.ssid, "security": network.security},
+    )
+    db.commit()
+    return WifiNetworkRead.model_validate(network)
+
+
+@router.delete("/wifi-networks/{network_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_wifi_network(network_id: uuid.UUID, db: Annotated[Session, Depends(get_db)], admin: Admin) -> None:
+    network = wifi.remove_network(db, network_id)
+    if network is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such network")
+    record_event(
+        db,
+        event_type=AuditEventType.WIFI_NETWORK_REMOVED,
+        actor_type=ActorType.CLINICIAN,
+        actor_id=uuid.UUID(admin.id),
+        entity_type="WifiNetwork",
+        entity_id=network.id,
+        event_metadata={"ssid": network.ssid},
+    )
+    db.commit()
