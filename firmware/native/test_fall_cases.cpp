@@ -204,6 +204,30 @@ int main() {
     const Result r = run(t);
     check(r.events.empty(), "sat down hard (no reorientation) -> nothing", describe(r));
   }
+  // The two false alarms from the real band (2026-10-22), rebuilt from their
+  // reported metrics: a hard knock of the hand, the wrist turned over for a
+  // moment (raw tilt ~160 deg), still for under 2 s, then normal movement.
+  // Both used to alert the nurse at once. A short pause with the arm back
+  // where it was is not a fall; at most the band asks "Are you OK?".
+  for (const bool returns : {true, false}) {
+    for (const float g : {11.2f, 7.7f}) {
+      Noise nz(returns ? 21 : 22);
+      Trace t;
+      add_resting(t, 3000, nz);
+      add_impact(t, 80, nz, g, 0.5f, 1.0f);
+      add_resting(t, 1700, nz, 0.34f, 0.0f, -0.94f);  // turned over, ~160 deg, 1.7 s
+      if (returns) add_resting(t, 300, nz);           // hand back as it was
+      add_normal_movement(t, 6000, nz);
+      add_resting(t, 4000, nz);
+      const Result r = run(t);
+      bool alerted = false;
+      for (const auto& e : r.events) alerted |= e.type == EventType::POSSIBLE_FALL;
+      check(!alerted,
+            std::string("real-band false alarm (") + (g > 10 ? "11.2" : "7.7") + " g, " +
+                (returns ? "wrist back" : "wrist stays turned") + ", 1.7 s still, moves on) -> no nurse alert",
+            describe(r));
+    }
+  }
   {  // Vigorous waving: big peaks, continuous movement, no free-fall.
     Noise nz(9);
     Trace t;

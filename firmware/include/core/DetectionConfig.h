@@ -70,6 +70,17 @@ struct DetectionConfig {
   // A real impact and the arm flipped over, then the wearer kept moving:
   // the shape of every fall both datasets missed (people got up). Asked.
   float    check_flip_deg        = 150.0f;  ///< WEDA 98->100%, UMAFall 95->98% caught
+  // Real-band false alarms 2026-10 (11.2 g / 159 deg / 1.6 s still; 7.7 g /
+  // 167 deg / 1.8 s): the raw tilt above is the max angle of the RAW vector,
+  // dominated by the hit itself. "Rest tilt" compares 0.5 s gravity means
+  // (before the event vs while still), i.e. where the arm actually ended up.
+  // Alert now additionally needs a real rest tilt and a long stillness; else ask.
+  uint32_t confirm_still_ms      = 2500;   ///< WEDA alerts on activities 7 -> 1, UMAFall 2 -> 0
+  float    confirm_rest_tilt_deg = 45.0f;  ///< falls: median 77 deg; activity alerts: 5-49
+  // A check whose arm came to rest back near its start attitude is dropped
+  // (hit table, jump), as is one with >= this many hard peaks around it (clapping).
+  float    check_rest_tilt_deg   = 20.0f;  ///< activity checks WEDA 24 -> 14 %, UMAFall 12 -> 8 %
+  uint8_t  check_active_peaks    = 6;      ///< with the line above; falls caught >= 97 % on both
 
   // ── Worn / not worn ─────────────────────────────────────────────────────
   // Measured on SH-WEAR-001: on a table |a| sd 0.001 g, gyro mean 0.37 dps;

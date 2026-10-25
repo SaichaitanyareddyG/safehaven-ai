@@ -1,8 +1,9 @@
 # Fall detection — measured accuracy
 
 How well `FallDetector` (`include/core/`) separates falls from daily life,
-measured on two public wrist datasets. Measured 2026-10-02; re-run the
-commands below after any change to `DetectionConfig.h`.
+measured on two public wrist datasets. Measured 2026-10-02, re-measured
+2026-10-25 after the real-band false alarms (see "2026-10-25 change" below);
+re-run the commands below after any change to `DetectionConfig.h`.
 
 **Target set for the prototype:** at most 1 false alarm per 10 immediate
 alerts (precision ≥ 90%), raised to ≥ 95%.
@@ -11,9 +12,9 @@ alerts (precision ≥ 90%), raised to ≥ 95%.
 
 | Verdict | When | What happens |
 |---|---|---|
-| **Alert now** (`POSSIBLE_FALL`) | hard impact (≥ 3.5 g, or free-fall then impact), arm flipped ≥ 130°, then still for 1.5 s | Nurse alerted at once |
-| **Ask first** (`FALL_CHECK`) | weaker evidence: softer impact, a faint (fast collapse then still), or a big flip followed by movement | Band asks "Are you OK?" for 30 s; unanswered → nurse alerted (`NO_RESPONSE`) |
-| **Ignore** | small turn, or ≥ 8 hard peaks around the event (jogging, clapping) | Nothing |
+| **Alert now** (`POSSIBLE_FALL`) | hard impact (≥ 3.5 g, or free-fall then impact), arm flipped ≥ 130°, **and the arm came to rest ≥ 45° from where it was (gravity, 0.5 s means) and stayed still ≥ 2.5 s** | Nurse alerted at once |
+| **Ask first** (`FALL_CHECK`) | weaker evidence: softer impact, a faint (fast collapse then still), a big flip followed by movement, or an alert-shaped event that fails the line above | Band asks "Are you OK?" for 30 s; unanswered → nurse alerted (`NO_RESPONSE`) |
+| **Ignore** | small turn; the arm came to rest within 20° of where it started (hit a table, jump); or ≥ 6 hard peaks around the event (clapping, hopping, jogging) | Nothing |
 
 A fall counts as **caught** if it is alerted now or asked first, since the
 nurse is called either way if the wearer does not answer.
@@ -107,3 +108,42 @@ no licence).
 - **Short recordings.** Each trial is 10–15 s, so long-term false-alarm rate
   per patient per day is not measured. That needs a worn-for-a-day session.
 - **Not clinically validated.** This is prototype engineering evidence.
+
+
+## 2026-10-25 change: real-band false alarms
+
+The band alerted the nurse on everyday hand movements twice (2026-10-22):
+11.2 g, raw tilt 159°, still 1.6 s; and 7.7 g, 167°, 1.8 s; no free-fall.
+Two causes, both measured:
+
+- **"Orientation" was measured during the hit.** The raw tilt is the largest
+  angle of the RAW vector after the impact, which at 7–11 g is mostly the
+  arm's own acceleration (and the axes clip at ±8 g). From gravity alone
+  (0.5 s means, before vs. while still) real WEDA falls tilt a median 77°;
+  the activities that alerted tilted 5–49°.
+- **1.5 s of stillness anywhere in 5 s** passes for any pause after putting
+  a hand down.
+
+Change (`DetectionConfig.h`: `confirm_still_ms`, `confirm_rest_tilt_deg`,
+`check_rest_tilt_deg`, `check_active_peaks`): an immediate alert also needs a
+gravity rest tilt ≥ 45° and ≥ 2.5 s still, else the band asks first; a check
+is dropped when the arm came back to rest within 20° of its start or there
+were ≥ 6 hard peaks. Pinned by the "real-band false alarm" cases in
+`native/test_fall_cases.cpp` (they fail on the old rules).
+
+| 2026-10-25 | WEDA-FALL | UMAFall |
+|---|---|---|
+| Falls caught (alert or ask) | 98% (342/350) | 97% (202/208) |
+| — alerted now | 21% (was 44%) | 26% (was 35%) |
+| Daily activities that alerted | **0.2%** (was 1.1%) | **0%** (was 0.4%) |
+| Daily activities asked "Are you OK?" | 14.1% (was 24.4%) | 7.9% (was 12.1%) |
+| Immediate alerts that were real falls | 99% | 100% |
+| Elderly participants' activities that alerted / asked | 0% / 3.8% | — |
+
+Trade-off: about half the falls that used to alert at once now ask first, so
+the nurse is called ~30 s later when the wearer does not answer. Approach and
+thresholds follow the wrist literature (long post-impact confirmation, pose
+from gravity not the raw jolt, cancel on rhythmic motion; e.g. Apple's
+fall-detection patent US10629048B2, Gjoreski 2016 PMC4934226, Quadros 2018
+PMC5982860). Not yet measured: a full day of real wear on our BMI270, and
+real falls of elderly people (no public wrist dataset has them).

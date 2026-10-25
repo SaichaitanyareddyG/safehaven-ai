@@ -151,6 +151,12 @@ class FallDetector {
         const float tilt = angle_between(pre_impact_, s);
         if (tilt > tilt_delta_deg_) tilt_delta_deg_ = tilt;
         if (tilt_delta_deg_ > cfg_.orientation_deg) stage_orientation_ = true;
+        if (still) {
+          // Where the arm came to rest, from gravity alone (0.5 s means).
+          const float rt = angle_between(pre_ref_, mean_accel(hist_.size() - kMeanN));
+          if (rt > rest_tilt_deg_) rest_tilt_deg_ = rt;
+          rested_ = true;
+        }
 
         if (still) {
           if (still_since_ms_ == 0) still_since_ms_ = now;
@@ -207,6 +213,8 @@ class FallDetector {
     settled_ms_ = 0;
     still_since_ms_ = 0;
     longest_still_ms_ = 0;
+    rest_tilt_deg_ = 0.0f;
+    rested_ = false;
   }
 
   void enter_impact(uint64_t now, float mag) {
@@ -218,6 +226,9 @@ class FallDetector {
     // Orientation reference: the oldest sample still in history, i.e. the
     // device's attitude shortly before the impact.
     pre_impact_ = hist_.oldest();
+    pre_ref_ = mean_accel(0);
+    rest_tilt_deg_ = 0.0f;
+    rested_ = false;
     if (stage_freefall_) {
       freefall_duration_ms_ = static_cast<uint32_t>(now - freefall_start_ms_);
     } else {
@@ -230,6 +241,15 @@ class FallDetector {
     settled_ms_ = now;
     still_since_ms_ = 0;
     longest_still_ms_ = 0;
+  }
+
+  /// Mean accelerometer vector of kMeanN samples starting at history index `from`.
+  ImuSample mean_accel(size_t from) const {
+    ImuSample m{};
+    if (hist_.size() < kMeanN) return hist_.size() ? hist_[hist_.size() - 1] : m;
+    for (size_t i = from; i < from + kMeanN; ++i) { m.ax += hist_[i].ax; m.ay += hist_[i].ay; m.az += hist_[i].az; }
+    m.ax /= kMeanN; m.ay /= kMeanN; m.az /= kMeanN;
+    return m;
   }
 
   DetectedEvent finish(uint64_t now) {
@@ -251,6 +271,14 @@ class FallDetector {
       // (set-down shape), a drop followed by movement (toss-and-catch shape),
       // a faint onto a bed, and a hard fall whose stillness looks like a table.
       verdict = EventType::FALL_CHECK;
+    }
+    if (verdict == EventType::POSSIBLE_FALL &&
+        (longest_still_ms_ < cfg_.confirm_still_ms || rest_tilt_deg_ < cfg_.confirm_rest_tilt_deg)) {
+      verdict = EventType::FALL_CHECK;  // brief pause, or arm back where it was: ask first
+    }
+    if (verdict == EventType::FALL_CHECK &&
+        ((rested_ && rest_tilt_deg_ < cfg_.check_rest_tilt_deg) || post >= cfg_.check_active_peaks)) {
+      verdict = EventType::NONE;  // arm came to rest where it started, or still clapping / hopping
     }
     if (verdict == EventType::FALL_CHECK && !stage_inactivity_ &&
         tilt_delta_deg_ < cfg_.check_moving_tilt_deg && peak_g_ < cfg_.check_moving_peak_g) {
@@ -338,6 +366,10 @@ class FallDetector {
   // ~2.5 s of history at 50 Hz: enough for a pre-impact attitude reference.
   RingBuffer<ImuSample, 128> hist_;
   ImuSample pre_impact_ = {};
+  static constexpr size_t kMeanN = 25;  ///< 0.5 s at 50 Hz
+  ImuSample pre_ref_ = {};              ///< gravity before the event (mean of oldest 0.5 s)
+  float rest_tilt_deg_ = 0.0f;          ///< largest gravity tilt while still
+  bool rested_ = false;                 ///< any still moment since the impact
 
   bool stage_freefall_ = false;
   bool stage_impact_ = false;
