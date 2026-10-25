@@ -196,7 +196,7 @@ class DeviceLink {
   /// freshly installed update stays on probation until then (sticks3_main.cpp
   /// rolls it back if it never does).
   bool firmwareConfirmed() const { return fwConfirmed_; }
-  /// An update is downloading or installing: keep the radio on.
+  /// An update (or the Wi-Fi list) is downloading: keep the radio on.
   bool updating() const { return otaBusy_; }
 
   LinkStatus status() {
@@ -681,7 +681,8 @@ class DeviceLink {
     // Set BEFORE this check-in counts as answered: on the charger the main
     // loop rests the radio the moment it sees an answer, which cut off the
     // download that follows (seen on the band as HTTP -1).
-    otaBusy_ = !doc["firmware_update"].isNull() && updateAllowedNow(doc["firmware_update"], h) && !restartPending_;
+    otaBusy_ = (!doc["firmware_update"].isNull() && updateAllowedNow(doc["firmware_update"], h) && !restartPending_) ||
+               wifiChanged;  // the network list is fetched next: same need for the radio
     hbAnswered_ = hbAnswered_ + 1;
     // Server time at the midpoint of the round trip.
     const uint64_t serverMs = doc["server_time_ms"] | (uint64_t)0;
