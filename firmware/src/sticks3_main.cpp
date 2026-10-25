@@ -95,7 +95,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.7.3";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too
+static const char *FIRMWARE_VERSION = "0.7.4";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -1450,6 +1450,128 @@ static void serviceSound() {
   }
 }
 
+// ── black box ────────────────────────────────────────────────────────────────
+// The last 20 s of raw motion stay in RAM. Whenever the fall detector looks at
+// something — an alert, an "Are you OK?", or a near-miss that ended silently —
+// the 20 s around it are saved to flash (the last 16), so a false alarm or a
+// missed fall on a real wrist can be replayed through the detector on the Mac
+// (`bb dump` over USB, then native/ make replay-rec). Raw motion never leaves
+// the band any other way.
+struct __attribute__((packed)) BbSample {
+  uint32_t t_ms;       // band clock
+  int16_t ax, ay, az;  // milli-g
+  int16_t gx, gy, gz;  // 0.1 deg/s
+};
+struct __attribute__((packed)) BbHeader {
+  uint32_t magic;
+  uint64_t epoch_ms;  // wall clock at the save, 0 if unknown
+  uint8_t outcome;    // as lastOutcome: 1 alert, 2 no alert, 3 muted, 4 check
+  uint8_t score;
+  float peak_g, tilt_deg;
+  uint16_t n;
+};
+static const uint32_t BB_MAGIC = 0x5AFEBB01;
+static const int BB_N = 1000;          // 20 s at 50 Hz
+static const int BB_KEEP = 16;
+static const unsigned long BB_AFTER_MS = 4000;  // keep recording this long after the verdict
+static BbSample bbRing[BB_N];
+static int bbHead = 0, bbCount = 0;
+static unsigned long bbSaveAtMs = 0;
+static uint8_t bbOutcome = 0;
+static FallView bbFall;
+
+static int16_t bbClamp(float v) { return v > 32767 ? 32767 : v < -32768 ? -32768 : (int16_t)lroundf(v); }
+
+static void bbRecord(const ImuSample &s) {
+  bbRing[bbHead] = {(uint32_t)s.t_ms, bbClamp(s.ax * 1000), bbClamp(s.ay * 1000), bbClamp(s.az * 1000),
+                    bbClamp(s.gx * 10), bbClamp(s.gy * 10), bbClamp(s.gz * 10)};
+  bbHead = (bbHead + 1) % BB_N;
+  if (bbCount < BB_N) ++bbCount;
+}
+
+static void bbTrigger(uint8_t outcome, const FallView &v) {
+  if (bbSaveAtMs) return;  // one capture already covers this moment
+  bbSaveAtMs = millis() + BB_AFTER_MS;
+  if (!bbSaveAtMs) bbSaveAtMs = 1;
+  bbOutcome = outcome;
+  bbFall = v;
+}
+
+static void serviceBlackBox() {
+  if (!bbSaveAtMs || (long)(millis() - bbSaveAtMs) < 0) return;
+  bbSaveAtMs = 0;
+  if (!fsOk) return;
+  Preferences p;
+  p.begin("bb", false);
+  const uint32_t seq = p.getUInt("seq", 0);
+  p.putUInt("seq", seq + 1);
+  p.end();
+  LittleFS.mkdir("/bb");
+  char path[24];
+  snprintf(path, sizeof(path), "/bb/%02lu.bin", (unsigned long)(seq % BB_KEEP));
+  File f = LittleFS.open(path, FILE_WRITE);
+  if (!f) return;
+  BbHeader h{BB_MAGIC, clock_.epoch_ms(), bbOutcome, (uint8_t)bbFall.score(), bbFall.peak_g, bbFall.tilt_deg,
+             (uint16_t)bbCount};
+  f.write((const uint8_t *)&h, sizeof(h));
+  const int first = (bbHead - bbCount + BB_N) % BB_N;
+  for (int i = 0; i < bbCount; ++i) f.write((const uint8_t *)&bbRing[(first + i) % BB_N], sizeof(BbSample));
+  f.close();
+  Serial.printf("[BB] saved capture %lu (%s)\r\n", (unsigned long)seq, path);
+}
+
+static const char *bbOutcomeName(uint8_t o) {
+  return o == 1 ? "ALERT" : o == 4 ? "CHECK" : o == 3 ? "MUTED" : "no alert";
+}
+
+/// bb | bb dump | bb clear
+static void bbCommand(const char *arg) {
+  if (!strcmp(arg, "clear")) {
+    for (int i = 0; i < BB_KEEP; ++i) {
+      char path[24];
+      snprintf(path, sizeof(path), "/bb/%02d.bin", i);
+      LittleFS.remove(path);
+    }
+    Serial.println("[BB] cleared");
+    return;
+  }
+  const bool dump = !strcmp(arg, "dump");
+  for (int i = 0; i < BB_KEEP; ++i) {
+    char path[24];
+    snprintf(path, sizeof(path), "/bb/%02d.bin", i);
+    File f = LittleFS.open(path, FILE_READ);
+    if (!f) continue;
+    BbHeader h;
+    if (f.read((uint8_t *)&h, sizeof(h)) != sizeof(h) || h.magic != BB_MAGIC) {
+      f.close();
+      continue;
+    }
+    char when[24] = "time unknown";
+    if (h.epoch_ms) {
+      const time_t t = (time_t)(h.epoch_ms / 1000);
+      struct tm tm;
+      localtime_r(&t, &tm);
+      strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", &tm);
+    }
+    Serial.printf("BB %02d %s %s score %u/4 peak %.2f g tilt %.0f deg, %u samples\r\n", i, when,
+                  bbOutcomeName(h.outcome), h.score, h.peak_g, h.tilt_deg, h.n);
+    if (dump) {
+      // Same text as `rec dump`, so native/replay_recording reads it as is.
+      Serial.println("REC MARKERS");
+      Serial.println("REC SAMPLES t_ms,ax_mg,ay_mg,az_mg,gx_ddps,gy_ddps,gz_ddps");
+      BbSample r;
+      uint32_t t0 = 0;
+      for (int k = 0; k < h.n && f.read((uint8_t *)&r, sizeof(r)) == sizeof(r); ++k) {
+        if (k == 0) t0 = r.t_ms;
+        Serial.printf("%lu,%d,%d,%d,%d,%d,%d\n", (unsigned long)(r.t_ms - t0), r.ax, r.ay, r.az, r.gx, r.gy, r.gz);
+      }
+      Serial.println("REC END");
+    }
+    f.close();
+  }
+  Serial.println("BB DONE");
+}
+
 static void logFallOutcome(const char *what) {
   Serial.printf("[FALL] candidate ended: free-fall %s, impact %s, tilt %s (%.0f deg), still %s"
                 " -> score %d/4, peak %.2f g -> %s\r\n",
@@ -1483,6 +1605,7 @@ static void trackFall(const DetectedEvent &ev) {
     lastFall = {m.stage_freefall, m.stage_impact, m.stage_orientation, m.stage_inactivity,
                 m.peak_g, m.tilt_delta_deg};
     lastOutcome = ev.type == EventType::POSSIBLE_FALL ? 1 : 4;
+    bbTrigger(lastOutcome, lastFall);
     logFallOutcome(ev.type == EventType::POSSIBLE_FALL
                        ? "POSSIBLE_FALL"
                        : (m.still_off_body ? "CHECK (asking; stillness looks like a table)" : "CHECK (asking the wearer)"));
@@ -1490,6 +1613,7 @@ static void trackFall(const DetectedEvent &ev) {
     // The final sample's stillness can complete the score after our last
     // copy, so take the detector's verdict: COOLDOWN means it qualified.
     lastFall = candidate;
+    bbTrigger(st == FallDetector::State::COOLDOWN ? 3 : 2, lastFall);
     if (st == FallDetector::State::COOLDOWN) {
       lastOutcome = 3;
       logFallOutcome("qualified, but MUTED (settling after assignment)");
@@ -1655,6 +1779,7 @@ static void pumpSensor() {
   ImuSample s;
   while (imu.read(s)) {
     lastSample = s;
+    bbRecord(s);
 #ifdef SH_BENCH_TOOLS
     recordSample(s);
 #endif
@@ -2884,6 +3009,8 @@ static void runCommand(char *line) {
       backendLink.requestEnroll(code);
       Serial.println("[LINK] enrolment requested - waiting for Wi-Fi/backend...");
     }
+  } else if (!strncmp(line, "bb", 2) && (line[2] == 0 || line[2] == ' ')) {
+    bbCommand(line[2] ? line + 3 : "");
   } else if (!strncmp(line, "wifi", 4) && (line[4] == 0 || line[4] == ' ')) {
     wifiCommand(line + 4);
   } else if (!strcmp(line, "forget")) {
@@ -2979,6 +3106,7 @@ void loop() {
   serviceChargeRadio();
   serviceWifi();
   serviceWifiSetup();
+  serviceBlackBox();
   {
     // A new network list from the dashboard: use it from the next attempt on.
     static uint32_t wifiGen = 0;
