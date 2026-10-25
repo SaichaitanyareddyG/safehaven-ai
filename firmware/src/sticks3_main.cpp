@@ -95,7 +95,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.7.5";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"
+static const char *FIRMWARE_VERSION = "0.7.6";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -351,6 +351,7 @@ static int wifiCurrent = -1;        // its index in wifiNets
 static int wifiLastGood = -1;       // tried first next time, without a scan
 static uint32_t wifiSkip = 0;       // failed since the last success: passed over
 static bool wifiJoining = false, wifiScanning = false;
+static unsigned long wifiScanStartMs = 0;
 
 static const char *wifiSourceName(WifiSource s) {
   switch (s) {
@@ -420,6 +421,11 @@ static void loadWifiConfig() {
     strlcpy(w.ssid, SH_SETUP_SSID, sizeof(w.ssid));
     strlcpy(w.pass, SH_SETUP_PASSWORD, sizeof(w.pass));
     addWifi(w);
+  }
+  // At start-up: the network that worked last time, remembered across restarts.
+  if (!good[0] && p.begin("wifigood", true)) {
+    p.getString("ssid", good, sizeof(good));
+    p.end();
   }
   // Same networks, new positions: keep pointing at the ones in use.
   wifiCurrent = wifiLastGood = -1;
@@ -568,6 +574,23 @@ static void joinWifi(int i) {
                 wifiCfg.enterprise ? "WPA2-Enterprise" : "password", wifiSourceName(wifiCfg.source));
 }
 
+/// No scan to go by: try the known networks in turn (the backup hotspot last,
+/// as it is listed last).
+static void joinNextWifi(const char *why) {
+  static int next = 0;
+  for (int k = 0; k < wifiNetCount; ++k) {
+    const int i = (next + k) % wifiNetCount;
+    if (wifiSkip & (1u << i)) continue;
+    next = i + 1;
+    Serial.printf("WiFi: %s - trying the known networks in turn\r\n", why);
+    joinWifi(i);
+    return;
+  }
+  wifiSkip = 0;
+  next = 0;
+  if (wifiNetCount) joinWifi(0);
+}
+
 /// One network: join it. Several: the last one that worked, straight away
 /// (cheap, and right almost every time); otherwise look around first.
 static void startWifi() {
@@ -583,8 +606,12 @@ static void startWifi() {
   }
   WiFi.mode(WIFI_STA);
   // Asynchronous: detection keeps running while the radio looks (~2 s).
-  if (WiFi.scanNetworks(true, false, false, 120) == WIFI_SCAN_FAILED) return;
+  if (WiFi.scanNetworks(true, false, false, 120) == WIFI_SCAN_FAILED) {
+    joinNextWifi("could not look for networks");
+    return;
+  }
   wifiScanning = true;
+  wifiScanStartMs = millis();
   wifiJoining = false;
 }
 
@@ -683,9 +710,16 @@ static void serviceWifi() {
   if (!wifiConfigured() || radioResting || wifiSetupActive()) return;
   if (wifiScanning) {
     const int found = WiFi.scanComplete();
-    if (found == WIFI_SCAN_RUNNING) return;
+    if (found == WIFI_SCAN_RUNNING) {
+      if (millis() - wifiScanStartMs < 10000) return;
+      WiFi.scanDelete();  // a scan that never ends must not stop the band joining
+      wifiScanning = false;
+      joinNextWifi("the network scan did not finish");
+      return;
+    }
     wifiScanning = false;
     if (found >= 0) pickWifi(found);
+    else joinNextWifi("the network scan failed");
     return;
   }
   const bool up = WiFi.status() == WL_CONNECTED;
@@ -694,6 +728,14 @@ static void serviceWifi() {
     wifiFailures = 0;
     wifiJoining = false;
     wifiLastGood = wifiCurrent;
+    {
+      // Remembered for the next start-up, written only when it changes.
+      Preferences p;
+      if (p.begin("wifigood", false)) {
+        if (p.getString("ssid", "") != wifiCfg.ssid) p.putString("ssid", wifiCfg.ssid);
+        p.end();
+      }
+    }
     wifiSkip = 0;
     Serial.printf("WiFi connected to %s, Device IP: ", wifiCfg.ssid);
     Serial.print(WiFi.localIP());
