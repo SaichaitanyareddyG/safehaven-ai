@@ -147,3 +147,25 @@ from gravity not the raw jolt, cancel on rhythmic motion; e.g. Apple's
 fall-detection patent US10629048B2, Gjoreski 2016 PMC4934226, Quadros 2018
 PMC5982860). Not yet measured: a full day of real wear on our BMI270, and
 real falls of elderly people (no public wrist dataset has them).
+
+## 2026-10-25 (0.7.5): flipping the band over
+
+Flipping the band over in a hand asked "Are you OK?" on the real band. The
+black box (0.7.4, `bb dump`) caught four flips: 2.4-3.9 g, turned 108-179 deg,
+spinning 980-1260 deg/s, then moving on or held under 2 s. Two changes:
+
+- A check where the wearer is moving again at once now needs a hit of 4 g or
+  more; a big turn alone no longer counts.
+- A fast spin (>= 900 deg/s in the second before the peak) with no drop and a
+  peak under 4 g is a hand flip: nothing is asked.
+
+| | WEDA before | WEDA after | UMAFall before | UMAFall after |
+|---|---|---|---|---|
+| falls caught (alert or asked) | 98% | 94% | 97% | 92% |
+| alerted at once | 21% | 21% | 26% | 26% |
+| activities asked "Are you OK?" | 14.1% | 8.7% | 7.9% | 6.0% |
+| activity alerts | 0.2% | 0.2% | 0% | 0% |
+
+The falls no longer caught are ones where the person was moving again at
+once (got up). Real-band captures: all four flips silent; the height drop
+still alerts; hard knocks (5-12 g) still ask.

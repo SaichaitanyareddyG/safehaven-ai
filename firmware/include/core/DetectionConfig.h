@@ -63,10 +63,17 @@ struct DetectionConfig {
   float    busy_peak_g         = 2.0f;
   uint32_t busy_window_ms      = 3000;  ///< how far back peaks count
   uint8_t  active_after_peaks  = 8;     ///< this many or more => not a fall
-  // A check with no stillness after it needs a real turn or a real hit
-  // (WEDA-FALL: removed 24 activity prompts, no falls lost).
-  float    check_moving_tilt_deg = 120.0f;
+  // A check with no stillness after it needs a real hit. Until 0.7.5 a big
+  // turn (>= 120 deg) was enough on its own, and flipping the band over in a
+  // hand asked "Are you OK?" (real band, 2026-10-25: 3.4-3.9 g, 153-179 deg,
+  // moving on). Costs 4-5% of dataset falls, all ones where the person was
+  // moving again at once; immediate alerts are unchanged.
   float    check_moving_peak_g   = 4.0f;
+  // A hand flip: the band spins fast (real band: 980-1260 deg/s in the second
+  // before the peak) with no drop and a modest peak. Nothing is asked.
+  // Datasets: no fall lost at 900 deg/s and 4 g.
+  float    flip_spin_dps         = 900.0f;
+  float    flip_max_peak_g       = 4.0f;
   // A real impact and the arm flipped over, then the wearer kept moving:
   // the shape of every fall both datasets missed (people got up). Asked.
   float    check_flip_deg        = 150.0f;  ///< WEDA 98->100%, UMAFall 95->98% caught

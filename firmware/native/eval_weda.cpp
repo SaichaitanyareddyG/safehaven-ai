@@ -143,7 +143,6 @@ int main(int argc, char** argv) {
   // the other (SPLIT=odd|even keeps only those subject numbers).
   if (const char* e = getenv("CONFIRM_TILT")) cfg.confirm_orientation_deg = std::atof(e);
   if (const char* e = getenv("ACTIVE_PEAKS")) cfg.active_after_peaks = static_cast<uint8_t>(std::atoi(e));
-  if (const char* e = getenv("MOVING_TILT")) cfg.check_moving_tilt_deg = std::atof(e);
   if (const char* e = getenv("MOVING_PEAK")) cfg.check_moving_peak_g = std::atof(e);
   const char* split = getenv("SPLIT");
   int old_n = 0, old_a = 0, old_c = 0;  // elderly participants (U21-U31): daily activities only

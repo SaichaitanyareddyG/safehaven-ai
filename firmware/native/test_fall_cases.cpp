@@ -122,16 +122,20 @@ int main() {
     const Result r = run(t);
     check(only(r, EventType::FALL_CHECK), "hard hit, still, wrist turned only 90 deg -> CHECK, not an alert", describe(r));
   }
-  {  // Moderate fall, arm flips over, then the person tries to get up. Both
-    // datasets' missed falls looked like this (3 g, 120-179 deg, no stillness).
+  // Fall, arm flips over, then the person is moving again at once. Both
+  // datasets' missed falls looked like this (3 g, 120-179 deg, no stillness).
+  // Since 0.7.5 a modest hit is not asked (it is also what flipping the band
+  // over in a hand looks like); a hard one still is.
+  for (const float g : {3.0f, 5.0f}) {
     Noise nz(15);
     Trace t;
     add_resting(t, 3000, nz);
-    add_impact(t, 80, nz, 3.0f, 0.5f, 1.0f);
+    add_impact(t, 80, nz, g, 0.5f, 1.0f);
     add_rotation(t, 600, nz, 0, 165, 1.3f);
     add_normal_movement(t, 6000, nz);
     const Result r = run(t);
-    check(only(r, EventType::FALL_CHECK), "3 g hit, arm flips 165 deg, keeps moving -> CHECK (was missed)", describe(r));
+    if (g < 4.0f) check(r.events.empty(), "3 g hit, arm flips 165 deg, keeps moving -> nothing asked", describe(r));
+    else check(only(r, EventType::FALL_CHECK), "5 g hit, arm flips 165 deg, keeps moving -> CHECK", describe(r));
   }
   {  // Bench pattern A: setting the band down on a table.
     Noise nz(3);
@@ -226,6 +230,23 @@ int main() {
             std::string("real-band false alarm (") + (g > 10 ? "11.2" : "7.7") + " g, " +
                 (returns ? "wrist back" : "wrist stays turned") + ", 1.7 s still, moves on) -> no nurse alert",
             describe(r));
+    }
+  }
+  // Real band 2026-10-25: the band flipped over in a hand asked "Are you
+  // OK?" — 3.4-3.9 g, turned 153-179 deg, then held a moment or moved on.
+  for (const bool held : {false, true}) {
+    for (const float peak : {2.4f, 3.4f, 3.9f}) {
+      Noise nz(held ? 31 : 32);
+      Trace t;
+      add_resting(t, 3000, nz);
+      add_rotation(t, 160, nz, 0.0f, 175.0f, peak);  // ~1100 deg/s
+      if (held) add_resting(t, 1900, nz);
+      add_rhythmic(t, 6000, nz, 0.5f, 1.0f);
+      const Result r = run(t);
+      char name[96];
+      std::snprintf(name, sizeof(name), "hand flip (%.1f g, 175 deg, %s) -> no alert and no check", peak,
+                    held ? "held 1.9 s, then moves" : "keeps moving");
+      check(r.events.empty(), name, describe(r));
     }
   }
   {  // Vigorous waving: big peaks, continuous movement, no free-fall.

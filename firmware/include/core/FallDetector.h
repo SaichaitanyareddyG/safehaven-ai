@@ -116,6 +116,10 @@ class FallDetector {
 
       case State::CAND_IMPACT: {
         if (mag > peak_g_) peak_g_ = mag;
+        {
+          const float g = std::sqrt(s.gx * s.gx + s.gy * s.gy + s.gz * s.gz);
+          if (now - impact_ms_ <= 500 && g > spin_dps_) spin_dps_ = g;
+        }
         if (mag > cfg_.impact_g) stage_impact_ = true;
         const float tilt = angle_between(pre_impact_, s);
         if (tilt > tilt_delta_deg_) tilt_delta_deg_ = tilt;
@@ -229,6 +233,20 @@ class FallDetector {
     pre_ref_ = mean_accel(0);
     rest_tilt_deg_ = 0.0f;
     rested_ = false;
+    // The second before the impact: how light the band got (a drop) and how
+    // fast it spun (a flip of the hand).
+    dip_g_ = mag;
+    spin_dps_ = 0.0f;
+    {
+      const size_t n = hist_.size(), from = n > 50 ? n - 50 : 0;
+      for (size_t i = from; i < n; ++i) {
+        const ImuSample& x = hist_[i];
+        const float m = magnitude(x);
+        if (m < dip_g_) dip_g_ = m;
+        const float g = std::sqrt(x.gx * x.gx + x.gy * x.gy + x.gz * x.gz);
+        if (g > spin_dps_) spin_dps_ = g;
+      }
+    }
     if (stage_freefall_) {
       freefall_duration_ms_ = static_cast<uint32_t>(now - freefall_start_ms_);
     } else {
@@ -280,9 +298,12 @@ class FallDetector {
         ((rested_ && rest_tilt_deg_ < cfg_.check_rest_tilt_deg) || post >= cfg_.check_active_peaks)) {
       verdict = EventType::NONE;  // arm came to rest where it started, or still clapping / hopping
     }
-    if (verdict == EventType::FALL_CHECK && !stage_inactivity_ &&
-        tilt_delta_deg_ < cfg_.check_moving_tilt_deg && peak_g_ < cfg_.check_moving_peak_g) {
-      verdict = EventType::NONE;  // moving on afterwards, small turn, modest hit
+    if (verdict == EventType::FALL_CHECK && !stage_inactivity_ && peak_g_ < cfg_.check_moving_peak_g) {
+      verdict = EventType::NONE;  // moving on afterwards and only a modest hit, however far it turned
+    }
+    if (verdict != EventType::NONE && !stage_freefall_ && spin_dps_ >= cfg_.flip_spin_dps &&
+        peak_g_ < cfg_.flip_max_peak_g) {
+      verdict = EventType::NONE;  // the band flipped over in a hand: a fast spin, no drop, a modest peak
     }
     if (post >= cfg_.active_after_peaks) {
       verdict = EventType::NONE;  // still jogging / clapping: not lying on the floor
@@ -365,6 +386,7 @@ class FallDetector {
 
   // ~2.5 s of history at 50 Hz: enough for a pre-impact attitude reference.
   RingBuffer<ImuSample, 128> hist_;
+  float dip_g_ = 1.0f, spin_dps_ = 0.0f;
   ImuSample pre_impact_ = {};
   static constexpr size_t kMeanN = 25;  ///< 0.5 s at 50 Hz
   ImuSample pre_ref_ = {};              ///< gravity before the event (mean of oldest 0.5 s)
