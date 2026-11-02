@@ -95,7 +95,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.7.8";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up; 0.7.7: detector log on the dashboard; 0.7.8: Wi-Fi setup on the side button, never the help button
+static const char *FIRMWARE_VERSION = "0.7.9";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up; 0.7.7: detector log on the dashboard; 0.7.8: Wi-Fi setup on the side button, never the help button; 0.7.9: help works on every screen, alerts close Wi-Fi setup
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -772,6 +772,7 @@ static void serviceWifi() {
 using ui::SetupStep;
 static void setScreen(Screen s, const char *why);
 static const unsigned long SETUP_MAX_MS = 10UL * 60 * 1000;
+static const unsigned long SETUP_IDLE_MS = 3UL * 60 * 1000;  // no phone joined: a hold by mistake
 static const unsigned long SETUP_TRY_MS = 20000;
 static const unsigned long SETUP_DONE_MS = 8000;  // "Connected" stays this long
 static bool setupOn = false;
@@ -891,7 +892,7 @@ static void setupPage() {
            "<input type=text name=user placeholder=Username autocapitalize=off autocorrect=off></details>"
            "<button>Connect</button></form>");
   }
-  h += F("<p class=muted>The band keeps checking for falls while you do this.</p></main></body></html>");
+  h += F("<p class=muted>The band keeps checking for falls while you do this; an alert closes this hotspot so it can be sent.</p></main></body></html>");
   setupWeb->sendHeader("Cache-Control", "no-store");
   setupWeb->send(200, "text/html", h);
 }
@@ -1035,6 +1036,8 @@ static void serviceWifiSetup() {
     backendLink.requestHeartbeat();
   } else if (now - setupSinceMs > SETUP_MAX_MS) {
     wifiSetupStop("10 minutes up");
+  } else if (setupStep == SetupStep::WAITING && now - setupSinceMs > SETUP_IDLE_MS) {
+    wifiSetupStop("no phone joined in 3 minutes");
   }
 }
 
@@ -1045,7 +1048,8 @@ static void fillWifiSetup(HomeModel &m) {
   strlcpy(m.setupPass, setupPass, sizeof(m.setupPass));
   strlcpy(m.setupNet, setupTry.ssid, sizeof(m.setupNet));
   snprintf(m.setupQr, sizeof(m.setupQr), "WIFI:T:WPA;S:%s;P:%s;;", setupAp, setupPass);
-  const unsigned long left = SETUP_MAX_MS - min(SETUP_MAX_MS, millis() - setupSinceMs);
+  const unsigned long limit = setupStep == SetupStep::WAITING ? SETUP_IDLE_MS : SETUP_MAX_MS;
+  const unsigned long left = limit - min(limit, millis() - setupSinceMs);
   m.setupLeftS = (uint16_t)(left / 1000);
 }
 
@@ -1262,6 +1266,8 @@ static void handleEvent(const DetectedEvent &ev) {
   // must not take over the alarm's screen or its nurse-response tracking.
   const bool keepFallAlarm = attentionActive && ev.type != EventType::POSSIBLE_FALL;
   const bool adopt = alertEvent && !keepFallAlarm;
+  // Setup holds the radio on its own hotspot: close it, so the alert goes now.
+  if (alertEvent && wifiSetupActive()) wifiSetupStop("an alert must be sent");
 
   if (!benchMode) {
     const uint64_t epochMs = backendLink.toEpoch(ev.occurred_at_ms, epoch);
@@ -1285,6 +1291,7 @@ static void handleEvent(const DetectedEvent &ev) {
     alertActive = true;
     alertType = ev.type;
     alertSinceMs = millis();
+    if (assigned) setScreen(Screen::HOME, "alert");  // as a check does
     chimedForAlert = false;
     screenWake("event");
     if (ev.type == EventType::POSSIBLE_FALL) {  // the beacon is for falls only
@@ -2716,10 +2723,12 @@ static bool setupHoldFired = false;
 static void handleButtons() {
   const unsigned long now = millis();
 
-  // Patient help: front button held alone for 2 s. Works with the screen off
-  // too — the press that woke it keeps counting. Never on the staff screen.
+  // Patient help: front button held alone for 2 s, on any screen. Works with
+  // the screen off too — the press that woke it keeps counting. The staff
+  // screen included: a patient who pressed both buttons by mistake lands there
+  // and must still be able to call (2026-11-02).
   if (!M5.BtnA.isPressed()) helpFired = false;
-  if (!helpFired && screen == Screen::HOME && assigned && M5.BtnA.pressedFor(HELP_HOLD_MS) &&
+  if (!helpFired && assigned && M5.BtnA.pressedFor(HELP_HOLD_MS) &&
       !M5.BtnB.isPressed()) {
     helpFired = true;
     swallowClicks = true;  // the release must not also close the alert it opens
@@ -2760,9 +2769,11 @@ static void handleButtons() {
 
   // Wi-Fi setup (staff): hold the SIDE button alone 5 s, on any screen. Never
   // the front button: held, that is the patient's help button (2026-11-02:
-  // staff starting setup from the wrong screen called the nurse).
+  // staff starting setup from the wrong screen called the nurse). Not during
+  // an alert or a check: setup takes the band off Wi-Fi, and the alert waits.
   if (!M5.BtnB.isPressed()) setupHoldFired = false;
-  if (!setupHoldFired && !setupOn && M5.BtnB.pressedFor(SETUP_HOLD_MS) && !M5.BtnA.isPressed()) {
+  if (!setupHoldFired && !setupOn && !alertActive && !checkActive && M5.BtnB.pressedFor(SETUP_HOLD_MS) &&
+      !M5.BtnA.isPressed()) {
     setupHoldFired = true;
     swallowClicks = true;
     screenWake("Wi-Fi setup");
