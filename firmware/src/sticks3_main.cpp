@@ -42,6 +42,7 @@
 #include <DNSServer.h>
 #include <WebServer.h>
 #include <esp_timer.h>
+#include <esp_task_wdt.h>
 #include <esp_ota_ops.h>
 #ifdef SH_LOW_POWER
 #include <esp_pm.h>
@@ -95,7 +96,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.7.9";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up; 0.7.7: detector log on the dashboard; 0.7.8: Wi-Fi setup on the side button, never the help button; 0.7.9: help works on every screen, alerts close Wi-Fi setup
+static const char *FIRMWARE_VERSION = "0.7.10";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up; 0.7.7: detector log on the dashboard; 0.7.8: Wi-Fi setup on the side button, never the help button; 0.7.9: help works on every screen, alerts close Wi-Fi setup; 0.7.10: restarts itself if it ever freezes
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -116,6 +117,7 @@ static const uint16_t WIFI_LISTEN_INTERVAL = 10;  // beacons between radio wake-
 static const unsigned long WIFI_GIVE_UP_STARTUP_MS = 20000;
 static const size_t BATTERY_LOG_MAX_BYTES = 200000;  // ~3 days of minutes
 static const char *BATTERY_LOG_PATH = "/battery.csv";
+static const uint32_t LOOP_WATCHDOG_S = 30;  // a normal pass takes 20 ms
 
 // ── IClock on the ESP32 ──────────────────────────────────────────────────────
 class ArduinoClock : public IClock {
@@ -1156,7 +1158,10 @@ static void dumpBatteryLog() {
   File f = LittleFS.open(BATTERY_LOG_PATH, FILE_READ);
   if (!f) { Serial.println("[LOG] no battery log yet"); return; }
   Serial.println("[LOG] ---- battery.csv begin ----");
-  while (f.available()) Serial.write(f.read());
+  while (f.available()) {
+    Serial.write(f.read());
+    if (f.position() % 4096 == 0) esp_task_wdt_reset();
+  }
   Serial.println("[LOG] ---- battery.csv end ----");
   f.close();
 }
@@ -1686,6 +1691,7 @@ static void bbCommand(const char *arg) {
       localtime_r(&t, &tm);
       strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", &tm);
     }
+    esp_task_wdt_reset();  // a full dump is long
     Serial.printf("BB %02d %s %s score %u/4 peak %.2f g tilt %.0f deg, %u samples\r\n", i, when,
                   bbOutcomeName(h.outcome), h.score, h.peak_g, h.tilt_deg, h.n);
     if (dump) {
@@ -1899,6 +1905,7 @@ static void measureNoise(int seconds) {
       if (g > gmax) gmax = g;
       ++n;
     }
+    esp_task_wdt_reset();  // up to a minute, longer than the watchdog
     delay(5);
   }
   if (n < 2) { Serial.println("[NOISE] no samples"); return; }
@@ -2351,6 +2358,13 @@ void setup() {
   Serial.println("Buttons: any click wakes the screen or closes an alert.  Hold SIDE 5 s: Wi-Fi setup.  Hold BOTH 3 s: staff "
                  "TEST screen.  Screen sleeps after 15 s.");
   Serial.println("Serial: enroll <CODE> | forget | status | d (battery log) | c (clear log)");
+  // A frozen main loop means no fall detection and no help button, with the
+  // screen looking normal (25 Oct: the band went silent at 50 %). If a pass
+  // ever takes LOOP_WATCHDOG_S, restart: alerts waiting to send are on flash.
+  const esp_err_t wdtInit = esp_task_wdt_init(LOOP_WATCHDOG_S, true);
+  const esp_err_t wdtAdd = esp_task_wdt_add(nullptr);
+  Serial.printf("Loop watchdog: %s (%lu s)\r\n", wdtInit == ESP_OK && wdtAdd == ESP_OK ? "on" : "FAILED",
+                (unsigned long)LOOP_WATCHDOG_S);
 }
 
 static void setScreen(Screen s, const char *why) {
@@ -3164,6 +3178,10 @@ static void runCommand(char *line) {
     recCommand(line + 4);
   } else if (!strncmp(line, "noise", 5)) {
     measureNoise(atoi(line + 5));
+  } else if (!strcmp(line, "hang")) {
+    // Bench: prove the loop watchdog restarts a frozen band.
+    Serial.printf("[WDT] freezing the main loop - expect a restart in %lu s\r\n", (unsigned long)LOOP_WATCHDOG_S);
+    for (;;) delay(100);
 #ifdef SH_TALK
   } else if (!strncmp(line, "talk ", 5)) {
     // Bench: a typed question through the band's real talk round trip
@@ -3242,6 +3260,7 @@ static bool chargeQuietWanted() {
 }
 
 void loop() {
+  esp_task_wdt_reset();
   M5.update();
   pumpSensor();  // first, every pass: detection never waits for the UI
   serviceChargeRadio();
