@@ -286,6 +286,12 @@ class DeviceLink {
   /// restarts the band if this grows: on 2026-11-02 the task stopped for 7 min
   /// with Wi-Fi connected, and an alert waited on the band the whole time.
   uint32_t msSinceAlive() const { return millis() - aliveMs_; }
+  /// Where the network task is, for the stall report: "POST /device-api/x: read reply".
+  void describeStage(char* out, size_t n) const {
+    const char* path = stagePath_;
+    const char* stage = stage_;
+    snprintf(out, n, "%s%s%s", path ? path : "", path ? ": " : "", stage ? stage : "?");
+  }
   /// An alert or "Are you OK?" is on the band: no update is installed (the
   /// download blocks this task and the install restarts the band).
   void setBusyWithPatient(bool busy) { busyWithPatient_ = busy; }
@@ -534,6 +540,8 @@ class DeviceLink {
     bool firstHeartbeat = true;
     for (;;) {
       aliveMs_ = millis();
+      stage_ = "idle";
+      stagePath_ = nullptr;
       // A new event is on flash: try to send it now, whatever the backoff.
       if (newEvents_.exchange(false)) nextQueueTry = millis();
 
@@ -590,6 +598,8 @@ class DeviceLink {
 
   // ── HTTP ───────────────────────────────────────────────────────────────────
   int post(const char* path, const String& body, String& out, bool auth = true) {
+    stagePath_ = path;
+    stage_ = "begin";
     HTTPClient http;
     String url = String(baseUrl_) + path;
     if (tls_) {
@@ -612,9 +622,13 @@ class DeviceLink {
     // already-open secure connection (no handshake) or had to open one.
     lastReused_ = tls_ && tlsClient_.connected();
     const uint32_t t0 = millis();
+    stage_ = lastReused_ ? "send (open connection)" : "connect + send";
     const int code = http.POST(body);
+    stage_ = "read reply";
     out = code > 0 ? http.getString() : String();
+    stage_ = "close";
     http.end();
+    stage_ = "done";
     lastPostMs_ = millis() - t0;
     return code;
   }
@@ -1322,6 +1336,8 @@ class DeviceLink {
   uint32_t lastPairingPoll_ = 0;
   volatile bool urgent_ = false;
   volatile uint32_t aliveMs_ = 0;
+  const char* volatile stage_ = "start";  // string literals only
+  const char* volatile stagePath_ = nullptr;
   volatile bool busyWithPatient_ = false;
   volatile bool hbNow_ = false;
   volatile uint32_t hbAnswered_ = 0;

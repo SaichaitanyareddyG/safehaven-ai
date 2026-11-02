@@ -2281,15 +2281,19 @@ static void checkNetworkTask() {
   if (benchMode || checkActive) return;
   const uint32_t stalled = backendLink.msSinceAlive();
   if (stalled < NETWORK_STALL_RESTART_MS) return;
+  char where[64];
+  backendLink.describeStage(where, sizeof(where));
   Preferences p;
   uint32_t count = 0;
   if (p.begin("diag", false)) {
     count = p.getUInt("netstuck", 0) + 1;
     p.putUInt("netstuck", count);
+    p.putString("netstuck_at", where);  // what it was doing: the clue to the cause
+    p.putBool("netstuck_chg", onCharger);
     p.end();
   }
-  Serial.printf("[LINK] !!! network task stuck %lu s - restarting (time no. %lu; queued events are on flash)\r\n",
-                (unsigned long)(stalled / 1000), (unsigned long)count);
+  Serial.printf("[LINK] !!! network task stuck %lu s at \"%s\" - restarting (time no. %lu; queued events are on flash)\r\n",
+                (unsigned long)(stalled / 1000), where, (unsigned long)count);
   Serial.flush();
   delay(200);
   esp_restart();
@@ -2376,7 +2380,10 @@ void setup() {
     Preferences diag;
     if (diag.begin("diag", true)) {
       const uint32_t stuck = diag.getUInt("netstuck", 0);
-      if (stuck) Serial.printf("Network task restarts so far: %lu\r\n", (unsigned long)stuck);
+      if (stuck)
+        Serial.printf("Network task restarts so far: %lu (last stuck at \"%s\", %s)\r\n", (unsigned long)stuck,
+                      diag.getString("netstuck_at", "?").c_str(),
+                      diag.getBool("netstuck_chg", false) ? "on the charger" : "on battery");
       diag.end();
     }
     printOtaState();
