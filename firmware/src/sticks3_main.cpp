@@ -96,7 +96,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.8.2";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up; 0.7.7: detector log on the dashboard; 0.7.8: Wi-Fi setup on the side button, never the help button; 0.7.9: help works on every screen, alerts close Wi-Fi setup; 0.7.10: restarts itself if it ever freezes; 0.8.0: abnormal repetitive movement measured on real convulsions (rhythm-band share, 12 s); 0.8.1: events straight to flash, ids unique per enrolment, no restarts mid-alert; 0.8.2: charges 3-4x faster when no Wi-Fi is in reach
+static const char *FIRMWARE_VERSION = "0.8.3";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up; 0.7.7: detector log on the dashboard; 0.7.8: Wi-Fi setup on the side button, never the help button; 0.7.9: help works on every screen, alerts close Wi-Fi setup; 0.7.10: restarts itself if it ever freezes; 0.8.0: abnormal repetitive movement measured on real convulsions (rhythm-band share, 12 s); 0.8.1: events straight to flash, ids unique per enrolment, no restarts mid-alert; 0.8.2: charges 3-4x faster when no Wi-Fi is in reach; 0.8.3: restarts if the network task ever stalls
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -2271,6 +2271,30 @@ static void printOtaState() {
                 esp_ota_check_rollback_is_possible() ? "yes" : "no");
 }
 
+// The network task stopped (2026-11-02: 7 min, Wi-Fi connected, an alert
+// waiting) while everything else ran: the loop watchdog cannot see that.
+// Restart instead: queued events are on flash and go out right after. Not
+// during "Are you OK?", whose outcome is not on flash yet.
+static const uint32_t NETWORK_STALL_RESTART_MS = 180000;
+
+static void checkNetworkTask() {
+  if (benchMode || checkActive) return;
+  const uint32_t stalled = backendLink.msSinceAlive();
+  if (stalled < NETWORK_STALL_RESTART_MS) return;
+  Preferences p;
+  uint32_t count = 0;
+  if (p.begin("diag", false)) {
+    count = p.getUInt("netstuck", 0) + 1;
+    p.putUInt("netstuck", count);
+    p.end();
+  }
+  Serial.printf("[LINK] !!! network task stuck %lu s - restarting (time no. %lu; queued events are on flash)\r\n",
+                (unsigned long)(stalled / 1000), (unsigned long)count);
+  Serial.flush();
+  delay(200);
+  esp_restart();
+}
+
 static void checkFirmwareProbation(uint32_t now) {
   static bool settled = false;
   if (settled) return;
@@ -2349,6 +2373,12 @@ void setup() {
                       : r == ESP_RST_DEEPSLEEP ? "wake from deep sleep"
                                                : "other";
     Serial.printf("Reset reason: %s (%d)\r\n", why, (int)r);
+    Preferences diag;
+    if (diag.begin("diag", true)) {
+      const uint32_t stuck = diag.getUInt("netstuck", 0);
+      if (stuck) Serial.printf("Network task restarts so far: %lu\r\n", (unsigned long)stuck);
+      diag.end();
+    }
     printOtaState();
   }
   const bool boardOk = M5.getBoard() == m5::board_t::board_M5StickS3;
@@ -3334,6 +3364,7 @@ void loop() {
 
   const unsigned long now = millis();
   checkFirmwareProbation(now);
+  checkNetworkTask();
   // An unacknowledged fall beacon keeps the alert on screen; the calm screen
   // that follows a press times out as before.
   if (alertActive && !attentionActive && now - alertSinceMs > ALERT_SHOW_MS) {

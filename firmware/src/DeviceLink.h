@@ -210,6 +210,7 @@ class DeviceLink {
     xSemaphoreGive(lock_);
 
     // TLS handshakes need more stack than plain HTTP.
+    aliveMs_ = millis();
     xTaskCreatePinnedToCore(&DeviceLink::taskEntry, "device-link", 16384, this, 1, nullptr, 0);
   }
 
@@ -281,6 +282,10 @@ class DeviceLink {
   /// While an alert is on the band, check in every few seconds so a nurse's
   /// acknowledgement shows quickly ("A nurse is coming").
   void setUrgent(bool urgent) { urgent_ = urgent; }
+  /// How long since the network task last came round its loop. The main loop
+  /// restarts the band if this grows: on 2026-11-02 the task stopped for 7 min
+  /// with Wi-Fi connected, and an alert waited on the band the whole time.
+  uint32_t msSinceAlive() const { return millis() - aliveMs_; }
   /// An alert or "Are you OK?" is on the band: no update is installed (the
   /// download blocks this task and the install restarts the band).
   void setBusyWithPatient(bool busy) { busyWithPatient_ = busy; }
@@ -528,6 +533,7 @@ class DeviceLink {
     uint32_t nextQueueTry = millis();
     bool firstHeartbeat = true;
     for (;;) {
+      aliveMs_ = millis();
       // A new event is on flash: try to send it now, whatever the backoff.
       if (newEvents_.exchange(false)) nextQueueTry = millis();
 
@@ -590,6 +596,7 @@ class DeviceLink {
       // Verifies the server's certificate chain against caPem_ (and its dates:
       // before the clock syncs the handshake fails and the request is retried).
       tlsClient_.setCACert(caPem_);
+      tlsClient_.setHandshakeTimeout(15);  // seconds; the library default is 120
       if (!http.begin(tlsClient_, url)) return -1;
     } else if (!http.begin(url)) {
       return -1;
@@ -1032,6 +1039,7 @@ class DeviceLink {
     int pieceFailures = 0;
     const uint32_t started = millis();
     while (done < size) {
+      aliveMs_ = millis();  // a long download is progress, not a stall
       const uint32_t last = (done + kOtaPiece < size ? done + kOtaPiece : size) - 1;
       const PieceResult r = fetchPiece(path, done, last, sha, done);
       if (r == PieceResult::WRITE_FAILED) {
@@ -1183,6 +1191,7 @@ class DeviceLink {
   /// Send everything queued, oldest id first. False if something must be retried later.
   bool drainQueue() {
     for (;;) {
+      aliveMs_ = millis();  // a long queue is progress, one event at a time
       // Oldest first: ids are zero-padded, so the smallest name is the oldest.
       String oldest;
       File dir = LittleFS.open("/q");
@@ -1312,6 +1321,7 @@ class DeviceLink {
   char pollToken_[64] = "";
   uint32_t lastPairingPoll_ = 0;
   volatile bool urgent_ = false;
+  volatile uint32_t aliveMs_ = 0;
   volatile bool busyWithPatient_ = false;
   volatile bool hbNow_ = false;
   volatile uint32_t hbAnswered_ = 0;
