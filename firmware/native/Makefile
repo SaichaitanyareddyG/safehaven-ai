@@ -12,7 +12,7 @@ CXX      ?= c++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Wpedantic -I../include -I.
 BUILD    := build
 
-.PHONY: test replay replay-rec eval-weda eval-umafall eval-movement clean
+.PHONY: test replay replay-rec eval-weda eval-umafall eval-movement eval-seizeit2 clean
 
 test: $(BUILD)/test_detection $(BUILD)/test_fall_cases $(BUILD)/test_scenarios $(BUILD)/test_battery
 	@$(BUILD)/test_detection
@@ -52,6 +52,12 @@ eval-movement: $(BUILD)/eval_movement
 
 $(BUILD)/eval_movement: eval_movement.cpp $(wildcard ../include/core/*.h) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ eval_movement.cpp
+
+eval-seizeit2: $(BUILD)/eval_seizeit2
+	@$(BUILD)/eval_seizeit2 $(SEIZEIT2)
+
+$(BUILD)/eval_seizeit2: eval_seizeit2.cpp $(wildcard ../include/core/*.h) | $(BUILD)
+	$(CXX) $(CXXFLAGS) -o $@ eval_seizeit2.cpp
 
 replay-rec: $(BUILD)/replay_recording
 	@$(BUILD)/replay_recording $(REC) $(LABELS)

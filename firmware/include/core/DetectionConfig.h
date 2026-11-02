@@ -98,24 +98,39 @@ struct DetectionConfig {
   uint32_t offbody_after_ms    = 30000;  ///< this long table-still = not worn
 
   // ── Abnormal repetitive movement (§14) ──────────────────────────────────
+  // Since 0.8.0 (2026-11-02) a window counts when the movement is strong and
+  // abn_share of its power sits in abn_share_lo..hi Hz (band_share), the
+  // "ratio" test convulsion detectors use. Tuned on SeizeIT2 (OpenNeuro
+  // ds005873: 51 tonic-clonic seizures, 445 h, chest sensor) and WEDA-FALL's
+  // wrist activities: 86 % of convulsions, median 19 s after the shaking
+  // starts, no alerts away from seizures, none in walking/jogging/clapping.
+  // See DETECTION_ACCURACY.md. Wording stays "abnormal repetitive movement".
   uint32_t abn_window_ms       = 4000;   ///< analysis window
   uint32_t abn_eval_every_ms   = 1000;   ///< slide interval
-  float    abn_magnitude_g     = 0.35f;  ///< mean |‖a‖ − 1g|
-  float    abn_variance_g2     = 0.060f;
-  float    abn_freq_min_hz     = 2.0f;   ///< target band, deliberately above gait
-  float    abn_freq_max_hz     = 6.0f;
-  float    abn_periodicity     = 0.45f;  ///< autocorrelation peak ⇒ rhythmic
-  uint32_t abn_sustain_ms      = 20000;  ///< blanket-adjusting is shorter than this
+  float    abn_magnitude_g     = 0.12f;  ///< mean |‖a‖ − 1g|: lowest with no WEDA wrist false alert;
+                                         ///< a wrist study used ~0.11 (0.14 g std, Kim 2017)
+                                         ///< (a chest sees ~0.04 g in a convulsion; a wrist more)
+  float    abn_variance_g2     = 0.0f;   ///< off since 0.8.0: the share test does this job
+  float    abn_share           = 0.75f;  ///< convulsions 0.8-0.96, everyday movement spread out
+  float    abn_share_lo_hz     = 2.0f;
+  float    abn_share_hi_hz     = 8.0f;
+  bool     abn_use_share       = true;   ///< false: the pre-0.8.0 periodicity test below
+  float    abn_freq_min_hz     = 2.0f;   ///< pre-0.8.0 test only
+  float    abn_freq_max_hz     = 6.0f;   ///< pre-0.8.0 test only
+  float    abn_periodicity     = 0.45f;  ///< pre-0.8.0 test only
+  uint32_t abn_sustain_ms      = 12000;  ///< 10 s let quiet-time noise through, 15 s lost seizures
   uint32_t abn_cooldown_ms     = 300000;
   float    abn_handling_g      = 1.60f;  ///< above this + erratic ⇒ device handling
   float    abn_handling_var_g2 = 0.900f;
 
-  // ── Gait / walking exclusion (§14) ──────────────────────────────────────
-  // Walking is MORE rhythmic than the target signal, so periodicity alone
-  // cannot separate them — the frequency band does.
+  // ── Jogging exclusion ───────────────────────────────────────────────────
+  // Jogging is as rhythmic as a convulsion and in the same band, but almost
+  // perfectly regular (autocorrelation 0.81 on WEDA wrists); convulsions vary
+  // (median 0.29). Until 0.8.0 this was a walking filter (> 0.35 at
+  // 1.3-2.5 Hz) that threw away convulsion windows at 2.2-2.5 Hz.
   float    gait_freq_min_hz    = 1.30f;
-  float    gait_freq_max_hz    = 2.50f;
-  float    gait_periodicity    = 0.35f;
+  float    gait_freq_max_hz    = 3.20f;
+  float    gait_periodicity    = 0.75f;
 
   // ── Unexpected mobility (§15) ───────────────────────────────────────────
   // A wrist IMU cannot prove a patient left a bed. Sustained gait-like motion

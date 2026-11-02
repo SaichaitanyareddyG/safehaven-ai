@@ -128,6 +128,36 @@ int main() {
               " mag=" + std::to_string(d.last_window().mean_abs_dev));
   }
   {
+    traces::Noise nz(51);
+    MovementDetector d(cfg);
+    auto ev = run(d, traces::convulsion(40000, nz));
+    check(count_of(ev, EventType::ABNORMAL_MOVEMENT) >= 1,
+          "4a. 40s uneven jerks slowing 5->2.5 Hz -> ABNORMAL_MOVEMENT",
+          "share=" + std::to_string(d.last_window().band_share) +
+              " period=" + std::to_string(d.last_window().periodicity) +
+              " mag=" + std::to_string(d.last_window().mean_abs_dev));
+  }
+  {
+    traces::Noise nz(52);
+    MovementDetector d(cfg);
+    auto ev = run(d, traces::jogging(60000, nz));
+    check(ev.empty(), "4b. 60s jogging (2.5 Hz, very regular) -> SUPPRESSED",
+          "period=" + std::to_string(d.last_window().periodicity) +
+              " gait=" + std::to_string(d.last_was_gait()));
+  }
+  {
+    // band_share: a 4 Hz rhythm is nearly all in 2-8 Hz; a 1 Hz arm swing is not.
+    traces::Noise nz(53);
+    const auto fast = traces::repetitive(4000, nz, 4.0f, 0.5f);
+    const auto slow = traces::repetitive(4000, nz, 1.0f, 0.5f);
+    auto share = [](const traces::Trace& tr) {
+      const size_t base = tr.size() - 200;
+      return band_share([&](size_t i) { return magnitude(tr[base + i]); }, 200, 50.0f, 2.0f, 8.0f, 0.5f, 12.0f);
+    };
+    check(share(fast) > 0.9f && share(slow) < 0.2f, "4c. rhythm-band share: 4 Hz high, 1 Hz low",
+          "4 Hz " + std::to_string(share(fast)) + ", 1 Hz " + std::to_string(share(slow)));
+  }
+  {
     traces::Noise nz(6);
     MovementDetector d(cfg);
     auto ev = run(d, traces::repetitive(10000, nz, 4.0f, 0.60f));

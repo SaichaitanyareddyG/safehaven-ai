@@ -200,6 +200,29 @@ inline Trace brisk_steps(uint32_t ms, Noise& nz) {
   Trace t; add_resting(t, 1000, nz); add_rhythmic(t, ms, nz, 2.0f, 0.70f);
   return t;
 }
+/// A convulsion as SeizeIT2 shows it: jerks that slow from ~5 to ~2.5 Hz
+/// with uneven spacing (autocorrelation well below jogging's), 0.45 g.
+inline Trace convulsion(uint32_t ms, Noise& nz) {
+  Trace t;
+  add_resting(t, 1000, nz);
+  const uint64_t t0 = next_t(t);
+  float phase = 0.0f;
+  append(t, ms, [&](size_t, uint64_t now, ImuSample& s) {
+    const float frac = (now - t0) / static_cast<float>(ms);
+    const float freq = 5.0f - 2.5f * frac + nz.next() * 1.5f;  // slowing, uneven
+    phase += 2.0f * kPi * freq * 0.02f;
+    const float osc = 0.45f * std::sin(phase);
+    s.ax = osc * 0.40f + nz.next() * 0.02f;
+    s.ay = osc * 0.20f + nz.next() * 0.02f;
+    s.az = 1.0f + osc + nz.next() * 0.02f;
+  });
+  return t;
+}
+/// Jogging on a wrist (WEDA-FALL D02): 2.5 Hz, very regular, ~0.8 g.
+inline Trace jogging(uint32_t ms, Noise& nz) {
+  Trace t; add_resting(t, 1000, nz); add_rhythmic(t, ms, nz, 2.5f, 0.80f);
+  return t;
+}
 inline Trace handling(uint32_t ms, Noise& nz) {
   Trace t; add_resting(t, 1000, nz); add_handling(t, ms, nz); return t;
 }

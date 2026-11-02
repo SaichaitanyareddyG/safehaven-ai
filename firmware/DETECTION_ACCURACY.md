@@ -57,9 +57,8 @@ rhythm; ~15 s of walking evidence), so each person's trials of one activity
 are joined into one stream (`make eval-movement`): 136 minutes in all.
 
 **Abnormal repetitive movement:** **0 false alerts** in 136 minutes of
-daily activity, including 12.6 min of clapping and 12.8 min of jogging. Its
-true-positive rate is untested: no public wrist dataset of the target
-movement was found.
+daily activity, including 12.6 min of clapping and 12.8 min of jogging.
+Since 0.8.0 its true-positive rate is measured on SeizeIT2; see below.
 
 **Unexpected mobility** (only for `RESTRICTED_MOBILITY` patients):
 
@@ -87,6 +86,7 @@ cd firmware/native
 make eval-weda    WEDA=/path/to/WEDA-FALL          # github.com/joaojtmarques/WEDA-FALL
 make eval-umafall UMAFALL=/path/to/UMAFall         # figshare 4214283, CC BY 4.0
 make eval-movement WEDA=/path/to/WEDA-FALL         # movement detectors
+make eval-seizeit2 SEIZEIT2=/path/to/converted     # OpenNeuro ds005873, CC0 (see below)
 ```
 
 `DIAG=1` lists missed falls; `FEAT=1` (WEDA) prints each verdict's metrics;
@@ -169,3 +169,63 @@ spinning 980-1260 deg/s, then moving on or held under 2 s. Two changes:
 The falls no longer caught are ones where the person was moving again at
 once (got up). Real-band captures: all four flips silent; the height drop
 still alerts; hard knocks (5-12 g) still ask.
+
+## 2026-11-02 (0.8.0): abnormal repetitive movement, measured on seizures
+
+The detector only ever reports "abnormal repetitive movement — patient
+check recommended", never a seizure. Convulsions are what it should catch, so
+that is what it is scored on.
+
+**Data.** SeizeIT2 (OpenNeuro ds005873, CC0): epilepsy-unit patients
+recorded for days under video-EEG, seizures labelled by clinicians. We took
+every recording with a focal-to-bilateral tonic-clonic seizure: 49
+recordings, 445 hours, 51 such seizures, 14 other motor seizures. Its motion
+sensor is on the **chest** (or upper back) at 25 Hz, not a wrist; values are
+scaled per recording so that rest reads 1 g, since the files' scales differ
+by hospital.
+
+**What a convulsion looks like.** The labelled seizure starts with a quiet
+focal phase; the convulsion follows 1-3 minutes later and lasts 1-2 minutes.
+In it, 80-96 % of the movement power is in 2-8 Hz, every time; the rhythm
+slows as it goes (≈5 → 2.5 Hz) and is uneven (autocorrelation median 0.29).
+
+**Change.** A window now counts when the movement is strong and **≥ 75 % of
+its power is at 2-8 Hz** (`band_share`, the ratio test clinical and open
+detectors use), held for **12 s** (was 20). The old walking filter (rhythm
+> 0.35 at 1.3-2.5 Hz) was dropping convulsion windows; it is now a **jogging
+filter**: only near-perfect rhythm (> 0.75 at 1.3-3.2 Hz) is ignored, since
+WEDA jogging is 0.81 and convulsions are not. Strength **0.12 g** on a wrist:
+the lowest with no WEDA false alert, close to a wrist study's ~0.11 g.
+
+| SeizeIT2, chest strength 0.04 g | Old rule | 0.8.0 rule |
+|---|---|---|
+| Tonic-clonic seizures alerted | 2 of 51 | **44 of 51 (86 %)** |
+| — tuned on odd patients / checked on even | | 88 % / 85 % |
+| Delay from the first strong shaking | | **median 19 s** (90 % within 38 s) |
+| Other motor seizures (not the target) | 0 of 14 | 0 of 14 |
+| Alerts away from any seizure | 0.05 / 24 h | **0 in 445 h** |
+
+WEDA wrist activities (walking, jogging, stairs, clapping, …, 136 min):
+**0 false alerts**, as before. Falls are unchanged (the fall detector does
+not use these settings).
+
+**What this does not show.**
+- **No wrist convulsions.** The 0.12 g wrist strength is set from daily life
+  (no false alerts) and one study; that a real convulsion moves a wrist more
+  than 0.12 g is likely but unmeasured here. A simulated test on our band
+  and, before any clinical use, real recordings are needed.
+- **Brushing teeth, washing dishes, shivering** are rhythmic in the same band
+  and are known false alarms for every movement-only detector. WEDA has none
+  of them; test them on the band.
+- **Epilepsy-unit patients spend most of the day in bed**, so 445 h without a
+  false alert says little about an active ward.
+- The 14 other motor seizures (hyperkinetic thrashing, tonic, automatisms)
+  are not rhythmic and are not caught. That matches the clinical guideline:
+  wrist devices are recommended for tonic-clonic seizures only.
+- Device handling (> 1.6 g, erratic) is still ignored; a very violent wrist
+  convulsion could reach that. Unmeasured.
+
+`make eval-seizeit2` reads a folder made by
+`native/seizeit2_convert.py` from the subset's `*_mov.edf` and `*_events.tsv`
+files; `HALF=0|1`, `WHO=1` and `DIAG=1` split, list and describe. Neither
+the data nor the converted files are stored in this repository.

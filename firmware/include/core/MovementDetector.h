@@ -71,15 +71,17 @@ class MovementDetector {
     // Search the full 1–8 Hz band, then classify. Narrowing the search first
     // would hide walking instead of recognising it.
     last_ = analyse_window(at, n, cfg_.sample_rate_hz, 1.0f, 8.0f);
+    last_.band_share = band_share(at, n, cfg_.sample_rate_hz, cfg_.abn_share_lo_hz, cfg_.abn_share_hi_hz, 0.5f, 12.0f);
     last_gait_ = is_gait(last_);
     last_handling_ = is_handling(last_);
 
-    const bool abnormal = last_.mean_abs_dev > cfg_.abn_magnitude_g &&
-                          last_.variance > cfg_.abn_variance_g2 &&
-                          last_.dom_freq_hz >= cfg_.abn_freq_min_hz &&
-                          last_.dom_freq_hz <= cfg_.abn_freq_max_hz &&
-                          last_.periodicity > cfg_.abn_periodicity &&
-                          !last_gait_ && !last_handling_;
+    const bool strong = last_.mean_abs_dev > cfg_.abn_magnitude_g && last_.variance > cfg_.abn_variance_g2;
+    const bool rhythmic = cfg_.abn_use_share
+                              ? last_.band_share >= cfg_.abn_share
+                              : last_.dom_freq_hz >= cfg_.abn_freq_min_hz &&
+                                    last_.dom_freq_hz <= cfg_.abn_freq_max_hz &&
+                                    last_.periodicity > cfg_.abn_periodicity;
+    const bool abnormal = strong && rhythmic && !last_gait_ && !last_handling_;
 
     if (abnormal) {
       sustained_ms_ += cfg_.abn_eval_every_ms;

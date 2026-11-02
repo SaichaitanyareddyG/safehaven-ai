@@ -84,8 +84,54 @@ struct WindowStats {
   float variance      = 0.0f;  ///< variance of ‖a‖
   float dom_freq_hz   = 0.0f;  ///< strongest periodic component in the search band
   float periodicity   = 0.0f;  ///< normalised autocorrelation at that period, 0..1
+  float band_share    = 0.0f;  ///< share of the power in the rhythm band (band_share()), 0..1
   size_t n            = 0;
 };
+
+/// Share of the movement's power that lies in [lo, hi] Hz, out of all of
+/// [total_lo, total_hi] Hz: 0..1.
+///
+/// Convulsive jerking keeps nearly all its power in a few Hz — 80-96 % in
+/// 2-8 Hz in SeizeIT2's tonic-clonic seizures — while everyday movement
+/// spreads it out. This is the "ratio" test clinical and open detectors use
+/// (e.g. OpenSeizureDetector). Unlike the strength of the movement it does not
+/// depend on where the sensor is worn.
+///
+/// Mean removed, Hann-windowed, one Goertzel pass per DFT bin: ~10k
+/// multiply-adds for a 4 s window at 50 Hz.
+template <typename Accessor>
+inline float band_share(const Accessor& mags, size_t n, float sample_rate_hz, float lo_hz, float hi_hz,
+                        float total_lo_hz, float total_hi_hz) {
+  if (n < 16) return 0.0f;
+  constexpr float kTwoPi = 6.28318530718f;
+  float mean = 0.0f;
+  for (size_t i = 0; i < n; ++i) mean += mags(i);
+  mean /= static_cast<float>(n);
+  const float bin_hz = sample_rate_hz / static_cast<float>(n);
+  size_t k_lo = static_cast<size_t>(std::ceil(total_lo_hz / bin_hz));
+  const size_t k_hi = static_cast<size_t>(total_hi_hz / bin_hz);
+  if (k_lo < 1) k_lo = 1;
+  constexpr size_t kMaxN = 256;  // the movement window is 200 samples; 1 KB of stack
+  if (n > kMaxN) n = kMaxN;
+  float x[kMaxN];  // windowed once, reused by every bin
+  for (size_t i = 0; i < n; ++i)
+    x[i] = (mags(i) - mean) * (0.5f - 0.5f * std::cos(kTwoPi * static_cast<float>(i) / static_cast<float>(n - 1)));
+  float band = 0.0f, total = 0.0f;
+  for (size_t k = k_lo; k <= k_hi && k < n / 2; ++k) {
+    const float coeff = 2.0f * std::cos(kTwoPi * static_cast<float>(k) / static_cast<float>(n));
+    float s1 = 0.0f, s2 = 0.0f;
+    for (size_t i = 0; i < n; ++i) {
+      const float s0 = x[i] + coeff * s1 - s2;
+      s2 = s1;
+      s1 = s0;
+    }
+    const float p = s1 * s1 + s2 * s2 - coeff * s1 * s2;
+    const float f = static_cast<float>(k) * bin_hz;
+    total += p;
+    if (f >= lo_hz && f <= hi_hz) band += p;
+  }
+  return total > 0.0f ? band / total : 0.0f;
+}
 
 /// Compute window statistics over `mags` (the magnitude series of a window).
 ///

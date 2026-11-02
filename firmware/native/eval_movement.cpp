@@ -126,6 +126,14 @@ int main(int argc, char** argv) {
   if (const char* e = getenv("MOB_HI")) cfg.mob_freq_max_hz = std::atof(e);
   if (const char* e = getenv("MOB_LO")) cfg.mob_freq_min_hz = std::atof(e);
   if (const char* e = getenv("MOB_MAD")) cfg.mob_min_mad_g = std::atof(e);
+  if (const char* e = getenv("SHARE")) cfg.abn_share = std::atof(e);
+  if (const char* e = getenv("ABN_MAD")) cfg.abn_magnitude_g = std::atof(e);
+  if (const char* e = getenv("ABN_VAR")) cfg.abn_variance_g2 = std::atof(e);
+  if (const char* e = getenv("ABN_SUSTAIN")) cfg.abn_sustain_ms = std::atoi(e);
+  if (getenv("OLD")) cfg.abn_use_share = false;
+  if (getenv("NO_GAIT")) cfg.gait_periodicity = 2.0f;  // never matches: the walking exclusion off
+  if (const char* e = getenv("GAIT_PER")) cfg.gait_periodicity = std::atof(e);
+  if (const char* e = getenv("GAIT_HI")) cfg.gait_freq_max_hz = std::atof(e);
 
   // activity -> subject -> joined stream; subject -> mixed session
   std::map<std::string, std::map<int, std::vector<Sample>>> by_activity;
