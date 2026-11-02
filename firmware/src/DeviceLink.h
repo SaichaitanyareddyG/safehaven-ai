@@ -144,13 +144,14 @@ class DeviceLink {
     fw_ = firmwareVersion;
     monoMs_ = monoMs;
     lock_ = xSemaphoreCreateMutex();
-    inbox_ = xQueueCreate(6, sizeof(QueuedEvent));
     bootId_ = esp_random();
 
     prefs_.begin("safehaven", false);
     String secret = prefs_.isKey("secret") ? prefs_.getString("secret", "") : String();
     strlcpy(secret_, secret.c_str(), sizeof(secret_));
     seq_ = prefs_.getUInt("seq", 0);
+    idPrefix_ = prefs_.getUInt("idpfx", 0);
+    if (!idPrefix_) newIdPrefix();  // first start, or the settings were wiped
     // Did the last update we installed survive? "ota_try" is written just
     // before restarting into it. Running something else now means it was
     // rolled back: remember it so it is never installed again.
@@ -182,6 +183,15 @@ class DeviceLink {
     }
 
     LittleFS.mkdir("/q");
+    {  // half-written events from a power cut: the real ones were never renamed
+      File dir = LittleFS.open("/q");
+      String stale[8];
+      int n = 0;
+      for (File f = dir ? dir.openNextFile() : File(); f && n < 8; f = dir.openNextFile())
+        if (String(f.name()).endsWith(".tmp")) stale[n++] = String("/q/") + f.name();
+      if (dir) dir.close();
+      for (int i = 0; i < n; ++i) LittleFS.remove(stale[i]);
+    }
     xSemaphoreTake(lock_, portMAX_DELAY);
     const bool https = baseUrl_ && strncmp(baseUrl_, "https://", 8) == 0;
     const bool http = baseUrl_ && strncmp(baseUrl_, "http://", 7) == 0;
@@ -249,21 +259,21 @@ class DeviceLink {
     xSemaphoreTake(lock_, portMAX_DELAY);
     seq_ += 1;
     prefs_.putUInt("seq", seq_);
-    snprintf(q.id, sizeof(q.id), "ev-%06lu", (unsigned long)seq_);
+    // Counter first, zero-padded: the queue sends the smallest name first.
+    snprintf(q.id, sizeof(q.id), "ev-%08lu-%08lx", (unsigned long)seq_, (unsigned long)idPrefix_);
     strlcpy(q.assignmentId, st_.assignment.present ? st_.assignment.id : "", sizeof(q.assignmentId));
     if (watch) {
       strlcpy(st_.watchedId, q.id, sizeof(st_.watchedId));
       st_.watchedDelivery = Delivery::QUEUED;
     }
     xSemaphoreGive(lock_);
-    // The hand-off to the network task holds a few events; while that task is
-    // stuck in a slow request it can fill. Never drop a safety event on the
-    // floor: write it to the flash queue from here instead (LittleFS is
-    // thread-safe), and the network task sends it with the rest.
-    if (xQueueSend(inbox_, &q, pdMS_TO_TICKS(50)) != pdTRUE) {
-      Serial.printf("[LINK] hand-off full - persisting %s directly\r\n", q.id);
-      persist(q);
-    }
+    // Straight to the flash queue, from here (LittleFS is thread-safe), and
+    // the network task picks it up. It used to wait in a RAM hand-off until
+    // that task was free: a restart meanwhile (update installed, rollback,
+    // watchdog) lost it, though the band said "Sending". Events are rare, so
+    // the few ms of flash write in the detection loop cost nothing.
+    persist(q);
+    newEvents_ = true;
     strlcpy(lastSubmitted_, q.id, sizeof(lastSubmitted_));
     return lastSubmitted_;
   }
@@ -271,6 +281,9 @@ class DeviceLink {
   /// While an alert is on the band, check in every few seconds so a nurse's
   /// acknowledgement shows quickly ("A nurse is coming").
   void setUrgent(bool urgent) { urgent_ = urgent; }
+  /// An alert or "Are you OK?" is on the band: no update is installed (the
+  /// download blocks this task and the install restarts the band).
+  void setBusyWithPatient(bool busy) { busyWithPatient_ = busy; }
   /// Check in as soon as the network allows (e.g. the radio was just turned
   /// back on after a quiet spell on the charger).
   void requestHeartbeat() { hbNow_ = true; }
@@ -512,15 +525,11 @@ class DeviceLink {
 
   void run() {
     uint32_t lastHeartbeat = 0;
-    uint32_t nextQueueTry = 0;
+    uint32_t nextQueueTry = millis();
     bool firstHeartbeat = true;
     for (;;) {
-      // Accept new events from the detection loop: persist before anything else.
-      QueuedEvent q;
-      while (xQueueReceive(inbox_, &q, 0) == pdTRUE) {
-        persist(q);
-        nextQueueTry = 0;
-      }
+      // A new event is on flash: try to send it now, whatever the backoff.
+      if (newEvents_.exchange(false)) nextQueueTry = millis();
 
       if (WiFi.status() == WL_CONNECTED && st_.configured) {
         char code[32] = "";
@@ -558,7 +567,9 @@ class DeviceLink {
           hbNow_ = false;
           heartbeat();
         }
-        if (secret_[0] && millis() >= nextQueueTry) {
+        // Wrap-safe: millis() rolls over every 49.7 days, and "millis() >=
+        // a time set just before the wrap" stayed false for 49 more days.
+        if (secret_[0] && (int32_t)(millis() - nextQueueTry) >= 0) {
           if (drainQueue()) {
             retryMs_ = kRetryMs;
           } else {
@@ -627,6 +638,7 @@ class DeviceLink {
     xSemaphoreTake(lock_, portMAX_DELAY);
     strlcpy(secret_, doc["device_secret"].as<const char*>(), sizeof(secret_));
     prefs_.putString("secret", secret_);
+    newIdPrefix();  // the server may still hold this device's old ids
     rememberCodeLocked(doc["device_code"] | "");
     st_.enrolled = true;
     st_.credentialRejected = false;
@@ -857,7 +869,8 @@ class DeviceLink {
   // ── firmware update over Wi-Fi ─────────────────────────────────────────────
   static constexpr int kMinBatteryForUpdate = 30;
 
-  static bool updateAllowedNow(JsonVariantConst fw, const Health& h) {
+  bool updateAllowedNow(JsonVariantConst fw, const Health& h) const {
+    if (busyWithPatient_) return false;  // offered again at a later check-in
     if (h.charging) return true;
     return (fw["allow_on_battery"] | false) && h.batteryPct >= kMinBatteryForUpdate;
   }
@@ -1137,12 +1150,20 @@ class DeviceLink {
 
   // ── persistent queue ───────────────────────────────────────────────────────
   void persist(const QueuedEvent& q) {
-    char path[48];
+    // Written under a temporary name, then renamed: a file is visible (empty)
+    // the moment it is opened, and drainQueue on the other task would read it
+    // as unreadable and delete it.
+    char path[48], tmp[48];
     snprintf(path, sizeof(path), "/q/%s.bin", q.id);
-    File f = LittleFS.open(path, FILE_WRITE);
+    snprintf(tmp, sizeof(tmp), "/q/%s.tmp", q.id);
+    File f = LittleFS.open(tmp, FILE_WRITE);
     if (f) {
-      f.write((const uint8_t*)&q, sizeof(q));
+      const bool written = f.write((const uint8_t*)&q, sizeof(q)) == sizeof(q);
       f.close();
+      if (!written || !LittleFS.rename(tmp, path)) {
+        LittleFS.remove(tmp);
+        Serial.printf("[LINK] !!! could not persist %s (flash full?)\r\n", q.id);
+      }
     } else {
       Serial.printf("[LINK] !!! could not persist %s\r\n", q.id);
     }
@@ -1155,7 +1176,7 @@ class DeviceLink {
     uint32_t n = 0;
     File dir = LittleFS.open("/q");
     if (!dir) return 0;
-    for (File f = dir.openNextFile(); f; f = dir.openNextFile()) ++n;
+    for (File f = dir.openNextFile(); f; f = dir.openNextFile()) n += String(f.name()).endsWith(".bin");
     return n;
   }
 
@@ -1168,6 +1189,7 @@ class DeviceLink {
       if (!dir) return true;
       for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
         String name = f.name();
+        if (!name.endsWith(".bin")) continue;  // still being written
         if (oldest.isEmpty() || name < oldest) oldest = name;
       }
       dir.close();
@@ -1262,7 +1284,7 @@ class DeviceLink {
   const char* fw_ = "";
   uint64_t (*monoMs_)() = nullptr;
   SemaphoreHandle_t lock_ = nullptr;
-  QueueHandle_t inbox_ = nullptr;
+  std::atomic<bool> newEvents_{false};
   // Caller holds lock_. NVS is written only when the name actually changes.
   void rememberCodeLocked(const char* code) {
     if (!code[0] || strcmp(code, st_.deviceCode) == 0) return;
@@ -1275,11 +1297,22 @@ class DeviceLink {
   char pendingEnroll_[32] = "";
   char lastSubmitted_[24] = "";
   uint32_t seq_ = 0;
+  /// Random, per enrolment (and per wiped settings): part of every event id.
+  /// The server dedupes on (device, id), so when the counter restarted after a
+  /// re-enrolment or a wiped band, "ev-000001" matched an old event: the new
+  /// fall was answered DUPLICATE, no alert was raised, and the band showed
+  /// "The nurse has been told".
+  uint32_t idPrefix_ = 0;
+  void newIdPrefix() {
+    do idPrefix_ = esp_random(); while (!idPrefix_);
+    prefs_.putUInt("idpfx", idPrefix_);
+  }
   int enrollRetries_ = 0;
   char pairingId_[40] = "";
   char pollToken_[64] = "";
   uint32_t lastPairingPoll_ = 0;
   volatile bool urgent_ = false;
+  volatile bool busyWithPatient_ = false;
   volatile bool hbNow_ = false;
   volatile uint32_t hbAnswered_ = 0;
   volatile uint32_t wifiGen_ = 0;
