@@ -87,6 +87,17 @@ struct SavedWifi {
 };
 static constexpr int kMaxSavedWifi = 8;
 
+/// One fall-detector event, summarised on the band for the dashboard's
+/// detector log (backend app/wearables/motion.py). No raw motion.
+struct MotionSummary {
+  uint64_t epochMs;
+  char outcome[8];     // ALERT, CHECK, NONE, MUTED
+  uint16_t freefallMs;
+  float dropCm, peakG, turnedDeg, tiltChangeDeg, spinDps;
+  char axis;           // 'X', 'Y' or 'Z': the axis it turned around most
+  uint32_t stillMs;
+};
+
 struct LinkStatus {
   bool configured = false;      // a backend URL is set
   bool enrolled = false;        // a device secret is stored
@@ -271,6 +282,18 @@ class DeviceLink {
   }
   /// Counts heartbeats the server answered (200): the caller can wait for one.
   uint32_t heartbeatsAnswered() const { return hbAnswered_; }
+  /// Queue a detector-log entry; sent after the next check-in. Best effort:
+  /// the oldest is dropped when the queue is full.
+  void submitMotion(const MotionSummary& m) {
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    if (motionN_ == kMotionMax) {
+      memmove(motion_, motion_ + 1, sizeof(MotionSummary) * (kMotionMax - 1));
+      --motionN_;
+    }
+    motion_[motionN_++] = m;
+    xSemaphoreGive(lock_);
+  }
+
   /// Goes up each time a new Wi-Fi list from the dashboard is saved: the
   /// caller reloads its networks.
   uint32_t wifiListGeneration() const { return wifiGen_; }
@@ -682,7 +705,7 @@ class DeviceLink {
     // loop rests the radio the moment it sees an answer, which cut off the
     // download that follows (seen on the band as HTTP -1).
     otaBusy_ = (!doc["firmware_update"].isNull() && updateAllowedNow(doc["firmware_update"], h) && !restartPending_) ||
-               wifiChanged;  // the network list is fetched next: same need for the radio
+               wifiChanged || motionN_ > 0;  // the network list / detector log go next: same need for the radio
     hbAnswered_ = hbAnswered_ + 1;
     // Server time at the midpoint of the round trip.
     const uint64_t serverMs = doc["server_time_ms"] | (uint64_t)0;
@@ -724,6 +747,7 @@ class DeviceLink {
 
     confirmRunningFirmware();
     if (wifiChanged) syncWifiNetworks();
+    if (motionN_ > 0) sendMotion();
     if (restartPending_ && h.charging) {
       Serial.println("[OTA] back on the charger - restarting into the new firmware");
       vTaskDelay(pdMS_TO_TICKS(300));
@@ -788,6 +812,46 @@ class DeviceLink {
     memset(nets, 0, sizeof(nets));  // passwords out of RAM
     wifiGen_ = wifiGen_ + 1;
     Serial.printf("[WIFI] network list from the dashboard saved: %d network(s)\r\n", n);
+  }
+
+  void sendMotion() {
+    static MotionSummary batch[kMotionMax];
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    const int n = motionN_;
+    memcpy(batch, motion_, sizeof(MotionSummary) * n);
+    xSemaphoreGive(lock_);
+    JsonDocument req;
+    req["firmware_version"] = fw_;
+    JsonArray arr = req["events"].to<JsonArray>();
+    for (int i = 0; i < n; ++i) {
+      const MotionSummary& m = batch[i];
+      if (!m.epochMs) continue;  // no clock yet: the time would be wrong
+      JsonObject o = arr.add<JsonObject>();
+      o["occurred_at_ms"] = m.epochMs;
+      o["outcome"] = m.outcome;
+      o["freefall_ms"] = m.freefallMs;
+      o["drop_cm"] = m.dropCm;
+      o["peak_g"] = m.peakG;
+      o["turned_deg"] = m.turnedDeg;
+      o["tilt_change_deg"] = m.tiltChangeDeg;
+      o["spin_dps"] = m.spinDps;
+      const char axis[2] = {m.axis, 0};
+      o["axis"] = axis;
+      o["still_ms"] = m.stillMs;
+    }
+    String body, resp;
+    serializeJson(req, body);
+    const int rc = post("/device-api/motion-events", body, resp);
+    if (rc != 204 && rc != 422) {
+      Serial.printf("[MOTION] log not sent (HTTP %d) - trying again after the next check-in\r\n", rc);
+      return;
+    }
+    // Sent (or refused as malformed, which retrying cannot fix): forget those n.
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    memmove(motion_, motion_ + n, sizeof(MotionSummary) * (motionN_ - n));
+    motionN_ -= n;
+    xSemaphoreGive(lock_);
+    Serial.printf("[MOTION] %d detector event(s) sent\r\n", n);
   }
 
   // ── firmware update over Wi-Fi ─────────────────────────────────────────────
@@ -1219,6 +1283,9 @@ class DeviceLink {
   volatile bool hbNow_ = false;
   volatile uint32_t hbAnswered_ = 0;
   volatile uint32_t wifiGen_ = 0;
+  static constexpr int kMotionMax = 20;
+  MotionSummary motion_[kMotionMax];
+  volatile int motionN_ = 0;
   char wifiVer_[24] = "";
   uint32_t bootId_ = 0;
   Health health_;

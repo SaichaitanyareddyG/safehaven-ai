@@ -95,7 +95,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.7.6";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up
+static const char *FIRMWARE_VERSION = "0.7.7";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up; 0.7.7: detector log on the dashboard
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -1539,9 +1539,93 @@ static void bbTrigger(uint8_t outcome, const FallView &v) {
   bbFall = v;
 }
 
+/// The event in numbers, from the raw 6-axis samples (accelerometer +
+/// gyroscope) around its hardest hit: for the dashboard's detector log, so
+/// flips, drops and falls can be told apart and the detector tuned.
+static MotionSummary bbSummarise() {
+  MotionSummary m{};
+  strlcpy(m.outcome, bbOutcome == 1 ? "ALERT" : bbOutcome == 4 ? "CHECK" : bbOutcome == 3 ? "MUTED" : "NONE",
+          sizeof(m.outcome));
+  const int first = (bbHead - bbCount + BB_N) % BB_N;
+  auto at = [&](int k) -> const BbSample & { return bbRing[(first + k) % BB_N]; };
+  auto mag = [&](int k) {
+    const BbSample &x = at(k);
+    return sqrtf((float)x.ax * x.ax + (float)x.ay * x.ay + (float)x.az * x.az) / 1000.0f;
+  };
+  auto gyro = [&](int k) {
+    const BbSample &x = at(k);
+    return sqrtf((float)x.gx * x.gx + (float)x.gy * x.gy + (float)x.gz * x.gz) / 10.0f;
+  };
+  // The hardest hit, leaving out the seconds recorded after the verdict.
+  const int lastK = bbCount - (int)(BB_AFTER_MS / 20);
+  if (lastK < 60) return m;
+  int peak = 0;
+  for (int k = 0; k < lastK; ++k)
+    if (mag(k) > mag(peak)) peak = k;
+  m.peakG = mag(peak);
+  // Free-fall: the longest weightless stretch (< 0.5 g) in the second before
+  // it. Height of a free drop: h = g t^2 / 2 (a wrist is seldom free, so this
+  // is the drop the band itself made).
+  int run = 0, best = 0;
+  for (int k = max(0, peak - 50); k < peak; ++k) {
+    run = mag(k) < 0.5f ? run + 1 : 0;
+    if (run > best) best = run;
+  }
+  m.freefallMs = (uint16_t)(best * 20);
+  const float t = best * 0.02f;
+  m.dropCm = 0.5f * 9.81f * t * t * 100.0f;
+  // Turning: degrees turned and fastest spin from 1 s before to 1 s after,
+  // and the axis it turned around most.
+  float sx = 0, sy = 0, sz = 0;
+  for (int k = max(0, peak - 50); k < min(bbCount, peak + 50); ++k) {
+    const BbSample &x = at(k);
+    sx += fabsf(x.gx / 10.0f) * 0.02f;
+    sy += fabsf(x.gy / 10.0f) * 0.02f;
+    sz += fabsf(x.gz / 10.0f) * 0.02f;
+    m.turnedDeg += gyro(k) * 0.02f;
+    m.spinDps = max(m.spinDps, gyro(k));
+  }
+  m.axis = sx >= sy && sx >= sz ? 'X' : sy >= sz ? 'Y' : 'Z';
+  // Which way it faced before (1.0-0.5 s before) vs at the end (last 0.5 s).
+  auto meanDir = [&](int from, int to, float v[3]) {
+    v[0] = v[1] = v[2] = 0;
+    for (int k = max(0, from); k < min(bbCount, to); ++k) {
+      v[0] += at(k).ax;
+      v[1] += at(k).ay;
+      v[2] += at(k).az;
+    }
+  };
+  float a[3], b[3];
+  meanDir(peak - 50, peak - 25, a);
+  meanDir(bbCount - 25, bbCount, b);
+  const float na = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]), nb = sqrtf(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
+  if (na > 0 && nb > 0) {
+    const float c = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (na * nb);
+    m.tiltChangeDeg = acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f;
+  }
+  // Stillness after: the longest stretch with almost no movement.
+  run = best = 0;
+  for (int k = peak + 5; k < bbCount; ++k) {
+    run = fabsf(mag(k) - 1.0f) < 0.06f && gyro(k) < 12.0f ? run + 1 : 0;
+    if (run > best) best = run;
+  }
+  m.stillMs = (uint32_t)best * 20;
+  const uint64_t epoch = clock_.epoch_ms();
+  m.epochMs = epoch ? epoch - (uint64_t)(at(bbCount - 1).t_ms - at(peak).t_ms) : 0;
+  return m;
+}
+
 static void serviceBlackBox() {
   if (!bbSaveAtMs || (long)(millis() - bbSaveAtMs) < 0) return;
   bbSaveAtMs = 0;
+  {
+    const MotionSummary m = bbSummarise();
+    Serial.printf("[MOTION] %s: free-fall %u ms (drop ~%.0f cm), peak %.2f g, turned %.0f deg mostly around %c, "
+                  "spin up to %.0f deg/s, now facing %.0f deg from before, still %lu ms after\r\n",
+                  m.outcome, m.freefallMs, m.dropCm, m.peakG, m.turnedDeg, m.axis, m.spinDps, m.tiltChangeDeg,
+                  (unsigned long)m.stillMs);
+    if (!benchMode) backendLink.submitMotion(m);
+  }
   if (!fsOk) return;
   Preferences p;
   p.begin("bb", false);

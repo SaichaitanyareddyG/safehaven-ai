@@ -26,7 +26,7 @@ from app.core.rate_limit import limiter
 from app.patients.service import PatientNotFoundError
 from app.audit.models import ActorType, AuditEventType
 from app.audit.service import record_event
-from app.wearables import firmware, service, wifi
+from app.wearables import firmware, motion, service, wifi
 from app.wearables.models import AlertStatus, WearableDevice
 from app.wearables.schemas import (
     DeviceAssignmentCreate,
@@ -43,6 +43,8 @@ from app.wearables.schemas import (
     WearableDeviceListResponse,
     WearableDeviceRead,
     WearableDeviceRegistered,
+    MotionEventRead,
+    MotionLabelUpdate,
     WifiNetworkCreate,
     WifiNetworkListResponse,
     WifiNetworkRead,
@@ -458,3 +460,37 @@ def remove_wifi_network(network_id: uuid.UUID, db: Annotated[Session, Depends(ge
         event_metadata={"ssid": network.ssid},
     )
     db.commit()
+
+
+@router.get("/wearable-devices/{device_id}/motion-events", response_model=list[MotionEventRead])
+def list_motion_events(
+    device_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> list[MotionEventRead]:
+    """What this band's fall detector reacted to, newest first."""
+    rows = (
+        db.query(motion.MotionEvent)
+        .filter(motion.MotionEvent.device_id == device_id)
+        .order_by(motion.MotionEvent.occurred_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [MotionEventRead.model_validate(r) for r in rows]
+
+
+@router.patch("/motion-events/{event_id}", response_model=MotionEventRead)
+def label_motion_event(
+    event_id: uuid.UUID,
+    payload: MotionLabelUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> MotionEventRead:
+    """Mark what really happened (a flip, a drop, a fall...)."""
+    row = db.get(motion.MotionEvent, event_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such event")
+    row.label = payload.label
+    db.commit()
+    return MotionEventRead.model_validate(row)

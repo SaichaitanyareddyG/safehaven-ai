@@ -167,3 +167,22 @@ export interface WifiNetworkCreate {
   password: string
   username?: string | null
 }
+
+/** One movement the band's fall detector reacted to, in numbers. */
+export type MotionOutcome = 'ALERT' | 'CHECK' | 'NONE' | 'MUTED'
+export type MotionLabel = 'FLIP' | 'DROP' | 'FALL' | 'ACTIVITY' | 'OTHER'
+export interface MotionEvent {
+  id: string
+  occurred_at: string
+  firmware_version: string | null
+  outcome: MotionOutcome
+  freefall_ms: number
+  drop_cm: number
+  peak_g: number
+  turned_deg: number
+  tilt_change_deg: number
+  spin_dps: number
+  axis: 'X' | 'Y' | 'Z'
+  still_ms: number
+  label: MotionLabel | null
+}

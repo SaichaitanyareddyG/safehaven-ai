@@ -11,6 +11,7 @@ import base64
 import re
 import time
 import uuid
+from datetime import datetime, timezone
 from urllib.parse import quote
 from typing import Annotated
 
@@ -24,10 +25,11 @@ from app.core.rate_limit import limiter
 from app.wearables import service, talk as band_talk
 from app.wearables.dependencies import get_current_device
 from app.wearables.models import WearableDevice
-from app.wearables import firmware, wifi
+from app.wearables import firmware, motion, wifi
 from app.wearables.schemas import (
     BandWifiNetwork,
     BandWifiNetworksResponse,
+    MotionEventBatch,
     FirmwareUpdateView,
     TalkReply,
     TalkTextRequest,
@@ -365,3 +367,36 @@ async def talk(
         audio_b64=result.audio_b64,
         timings_ms=result.timings_ms,
     )
+
+
+@router.post("/motion-events", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("60/hour")
+def motion_events(
+    request: Request,
+    payload: MotionEventBatch,
+    db: Annotated[Session, Depends(get_db)],
+    device: Annotated[WearableDevice, Depends(get_current_device)],
+) -> None:
+    """The fall detector's log from this band (app/wearables/motion.py)."""
+    for e in payload.events:
+        db.add(
+            motion.MotionEvent(
+                device_id=device.id,
+                occurred_at=datetime.fromtimestamp(e.occurred_at_ms / 1000, tz=timezone.utc),
+                firmware_version=payload.firmware_version,
+                **e.model_dump(exclude={"occurred_at_ms"}),
+            )
+        )
+    db.flush()
+    stale = (
+        db.query(motion.MotionEvent.id)
+        .filter(motion.MotionEvent.device_id == device.id)
+        .order_by(motion.MotionEvent.occurred_at.desc())
+        .offset(motion.KEEP_PER_DEVICE)
+        .all()
+    )
+    if stale:
+        db.query(motion.MotionEvent).filter(motion.MotionEvent.id.in_([r.id for r in stale])).delete(
+            synchronize_session=False
+        )
+    db.commit()

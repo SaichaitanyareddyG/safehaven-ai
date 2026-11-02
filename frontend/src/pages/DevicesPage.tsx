@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { MotionLogDialog } from '@/features/safety-monitoring/MotionLogDialog'
 import { WifiNetworksSection } from '@/features/safety-monitoring/WifiNetworksSection'
 import { ApiError } from '@/lib/api-client'
 import { useAuth } from '@/lib/auth-context'
@@ -44,6 +45,7 @@ export function DevicesPage() {
   })
   const devices = data?.results ?? []
   const [updating, setUpdating] = useState<WearableDevice | null>(null)
+  const [logFor, setLogFor] = useState<WearableDevice | null>(null)
   const { user } = useAuth()
 
   return (
@@ -85,6 +87,14 @@ export function DevicesPage() {
               <TableRow key={d.id} data-testid="device-row">
                 <TableCell className="font-medium">
                   {d.device_code}
+                  <button
+                    type="button"
+                    className="ml-2 text-xs font-normal text-primary underline-offset-2 hover:underline"
+                    onClick={() => setLogFor(d)}
+                    data-testid="device-motion-log"
+                  >
+                    Detector log
+                  </button>
                   <span className="block text-xs font-normal text-muted-foreground sm:hidden">
                     {d.last_seen_at ? `Seen ${formatDistanceToNow(new Date(d.last_seen_at), { addSuffix: true })}` : 'Never seen'}
                   </span>
@@ -116,6 +126,7 @@ export function DevicesPage() {
 
       <AddDeviceDialog open={adding} onOpenChange={setAdding} />
       <UpdateNowDialog device={updating} onClose={() => setUpdating(null)} />
+      <MotionLogDialog device={logFor} onClose={() => setLogFor(null)} />
     </AppLayout>
   )
 }

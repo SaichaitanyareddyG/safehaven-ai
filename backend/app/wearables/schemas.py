@@ -465,3 +465,45 @@ class BandWifiNetwork(BaseModel):
 class BandWifiNetworksResponse(BaseModel):
     version: str
     networks: list[BandWifiNetwork]
+
+
+class MotionEventIn(BaseModel):
+    """One fall-detector event as the band summarises it."""
+
+    occurred_at_ms: int = Field(ge=0)
+    outcome: Literal["ALERT", "CHECK", "NONE", "MUTED"]
+    freefall_ms: int = Field(ge=0, le=10000)
+    drop_cm: float = Field(ge=0, le=2000)
+    peak_g: float = Field(ge=0, le=64)
+    turned_deg: float = Field(ge=0, le=36000)
+    tilt_change_deg: float = Field(ge=0, le=180)
+    spin_dps: float = Field(ge=0, le=10000)
+    axis: Literal["X", "Y", "Z"]
+    still_ms: int = Field(ge=0, le=600000)
+
+
+class MotionEventBatch(BaseModel):
+    firmware_version: str | None = Field(default=None, max_length=32)
+    events: list[MotionEventIn] = Field(max_length=20)
+
+
+class MotionEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    occurred_at: datetime
+    firmware_version: str | None
+    outcome: str
+    freefall_ms: int
+    drop_cm: float
+    peak_g: float
+    turned_deg: float
+    tilt_change_deg: float
+    spin_dps: float
+    axis: str
+    still_ms: int
+    label: str | None
+
+
+class MotionLabelUpdate(BaseModel):
+    label: Literal["FLIP", "DROP", "FALL", "ACTIVITY", "OTHER"] | None

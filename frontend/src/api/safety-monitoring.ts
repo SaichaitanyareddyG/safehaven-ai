@@ -10,6 +10,8 @@ import type {
   SensorEventListResponse,
   WearableDevice,
   WearableDeviceListResponse,
+  MotionEvent,
+  MotionLabel,
   WifiNetwork,
   WifiNetworkCreate,
 } from '@/types/safety-monitoring'
@@ -100,4 +102,13 @@ export function addWifiNetwork(body: WifiNetworkCreate): Promise<WifiNetwork> {
 
 export function removeWifiNetwork(id: string): Promise<void> {
   return apiRequest<void>(`/wifi-networks/${id}`, { method: 'DELETE' })
+}
+
+/** What a band's fall detector reacted to, newest first. */
+export function listMotionEvents(deviceId: string): Promise<MotionEvent[]> {
+  return apiRequest<MotionEvent[]>(`/wearable-devices/${deviceId}/motion-events`)
+}
+
+export function labelMotionEvent(id: string, label: MotionLabel | null): Promise<MotionEvent> {
+  return apiRequest<MotionEvent>(`/motion-events/${id}`, { method: 'PATCH', body: { label } })
 }
