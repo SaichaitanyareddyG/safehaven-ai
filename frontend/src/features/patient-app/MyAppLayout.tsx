@@ -1,4 +1,4 @@
-import { CalendarDays, ClipboardList, Home, LogOut, Pill } from 'lucide-react'
+import { CalendarDays, ClipboardList, Home, LogOut, MessageCircle, Pill } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Navigate, NavLink, useNavigate } from 'react-router-dom'
 
@@ -14,6 +14,7 @@ const TABS = [
   { to: '/my/medicines', label: 'Medicines', icon: Pill, end: false },
   { to: '/my/visits', label: 'Visits', icon: CalendarDays, end: false },
   { to: '/my/care', label: 'My care', icon: ClipboardList, end: false },
+  { to: '/my/ask', label: 'Ask', icon: MessageCircle, end: false },
 ]
 
 /** The patient app's frame: dark petrol header, big type, a bottom tab bar
@@ -35,7 +36,8 @@ export function MyAppLayout({ title, subtitle, children }: { title: string; subt
   return (
     <div className="min-h-dvh bg-[#F3F7F8] text-[#16252C]">
       <header className="bg-[#143440] text-[#E6F0F3]">
-        <div className="mx-auto max-w-2xl px-5 pt-5 pb-6">
+        {/* Compact: the content, not the frame, should own the first screen. */}
+        <div className="mx-auto max-w-2xl px-5 pt-3 pb-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Logo className="h-6 w-6" />
@@ -51,8 +53,8 @@ export function MyAppLayout({ title, subtitle, children }: { title: string; subt
               Sign out
             </button>
           </div>
-          <h1 className="mt-4 text-3xl font-semibold tracking-tight">{title}</h1>
-          {subtitle && <p className="mt-1 text-base text-[#9FB9C3]">{subtitle}</p>}
+          <h1 className="mt-2 text-[26px] leading-tight font-semibold tracking-tight">{title}</h1>
+          {subtitle && <p className="mt-0.5 text-[15px] text-[#9FB9C3]">{subtitle}</p>}
         </div>
       </header>
 
@@ -65,7 +67,7 @@ export function MyAppLayout({ title, subtitle, children }: { title: string; subt
         aria-label="Main"
         className="fixed inset-x-0 bottom-0 z-20 border-t border-[#D3DFE4] bg-white pb-[env(safe-area-inset-bottom)]"
       >
-        <div className="mx-auto grid max-w-2xl grid-cols-4 px-2 py-1.5">
+        <div className="mx-auto grid max-w-2xl grid-cols-5 px-1 py-1.5">
           {TABS.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
@@ -73,7 +75,7 @@ export function MyAppLayout({ title, subtitle, children }: { title: string; subt
               end={end}
               className={({ isActive }) =>
                 cn(
-                  'flex min-h-14 flex-col items-center justify-center gap-1 rounded-lg text-[13px] font-medium',
+                  'flex min-h-14 flex-col items-center justify-center gap-1 rounded-lg text-[12px] font-medium',
                   isActive ? 'font-semibold text-[#0F6383]' : 'text-[#53656E] hover:text-[#16252C]',
                 )
               }

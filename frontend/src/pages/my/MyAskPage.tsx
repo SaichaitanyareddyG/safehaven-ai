@@ -7,7 +7,16 @@ import { MyAppLayout } from '@/features/patient-app/MyAppLayout'
 export function MyAskPage() {
   return (
     <MyAppLayout title="Ask a question" subtitle="About your medicines or care">
-      <PatientChatPanel asPatient startOpen />
+      <PatientChatPanel
+        asPatient
+        startOpen
+        suggestions={[
+          'When do I take my medicines today?',
+          'What is each of my medicines for?',
+          'What should I avoid while taking them?',
+          'When is my next appointment?',
+        ]}
+      />
       <p className="text-sm leading-relaxed text-[#53656E]">
         This can't change your treatment. For anything urgent, call 911 or your care team.
       </p>

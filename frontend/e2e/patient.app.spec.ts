@@ -16,7 +16,7 @@ test('invite link signs in once; medicines show their dose times', async ({ page
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Medicines' }).click()
   const cards = page.getByTestId('my-medicine-card')
   await expect(cards).toHaveCount(2)
-  await expect(page.getByTestId('my-medicine-schedule').filter({ hasText: '8:00 AM, 8:00 PM' })).toBeVisible()
+  await expect(page.getByTestId('my-medicine-schedule').filter({ hasText: '8:00 AM' }).filter({ hasText: '8:00 PM' })).toBeVisible()
   await expect(page.getByTestId('my-medicine-schedule').filter({ hasText: 'Only when needed' })).toBeVisible()
 
   // The link is spent: a second use asks for a new one.

@@ -33,7 +33,13 @@ export function MyCarePage() {
           <MySectionTitle>Care instructions</MySectionTitle>
           {instructions.length === 0 && (
             <MyCard>
-              <p className="text-lg text-[#53656E]">Nothing here yet. Instructions appear once your care team approves them.</p>
+              <p className="text-lg text-[#53656E]">
+                No other instructions right now. Your medicines are on the{' '}
+                <Link to="/my/medicines" className="font-semibold text-[#0F6383] underline-offset-4 hover:underline">
+                  Medicines
+                </Link>{' '}
+                tab.
+              </p>
             </MyCard>
           )}
           {instructions.map((instruction) => (

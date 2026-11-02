@@ -228,6 +228,16 @@ def derive_schedule(facts: dict, raw_text: str | None = None) -> DoseSchedule:
         return _review(f'The course length "{duration}" is not clear enough to know when reminders should stop.', facts)
 
     slots = sorted({SLOT_TIMES[m.lower()] for m in _SLOT_RE.findall(combined)})
+    # The clinician's words name a time of day the extracted facts do not
+    # ("once daily at night" read as just "once daily"): the default 08:00
+    # would be a silent dosing error. Same guard as "as needed" above.
+    said = sorted({SLOT_TIMES[m.lower()] for m in _SLOT_RE.findall(raw_text or "")})
+    if said and not slots:
+        return _review(
+            "The instruction gives a time of day (" + ", ".join(format_time(t) for t in said)
+            + ") that the extracted timing leaves out.",
+            facts,
+        )
     interval = _INTERVAL_RE.search(combined)
     count = _count_per_day(frequency) if frequency else None
 

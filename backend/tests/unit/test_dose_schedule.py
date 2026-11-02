@@ -170,3 +170,13 @@ def test_course_length_inside_other_words_is_never_read_as_ongoing(duration, day
 
 def test_interval_matching_its_count_is_fine():
     assert hhmm(derive_schedule(facts("three times daily", "every 8 hours"))) == ["06:00", "14:00", "22:00"]
+
+
+def test_a_time_of_day_in_the_words_but_not_the_facts_needs_review():
+    """'once daily at night' extracted as just 'once daily' must not become 08:00."""
+    s = derive_schedule({"frequency": "once daily"}, "Take Atorvastatin 20 mg orally once daily at night.")
+    assert s.kind == "NEEDS_REVIEW"
+    assert "10:00 PM" in s.problem
+    # When the facts carry it, the time is used.
+    ok = derive_schedule({"frequency": "once daily", "timing": "at night"}, "Take it once daily at night.")
+    assert ok.kind == "SCHEDULED" and [t.hour for t in ok.times] == [22]

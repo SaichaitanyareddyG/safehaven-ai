@@ -14,11 +14,14 @@ export function ListenButton({
   language = 'ENGLISH',
   token,
   asPatient = false,
+  quiet = false,
 }: {
   text: string
   language?: Language
   token?: string
   asPatient?: boolean
+  /** Outline instead of filled: for cards where it is not the main action. */
+  quiet?: boolean
 }) {
   const fetchAudio = useCallback(
     (shown: string) => (asPatient ? getMyAudio(shown) : getCarePlanAudio(token ?? '', shown, language)),
@@ -52,7 +55,7 @@ export function ListenButton({
 
   if (status === 'idle') {
     return (
-      <Button size="lg" onClick={play} data-testid="listen-button">
+      <Button variant={quiet ? 'outline' : 'default'} size="lg" onClick={play} data-testid="listen-button">
         <Play className="h-5 w-5" />
         Listen
       </Button>

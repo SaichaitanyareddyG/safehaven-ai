@@ -1,11 +1,12 @@
 import { format } from 'date-fns'
-import { AlertTriangle, Bell, ChevronDown, ChevronUp } from 'lucide-react'
+import { AlertTriangle, Bell, ChevronDown, ChevronUp, Clock, Utensils } from 'lucide-react'
 import { useState } from 'react'
 
 import { ListenButton } from '@/components/ListenButton'
 import { MyCard } from '@/features/patient-app/MyAppLayout'
 import { courseEnded, textFor } from '@/features/patient-app/use-my-data'
 import { formatDate, formatDateTime } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import { instructionIcon, instructionTypeLabel } from '@/lib/instruction-icons'
 import { textDirection } from '@/lib/language-labels'
 import type { Appointment } from '@/types/appointments'
@@ -17,18 +18,18 @@ export function MedicineCard({ medicine, language }: { medicine: PatientCareInst
   const [open, setOpen] = useState(false)
   const text = textFor(medicine, language)
   const shownIn: Language = medicine.text_by_language[language] ? language : 'ENGLISH'
+  const dose = medicine.schedule?.dose
   return (
     <MyCard className="flex flex-col gap-3" data-testid="my-medicine-card">
-      <p className="text-[21px] font-semibold">{medicine.medication_name ?? 'Medicine'}</p>
-      <p className="text-lg leading-relaxed" dir={textDirection(shownIn)}>
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-[21px] leading-tight font-semibold">{medicine.medication_name ?? 'Medicine'}</p>
+        {dose && <span className="shrink-0 text-base font-semibold text-[#0B5068]">{dose}</span>}
+      </div>
+      <ScheduleFacts medicine={medicine} />
+      {/* The approved wording itself, always shown: the chips summarise it. */}
+      <p className="text-base leading-relaxed text-[#3A4B53]" dir={textDirection(shownIn)}>
         {text}
       </p>
-      <ScheduleFacts medicine={medicine} />
-      {text && (
-        <div>
-          <ListenButton text={text} asPatient />
-        </div>
-      )}
       {open && medicine.why && (
         <div className="rounded-xl bg-[#F3F7F8] p-3">
           <p className="text-base font-semibold">
@@ -38,16 +39,21 @@ export function MedicineCard({ medicine, language }: { medicine: PatientCareInst
           {medicine.why.disclaimer && <p className="mt-1 text-sm text-[#53656E]">{medicine.why.disclaimer}</p>}
         </div>
       )}
-      {medicine.why && (
-        <button
-          type="button"
-          onClick={() => setOpen(!open)}
-          aria-expanded={open}
-          className="flex min-h-11 items-center gap-1 self-start text-base font-semibold text-[#0F6383]"
-        >
-          {open ? 'Show less' : 'Why I take this'}
-          {open ? <ChevronUp className="h-5 w-5" aria-hidden="true" /> : <ChevronDown className="h-5 w-5" aria-hidden="true" />}
-        </button>
+      {(text || medicine.why) && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E7EEF1] pt-3">
+          {text ? <ListenButton text={text} asPatient quiet /> : <span />}
+          {medicine.why && (
+            <button
+              type="button"
+              onClick={() => setOpen(!open)}
+              aria-expanded={open}
+              className="flex min-h-11 items-center gap-1 text-base font-semibold text-[#0F6383]"
+            >
+              {open ? 'Show less' : 'Why I take this'}
+              {open ? <ChevronUp className="h-5 w-5" aria-hidden="true" /> : <ChevronDown className="h-5 w-5" aria-hidden="true" />}
+            </button>
+          )}
+        </div>
       )}
     </MyCard>
   )
@@ -127,9 +133,9 @@ export function CurrentStayCard({ visit, room }: { visit: MyVisit; room: string 
         <span className="text-lg font-semibold">In hospital now</span>
         <span className="rounded-full bg-[#E2F0F5] px-3 py-1 text-sm font-semibold text-[#0B5068]">Current stay</span>
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className={cn('grid gap-2', room ? 'grid-cols-2' : 'grid-cols-1')}>
         <Fact label="Admitted" value={formatDate(visit.admission_date)} />
-        <Fact label="Room" value={room ?? '—'} />
+        {room && <Fact label="Room" value={room} />}
       </div>
       {visit.reason_for_visit && (
         <p className="text-base leading-relaxed">
@@ -164,8 +170,8 @@ function Fact({ label, value }: { label: string; value: string }) {
 }
 
 
-/** When and until when, from the approved dose schedule. Shows nothing it
- *  cannot state exactly. */
+/** When and until when, from the approved dose schedule: one chip per dose
+ *  time. Shows nothing it cannot state exactly. */
 function ScheduleFacts({ medicine }: { medicine: PatientCareInstructionView }) {
   const schedule = medicine.schedule
   if (!schedule) return null
@@ -179,15 +185,32 @@ function ScheduleFacts({ medicine }: { medicine: PatientCareInstructionView }) {
       </p>
     )
   }
-  const when =
-    schedule.kind === 'AS_NEEDED'
-      ? 'Only when needed'
-      : schedule.times_display.join(', ') + (schedule.with_food ? ', with food' : '')
-  const until = schedule.end_date ? formatDate(schedule.end_date) : schedule.kind === 'AS_NEEDED' ? '—' : 'Ongoing'
+  const chip = 'inline-flex min-h-9 items-center gap-1.5 rounded-full px-3 text-[15px] font-semibold'
   return (
-    <div className="grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-2" data-testid="my-medicine-schedule">
-      <Fact label="When" value={when} />
-      <Fact label="Until" value={until} />
+    <div className="flex flex-col gap-2" data-testid="my-medicine-schedule">
+      <div className="flex flex-wrap gap-2">
+        {schedule.kind === 'AS_NEEDED' ? (
+          <span className={cn(chip, 'bg-[#F3F7F8] text-[#16252C]')}>Only when needed</span>
+        ) : (
+          schedule.times_display.map((t) => (
+            <span key={t} className={cn(chip, 'bg-[#E2F0F5] text-[#0B5068]')}>
+              <Clock className="h-4 w-4" aria-hidden="true" />
+              {t}
+            </span>
+          ))
+        )}
+        {schedule.with_food && (
+          <span className={cn(chip, 'bg-[#FFF4E5] text-[#7A4200]')}>
+            <Utensils className="h-4 w-4" aria-hidden="true" />
+            With food
+          </span>
+        )}
+      </div>
+      {schedule.kind === 'SCHEDULED' && (
+        <p className="text-sm text-[#53656E]">
+          {schedule.end_date ? `Until ${formatDate(schedule.end_date)}` : 'Ongoing — until your care team stops it'}
+        </p>
+      )}
     </div>
   )
 }

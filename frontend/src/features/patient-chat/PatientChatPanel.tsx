@@ -15,10 +15,13 @@ export function PatientChatPanel({
   token,
   asPatient = false,
   startOpen = false,
+  suggestions = [],
 }: {
   token?: string
   asPatient?: boolean
   startOpen?: boolean
+  /** One-tap questions shown while the conversation is empty. */
+  suggestions?: string[]
 }) {
   const [isOpen, setIsOpen] = useState(startOpen)
   const [draft, setDraft] = useState('')
@@ -44,10 +47,10 @@ export function PatientChatPanel({
     onSettled: () => setPendingUserText(null),
   })
 
-  function handleSend() {
-    const text = draft.trim()
+  function handleSend(preset?: string) {
+    const text = (preset ?? draft).trim()
     if (!text || mutation.isPending) return
-    setDraft('')
+    if (!preset) setDraft('')
     setPendingUserText(text)
     mutation.mutate(text)
   }
@@ -83,6 +86,20 @@ export function PatientChatPanel({
               <p className="text-base text-muted-foreground">
                 Ask about your medications or instructions — this only answers from your own approved care plan.
               </p>
+            )}
+            {messages.length === 0 && !pendingUserText && suggestions.length > 0 && (
+              <div className="flex flex-wrap gap-2" data-testid="patient-chat-suggestions">
+                {suggestions.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => handleSend(s)}
+                    className="min-h-11 rounded-full border-[1.5px] border-[#C9D6DB] bg-white px-4 text-left text-base text-[#0F6383] hover:bg-[#F3F7F8]"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
             )}
             {messages.map((message) => (
               <ChatBubble key={message.id} message={message} />
@@ -123,7 +140,7 @@ export function PatientChatPanel({
               data-testid="patient-chat-input"
             />
             <Button
-              onClick={handleSend}
+              onClick={() => handleSend()}
               disabled={mutation.isPending || !draft.trim()}
               data-testid="patient-chat-send"
               size="icon-lg"
