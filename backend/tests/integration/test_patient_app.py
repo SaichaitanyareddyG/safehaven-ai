@@ -326,3 +326,24 @@ def test_app_audio_reads_text_aloud(client, outbox, monkeypatch):
     me = _sign_in(client, _token_from(outbox[0]))
     resp = client.post("/patient-app/me/audio", json={"text": "Take one tablet."}, headers=me)
     assert resp.status_code == 200 and resp.headers["content-type"] == "audio/mpeg" and resp.content == b"ID3-fake-mp3"
+
+
+def test_correcting_a_mistyped_email_signs_the_stranger_out(client, outbox):
+    """The invite went to the wrong address and that person signed in. Staff
+    fix the address: the stranger's session and any unused link stop working."""
+    staff = _staff(client)
+    patient = _register(client, staff, email="wrong@example.com", app_consent=True)
+    stranger = _sign_in(client, _token_from(outbox[0]))
+    assert client.get("/patient-app/me", headers=stranger).status_code == 200
+    client.post(f"/patients/{patient['id']}/app-access/invite", json={}, headers=staff)  # a second, unused link
+    unused = _token_from(outbox[-1])
+
+    resp = client.post(
+        f"/patients/{patient['id']}/app-access/invite", json={"email": "right@example.com"}, headers=staff
+    )
+    assert resp.status_code in (200, 201), resp.text
+
+    assert client.get("/patient-app/me", headers=stranger).status_code == 401
+    assert client.post("/patient-app/exchange", json={"token": unused}).status_code != 200
+    assert outbox[-1]["to"] == "right@example.com"
+    _sign_in(client, _token_from(outbox[-1]))  # the right person still gets in

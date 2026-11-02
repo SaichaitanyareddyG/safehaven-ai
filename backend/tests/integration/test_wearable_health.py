@@ -10,7 +10,7 @@ therefore trigger it the same way the dashboard does — by listing alerts.
 from datetime import datetime, timedelta, timezone
 
 from app.audit.models import ActorType, AuditEvent, AuditEventType
-from app.wearables.models import AlertStatus, SafetyAlert, WearableDevice
+from app.wearables.models import AlertStatus, DeviceAssignment, SafetyAlert, WearableDevice
 
 
 def _register_and_login(client, email="clinician@example.com", password="supersecret123"):
@@ -66,8 +66,16 @@ def _go_silent(db_session, device_code, minutes=10):
         db_session.query(WearableDevice).filter(WearableDevice.device_code == device_code).one()
     )
     device.last_seen_at = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    # ...on a band assigned well before that: offline counts from the later
+    # of the two, so a band assigned seconds ago is not yet offline.
+    _assigned_long_ago(db_session, device.id)
     db_session.flush()
     return device
+
+
+def _assigned_long_ago(db_session, device_id):
+    for a in db_session.query(DeviceAssignment).filter(DeviceAssignment.device_id == device_id):
+        a.assigned_at = datetime.now(timezone.utc) - timedelta(days=1)
 
 
 # ── heartbeat keeps a device online ─────────────────────────────────────────

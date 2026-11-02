@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 from app.wearables import sweeper
-from app.wearables.models import SafetyAlert, WearableDevice
+from app.wearables.models import DeviceAssignment, SafetyAlert, WearableDevice
 
 
 def _assigned_band(client):
@@ -27,6 +27,8 @@ def test_sweep_once_raises_offline_without_any_dashboard_request(client, db_sess
     device_id = _assigned_band(client)
     db_session.query(WearableDevice).filter_by(id=device_id).update(
         {"last_seen_at": datetime.now(timezone.utc) - timedelta(minutes=10)})
+    db_session.query(DeviceAssignment).filter_by(device_id=device_id).update(
+        {"assigned_at": datetime.now(timezone.utc) - timedelta(days=1)})  # silent for 10 min, assigned long before
     db_session.flush()
     # The job opens its own session; point it at the test transaction.
     monkeypatch.setattr(sweeper, "SessionLocal", lambda: _NoClose(db_session))

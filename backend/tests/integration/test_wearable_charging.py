@@ -76,6 +76,7 @@ def test_a_charging_band_may_stay_quiet_longer_before_it_counts_as_offline(clien
     headers, _, device = _assigned_band(client)
     _beat(client, device, 60, True)
     band = db_session.query(WearableDevice).filter(WearableDevice.device_code == "SH-WEAR-001").one()
+    _assigned_long_ago(db_session, band.id)
 
     def offline_alerts():
         alerts = client.get("/safety-alerts", headers=headers).json()["results"]
@@ -98,7 +99,18 @@ def test_unplugged_band_is_back_on_the_normal_offline_threshold(client, db_sessi
     headers, _, device = _assigned_band(client)
     _beat(client, device, 60, False)
     band = db_session.query(WearableDevice).filter(WearableDevice.device_code == "SH-WEAR-001").one()
+    _assigned_long_ago(db_session, band.id)
     band.last_seen_at = datetime.now(timezone.utc) - timedelta(minutes=5)
     db_session.flush()
     alerts = client.get("/safety-alerts", headers=headers).json()["results"]
     assert [a for a in alerts if a["alert_type"] == "DEVICE_OFFLINE"] != []
+
+
+def _assigned_long_ago(db_session, device_id):
+    """Offline counts from the later of last check-in and assignment."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.wearables.models import DeviceAssignment
+
+    for a in db_session.query(DeviceAssignment).filter(DeviceAssignment.device_id == device_id):
+        a.assigned_at = datetime.now(timezone.utc) - timedelta(days=1)

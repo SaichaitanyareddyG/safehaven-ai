@@ -2,12 +2,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
 from app.auth.provider import AuthenticatedUser
 from app.core.db import get_db
+from app.core.rate_limit import limiter
 from app.patient_access import service
 from app.patient_access.schemas import (
     CareAccessTokenCreate,
@@ -112,8 +113,16 @@ def get_care_plan(token: str, db: Annotated[Session, Depends(get_db)]) -> Patien
         ) from exc
 
 
+# Each of these costs an AI or speech call and needs only a care link, which
+# may be printed: a leaked link must not mean unlimited spend.
+_AI_RATE_LIMIT = "20/minute"
+
+
 @router.post("/care-plan/audio")
-async def get_care_plan_audio(payload: CarePlanAudioRequest, db: Annotated[Session, Depends(get_db)]) -> Response:
+@limiter.limit(_AI_RATE_LIMIT)
+async def get_care_plan_audio(
+    request: Request, payload: CarePlanAudioRequest, db: Annotated[Session, Depends(get_db)]
+) -> Response:
     """Public, same token gate as /care-plan. Only ever converts text the
     patient's browser is already displaying to speech — audio is an
     accessibility aid, never a separate source of patient-facing content."""
@@ -149,7 +158,10 @@ def get_care_plan_chat(token: str, db: Annotated[Session, Depends(get_db)]) -> C
 
 
 @router.post("/care-plan/chat", response_model=ChatSendResponse)
-def post_care_plan_chat(payload: ChatSendRequest, db: Annotated[Session, Depends(get_db)]) -> ChatSendResponse:
+@limiter.limit(_AI_RATE_LIMIT)
+def post_care_plan_chat(
+    request: Request, payload: ChatSendRequest, db: Annotated[Session, Depends(get_db)]
+) -> ChatSendResponse:
     """Public, same token gate as /care-plan. See app/patient_chat/service.py
     for the two hard, deterministic safety gates every message passes
     through before the AI is ever involved."""
@@ -184,7 +196,10 @@ def post_care_plan_feedback(
 
 
 @router.post("/care-plan/teach-back", response_model=TeachBackResult)
-def post_care_plan_teach_back(payload: TeachBackSubmit, db: Annotated[Session, Depends(get_db)]) -> TeachBackResult:
+@limiter.limit(_AI_RATE_LIMIT)
+def post_care_plan_teach_back(
+    request: Request, payload: TeachBackSubmit, db: Annotated[Session, Depends(get_db)]
+) -> TeachBackResult:
     """Public, same token gate as /care-plan. AHRQ's teach-back method — the
     patient explains the instruction back in their own words instead of just
     clicking "yes, I understand"; see app/patient_feedback/service.py's

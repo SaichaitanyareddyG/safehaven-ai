@@ -260,12 +260,13 @@ def test_queued_event_is_attributed_to_the_assignment_it_happened_under(client, 
         f"/patients/{patient['id']}/wearable-assignment", headers=headers
     ).json()["assignment"]["id"]
 
+    detected_ms = int(datetime.now(timezone.utc).timestamp() * 1000) - 60_000  # before the unassignment
     client.delete(f"/patients/{patient['id']}/wearable-assignment", headers=headers)
 
     # Without the claim it would be discarded...
-    assert _send(client, secret, event_id="evt-nohint").status_code == 202
+    assert _send(client, secret, event_id="evt-nohint", occurred_at_ms=detected_ms).status_code == 202
     # ...but naming the assignment attributes it correctly.
-    resp = _send(client, secret, event_id="evt-queued", assignment_id=assignment_id)
+    resp = _send(client, secret, event_id="evt-queued", assignment_id=assignment_id, occurred_at_ms=detected_ms)
     assert resp.status_code == 201
 
     row = db_session.query(SensorEvent).one()

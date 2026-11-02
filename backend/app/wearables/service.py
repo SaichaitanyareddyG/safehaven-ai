@@ -20,7 +20,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import case
+from sqlalchemy import case, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -695,18 +695,7 @@ def end_assignments_for_patient(
         .all()
     )
     for assignment in assignments:
-        device = get_device(db, assignment.device_id)
         _end_assignment(db, assignment, unassigned_by=None, reason="patient_discharged")
-        # Close out DEVICE health alerts. Once the assignment ends, the device
-        # is unassigned, so neither the offline sweep nor a reconnect can ever
-        # resolve them — they would sit in the live queue forever, about a
-        # patient who has gone home.
-        #
-        # Clinical alerts are deliberately NOT touched: a fall that happened is
-        # still a fall, and closing it is a human decision, not a side effect
-        # of paperwork.
-        for alert_type in (AlertType.DEVICE_OFFLINE, AlertType.DEVICE_LOW_BATTERY):
-            _auto_resolve(db, device, assignment.patient_id, alert_type, "patient_discharged")
     if commit:
         db.commit()
     return assignments
@@ -739,12 +728,26 @@ def _end_assignment(
         event_metadata={"device_code": device.device_code, "reason": reason},
     )
 
+    # Close out this band's DEVICE health alerts, whatever ended the
+    # assignment (discharge, unassign, swap, revoke). Once it ends, neither the
+    # offline sweep nor a reconnect can ever resolve them: they sat in the
+    # queue forever and, before alerts were per band, hid the next band's.
+    #
+    # Clinical alerts are deliberately NOT touched: a fall that happened is
+    # still a fall, and closing it is a human decision, not a side effect
+    # of paperwork.
+    for alert_type in (AlertType.DEVICE_OFFLINE, AlertType.DEVICE_LOW_BATTERY, AlertType.DEVICE_NOT_WORN):
+        _auto_resolve(db, device, assignment.patient_id, alert_type, reason)
+
 
 # ── event ingestion ─────────────────────────────────────────────────────────
 
 
 def _resolve_assignment_for_event(
-    db: Session, device: WearableDevice, claimed_assignment_id: uuid.UUID | None
+    db: Session,
+    device: WearableDevice,
+    claimed_assignment_id: uuid.UUID | None,
+    occurred_at: datetime | None = None,
 ) -> DeviceAssignment | None:
     """Work out which assignment an incoming event belongs to.
 
@@ -763,7 +766,7 @@ def _resolve_assignment_for_event(
     Returns None when neither resolves, and the caller discards the event.
     """
     if claimed_assignment_id is not None:
-        return (
+        claimed = (
             db.query(DeviceAssignment)
             .filter(
                 DeviceAssignment.id == claimed_assignment_id,
@@ -771,6 +774,18 @@ def _resolve_assignment_for_event(
             )
             .first()
         )
+        # Except an event that happened AFTER that assignment ended: the band
+        # restarted with the old patient saved and had not checked in yet
+        # when the new patient pressed help. It belongs to whoever has the
+        # band now, never to the patient it was taken from.
+        if (
+            claimed is not None
+            and claimed.unassigned_at is not None
+            and occurred_at is not None
+            and occurred_at > claimed.unassigned_at
+        ):
+            return active_assignment_for_device(db, device.id)
+        return claimed
     return active_assignment_for_device(db, device.id)
 
 
@@ -783,7 +798,19 @@ def ingest_event(
     Stage 3 stores and attributes events; turning them into nurse alerts is
     Stage 4.
     """
-    assignment = _resolve_assignment_for_event(db, device, payload.assignment_id)
+    now = datetime.now(timezone.utc)
+    # 0 = the band did not know the time yet (no clock sync). Received time
+    # is the best there is; the epoch would date a fall in 1970.
+    clock_known = payload.occurred_at_ms > 0
+    occurred_at = (
+        datetime.fromtimestamp(payload.occurred_at_ms / 1000.0, tz=timezone.utc) if clock_known else now
+    )
+    if not clock_known:
+        logger.warning("Device %s sent an event without a clock; dated on receipt.", device.device_code)
+
+    assignment = _resolve_assignment_for_event(
+        db, device, payload.assignment_id, occurred_at if clock_known else None
+    )
     if assignment is None:
         # Nothing to attribute this to. An unassigned device should not be
         # producing patient events at all, so this is a stale queue or a bug —
@@ -793,9 +820,6 @@ def ingest_event(
             "Discarding sensor event from device %s: no resolvable assignment.", device.device_code
         )
         return "DISCARDED", None
-
-    now = datetime.now(timezone.utc)
-    occurred_at = datetime.fromtimestamp(payload.occurred_at_ms / 1000.0, tz=timezone.utc)
 
     # A device with a wrong clock must not be able to date an event in the
     # future: the nurse queue is ordered by time, and a future-dated alert would
@@ -909,7 +933,7 @@ def _apply_alert_rules(
         return None
 
     assert decision.alert_type is not None and decision.priority is not None
-    existing = _open_alert_to_fold_into(db, assignment.patient_id, decision.alert_type)
+    existing = _open_alert_to_fold_into(db, assignment.patient_id, decision.alert_type, device.id)
     if existing is not None:
         # §16 layer 4: one physical episode is one alert. Twenty fall-like
         # events in three seconds must not become twenty alerts.
@@ -953,7 +977,7 @@ def _apply_alert_rules(
 
 
 def _open_alert_to_fold_into(
-    db: Session, patient_id: uuid.UUID, alert_type: AlertType
+    db: Session, patient_id: uuid.UUID, alert_type: AlertType, device_id: uuid.UUID | None = None
 ) -> SafetyAlert | None:
     """Find an alert this event belongs to, if any.
 
@@ -971,6 +995,16 @@ def _open_alert_to_fold_into(
     Both include ACKNOWLEDGED, not just OPEN: a nurse who has acknowledged and
     is walking to the room should not be handed a fresh alert for the same
     ongoing episode.
+
+    Device health is about one BAND (device_id): a dead band's offline alert,
+    left acknowledged after a swap, used to swallow the next band's, so the
+    second band went silent with nobody told. Not-worn is per removal: the
+    band reports it once when taken off, so it folds only within the clinical
+    window; otherwise one acknowledged-and-forgotten alert hid every later
+    removal.
+
+    The row is locked (FOR UPDATE): a nurse resolving the alert while an event
+    folds into it must not leave a new fall inside a closed alert.
     """
     live = (AlertStatus.OPEN, AlertStatus.ACKNOWLEDGED)
     query = db.query(SafetyAlert).filter(
@@ -978,12 +1012,14 @@ def _open_alert_to_fold_into(
         SafetyAlert.alert_type == alert_type,
         SafetyAlert.status.in_(live),
     )
-    if not rules.is_operational(alert_type):
+    if rules.is_operational(alert_type) and device_id is not None:
+        query = query.filter(SafetyAlert.device_id == device_id)
+    if not rules.is_operational(alert_type) or alert_type is AlertType.DEVICE_NOT_WORN:
         cutoff = datetime.now(timezone.utc) - timedelta(
             seconds=get_settings().alert_dedupe_seconds
         )
         query = query.filter(SafetyAlert.created_at >= cutoff)
-    return query.order_by(SafetyAlert.created_at.desc()).first()
+    return query.order_by(SafetyAlert.created_at.desc()).with_for_update().first()
 
 
 _PRIORITY_ORDER = {AlertPriority.LOW: 0, AlertPriority.MEDIUM: 1, AlertPriority.HIGH: 2}
@@ -1017,8 +1053,10 @@ def list_alerts(
     )
 
 
-def get_alert(db: Session, alert_id: uuid.UUID) -> SafetyAlert:
-    alert = db.get(SafetyAlert, alert_id)
+def get_alert(db: Session, alert_id: uuid.UUID, for_update: bool = False) -> SafetyAlert:
+    # for_update: acknowledge and resolve racing each other (or an event
+    # folding in) must not leave an alert ACKNOWLEDGED with a resolved_at.
+    alert = db.get(SafetyAlert, alert_id, with_for_update=for_update)
     if alert is None:
         raise AlertNotFoundError(str(alert_id))
     return alert
@@ -1031,7 +1069,7 @@ def acknowledge_alert(db: Session, alert_id: uuid.UUID, actor_id: uuid.UUID) -> 
     rewrite who acknowledged it first. Acknowledging a RESOLVED alert is
     rejected — it would move the record backwards.
     """
-    alert = get_alert(db, alert_id)
+    alert = get_alert(db, alert_id, for_update=True)
     if alert.status is AlertStatus.RESOLVED:
         raise AlertTransitionError("alert is already resolved")
     if alert.status is AlertStatus.ACKNOWLEDGED:
@@ -1059,7 +1097,7 @@ def acknowledge_alert(db: Session, alert_id: uuid.UUID, actor_id: uuid.UUID) -> 
 def resolve_alert(db: Session, alert_id: uuid.UUID, actor_id: uuid.UUID) -> SafetyAlert:
     """Close the alert out. Allowed from OPEN as well as ACKNOWLEDGED —
     requiring acknowledgement first would add a click with no safety value."""
-    alert = get_alert(db, alert_id)
+    alert = get_alert(db, alert_id, for_update=True)
     if alert.status is AlertStatus.RESOLVED:
         return alert
 
@@ -1114,7 +1152,9 @@ def device_is_offline(device: WearableDevice, assignment: DeviceAssignment | Non
     """
     if assignment is None:
         return False
-    reference = device.last_seen_at or assignment.assigned_at
+    # The later of the two: a band last seen yesterday (in a drawer) and
+    # assigned a minute ago has had a minute, not a day.
+    reference = max(filter(None, (device.last_seen_at, assignment.assigned_at)))
     settings = get_settings()
     allowance = (
         settings.device_offline_while_charging_seconds
@@ -1123,6 +1163,9 @@ def device_is_offline(device: WearableDevice, assignment: DeviceAssignment | Non
     )
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=allowance)
     return reference < cutoff
+
+
+_OFFLINE_SWEEP_LOCK = 0x5AFE0FF1  # pg advisory lock id, this module's own
 
 
 def sweep_offline_devices(db: Session) -> list[SafetyAlert]:
@@ -1148,13 +1191,19 @@ def sweep_offline_devices(db: Session) -> list[SafetyAlert]:
         .all()
     )
 
+    # One sweep at a time across workers and the dashboard's own reads: two
+    # running together both saw "no alert yet" and raised two HIGH alerts.
+    # Transaction-scoped, so it is released at the commit/rollback below.
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _OFFLINE_SWEEP_LOCK})
+
     created: list[SafetyAlert] = []
     for device, assignment in rows:
         if not device_is_offline(device, assignment):
             continue
         # Operational dedupe (no time window), so a device offline for hours
         # produces one alert rather than one every few minutes.
-        if _open_alert_to_fold_into(db, assignment.patient_id, AlertType.DEVICE_OFFLINE):
+        if _open_alert_to_fold_into(db, assignment.patient_id, AlertType.DEVICE_OFFLINE, device.id):
             continue
 
         alert = SafetyAlert(
@@ -1188,8 +1237,8 @@ def sweep_offline_devices(db: Session) -> list[SafetyAlert]:
             },
         )
 
-    if created:
-        db.commit()
+    # Always end the transaction, which also releases the sweep lock.
+    db.commit()
     return created
 
 
@@ -1303,7 +1352,7 @@ def _raise_operational_alert(
     priority: AlertPriority,
 ) -> SafetyAlert | None:
     """Raise a device-health alert unless one is already live for this patient."""
-    if _open_alert_to_fold_into(db, assignment.patient_id, alert_type) is not None:
+    if _open_alert_to_fold_into(db, assignment.patient_id, alert_type, device.id) is not None:
         return None
 
     alert = SafetyAlert(

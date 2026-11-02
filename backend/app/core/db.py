@@ -11,8 +11,13 @@ settings = get_settings()
 # network segment for sslmode to protect. Set DATABASE_SSL_MODE to "require"
 # or "verify-full" the moment the database isn't on the same host as the
 # app anymore; nothing else here needs to change.
+# hide_parameters: a database error's text otherwise carries the bound
+# values (names, dates of birth, chat text) into the logs.
 engine = create_engine(
-    settings.database_url, pool_pre_ping=True, connect_args={"sslmode": settings.database_ssl_mode}
+    settings.database_url,
+    pool_pre_ping=True,
+    hide_parameters=True,
+    connect_args={"sslmode": settings.database_ssl_mode},
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

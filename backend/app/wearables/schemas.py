@@ -16,6 +16,12 @@ from app.wearables.models import (
 # ── staff-facing (clinician JWT) ────────────────────────────────────────────
 
 
+
+# 1 Jan 2100. A band clock bug sending something larger made datetime raise:
+# a 500 on every retry, and the band never let go of the event. Now a 422,
+# which the band treats as "drop it".
+MAX_EPOCH_MS = 4_102_444_800_000
+
 class WearableDeviceCreate(BaseModel):
     # Staff-supplied, because it has to match the label physically on the
     # hardware. Unlike patient_code, this is not server-generated.
@@ -295,7 +301,7 @@ class SensorEventSubmit(BaseModel):
     event_type: SensorEventType
     # Epoch milliseconds, converted from the device's monotonic clock at send
     # time so a queued event keeps its true detection time.
-    occurred_at_ms: int = Field(ge=0)
+    occurred_at_ms: int = Field(ge=0, le=MAX_EPOCH_MS)
 
     # Optional. A device that knows which assignment it was running when it
     # detected the event lets the backend attribute an event that was queued
@@ -470,7 +476,7 @@ class BandWifiNetworksResponse(BaseModel):
 class MotionEventIn(BaseModel):
     """One fall-detector event as the band summarises it."""
 
-    occurred_at_ms: int = Field(ge=0)
+    occurred_at_ms: int = Field(ge=0, le=MAX_EPOCH_MS)
     outcome: Literal["ALERT", "CHECK", "NONE", "MUTED"]
     freefall_ms: int = Field(ge=0, le=10000)
     drop_cm: float = Field(ge=0, le=2000)

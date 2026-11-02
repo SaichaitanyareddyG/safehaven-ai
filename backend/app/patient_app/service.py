@@ -149,11 +149,27 @@ def email_in_use_elsewhere(db: Session, patient_id: uuid.UUID | None, email: str
     return email_in_use(db, email, except_account_id=own.id if own else None)
 
 
+def _change_account_email(db: Session, account: PatientAppAccount, email: str | None) -> None:
+    """Point a login at a new address, and sign out whoever used the old one.
+
+    A changed address usually means the old one was wrong: a mistyped invite
+    reached a stranger, who signed in. Correcting it used to leave that
+    person's 30-day session and any unused link working.
+    """
+    if account.email is not None and (account.email or "").lower() != (email or "").lower():
+        account.session_version += 1
+        db.query(PatientSignInLink).filter(
+            PatientSignInLink.account_id == account.id, PatientSignInLink.used_at.is_(None)
+        ).update({PatientSignInLink.used_at: datetime.now(timezone.utc)})
+        db.query(PushSubscription).filter(PushSubscription.account_id == account.id).delete()
+    account.email = email
+
+
 def sync_own_account_email(db: Session, patient: Patient) -> None:
     """Staff changed the patient's email: their own login follows it."""
     account = get_account(db, patient.id)
     if account is not None and account.email != patient.email:
-        account.email = patient.email
+        _change_account_email(db, account, patient.email)
         db.flush()
 
 
@@ -215,7 +231,7 @@ def invite(
     elif account.access_expires_at is None or _access_expired(account):
         # Invited after discharge: the same window as if they were discharged today.
         account.access_expires_at = now + timedelta(days=get_settings().patient_access_after_discharge_days)
-    account.email = patient.email
+    _change_account_email(db, account, patient.email)
     db.flush()
 
     token = _create_link(db, account, PURPOSE_INVITE)
