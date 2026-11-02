@@ -1071,10 +1071,17 @@ static void fillWifiSetup(HomeModel &m) {
   m.setupLeftS = (uint16_t)(left / 1000);
 }
 
+/// Signal bars. On the charger the radio rests between check-ins: shown as
+/// the last strength while the last check-in was answered, so a band that is
+/// fine does not read "no signal" (2026-11-02: it looked broken).
 static uint8_t wifiBars() {
-  if (WiFi.status() != WL_CONNECTED) return 0;
+  static uint8_t lastBars = 0;
+  if (WiFi.status() != WL_CONNECTED) {
+    return radioResting && backendLink.status().heartbeatOk ? lastBars : 0;
+  }
   const int rssi = WiFi.RSSI();
-  return rssi > -60 ? 3 : rssi > -72 ? 2 : 1;
+  lastBars = rssi > -60 ? 3 : rssi > -72 ? 2 : 1;
+  return lastBars;
 }
 
 // ── battery ──────────────────────────────────────────────────────────────────
@@ -1994,8 +2001,8 @@ static void buildHome(HomeModel &m) {
   memset(&m, 0, sizeof(m));
   const unsigned long now = millis();
   m.wifiConfigured = wifiConfigured();
-  m.wifiUp = WiFi.status() == WL_CONNECTED;
   m.wifiBars = wifiBars();
+  m.wifiUp = WiFi.status() == WL_CONNECTED || m.wifiBars > 0;  // resting on the charger counts
   m.batteryPct = (int8_t)battery.shown_pct();
   m.batteryLow = battery.low();
   m.charging = battery.charging();
