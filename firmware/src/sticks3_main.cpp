@@ -95,7 +95,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.7.7";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up; 0.7.7: detector log on the dashboard
+static const char *FIRMWARE_VERSION = "0.7.8";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up; 0.7.7: detector log on the dashboard; 0.7.8: Wi-Fi setup on the side button, never the help button
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -762,8 +762,8 @@ static void serviceWifi() {
 }
 
 // ── Wi-Fi setup from a phone ─────────────────────────────────────────────────
-// For a band that has moved somewhere its networks are not: staff open the
-// TEST screen (hold both buttons), then hold the front button 3 s. The band
+// For a band that has moved somewhere its networks are not: staff hold the
+// side button 5 s (any screen). The band
 // starts its own hotspot, password shown on its screen (and as a QR the phone
 // camera joins), and the page that opens on the phone lists the networks the
 // band can see. The chosen network is saved only once the band has joined it,
@@ -2341,7 +2341,7 @@ void setup() {
   startPowerManagement();
 #endif
   serviceAssignment();
-  Serial.println("Buttons: any click wakes the screen or closes an alert.  Hold BOTH 3 s: staff "
+  Serial.println("Buttons: any click wakes the screen or closes an alert.  Hold SIDE 5 s: Wi-Fi setup.  Hold BOTH 3 s: staff "
                  "TEST screen.  Screen sleeps after 15 s.");
   Serial.println("Serial: enroll <CODE> | forget | status | d (battery log) | c (clear log)");
 }
@@ -2710,7 +2710,7 @@ static void fillTalk(HomeModel &m) {
 }
 #endif  // SH_TALK
 
-static const unsigned long SETUP_HOLD_MS = 3000;
+static const unsigned long SETUP_HOLD_MS = 5000;
 static bool setupHoldFired = false;
 
 static void handleButtons() {
@@ -2758,15 +2758,19 @@ static void handleButtons() {
   comboSinceMs = 0;
   comboFired = false;
 
-  // Wi-Fi setup (staff): on the TEST screen, hold the front button alone 3 s.
-  if (!M5.BtnA.isPressed()) setupHoldFired = false;
-  if (!setupHoldFired && screen == Screen::TEST && !setupOn && M5.BtnA.pressedFor(SETUP_HOLD_MS) &&
-      !M5.BtnB.isPressed()) {
+  // Wi-Fi setup (staff): hold the SIDE button alone 5 s, on any screen. Never
+  // the front button: held, that is the patient's help button (2026-11-02:
+  // staff starting setup from the wrong screen called the nurse).
+  if (!M5.BtnB.isPressed()) setupHoldFired = false;
+  if (!setupHoldFired && !setupOn && M5.BtnB.pressedFor(SETUP_HOLD_MS) && !M5.BtnA.isPressed()) {
     setupHoldFired = true;
-    helpFired = true;  // this same press must not count as a help request on HOME
     swallowClicks = true;
+    screenWake("Wi-Fi setup");
+#ifdef SH_TALK
+    if (talkActive()) talkEnd("Wi-Fi setup");
+#endif
     beep(2200, 80);
-    wifiSetupStart("front button held on the TEST screen");
+    wifiSetupStart("side button held");
     return;
   }
 

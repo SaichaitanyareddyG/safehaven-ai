@@ -320,7 +320,7 @@ class StickUi {
       snprintf(buf, sizeof(buf), "fall check resting %lus", (unsigned long)t.fallRestS);
       text(bodyBold_, buf, CX, 232, AMBER_TEXT, middle_center);
     } else {
-      text(small_, "Front: Wi-Fi \xc2\xb7 both: exit \xc2\xb7 B: clear", CX, 232, TEXT3, middle_center);
+      text(small_, "Hold both: exit \xc2\xb7 B: clear", CX, 232, TEXT3, middle_center);
     }
     if (push) c.pushSprite(0, 0);
   }
