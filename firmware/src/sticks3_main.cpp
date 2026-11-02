@@ -96,7 +96,7 @@ using ui::HomeView;
 using ui::Step;
 
 static const char *DEVICE_ID = "SH-WEAR-001";
-static const char *FIRMWARE_VERSION = "0.8.1";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up; 0.7.7: detector log on the dashboard; 0.7.8: Wi-Fi setup on the side button, never the help button; 0.7.9: help works on every screen, alerts close Wi-Fi setup; 0.7.10: restarts itself if it ever freezes; 0.8.0: abnormal repetitive movement measured on real convulsions (rhythm-band share, 12 s); 0.8.1: events straight to flash, ids unique per enrolment, no restarts mid-alert
+static const char *FIRMWARE_VERSION = "0.8.2";  // 0.6.0: the patient build (no bench tools, https only, microphone off); 0.6.3: full-speed Wi-Fi and downloads in pieces while updating; 0.6.9: no backlight flicker on battery; 0.7.0: "Update now" off the charger; 0.7.1: fewer false fall alerts; 0.7.2: Wi-Fi list from the dashboard, setup from a phone; 0.7.3: the list arrives on the charger too; 0.7.4: black box of fall-detector events; 0.7.5: flipping the band over no longer asks "Are you OK?"; 0.7.6: Wi-Fi straight away at start-up; 0.7.7: detector log on the dashboard; 0.7.8: Wi-Fi setup on the side button, never the help button; 0.7.9: help works on every screen, alerts close Wi-Fi setup; 0.7.10: restarts itself if it ever freezes; 0.8.0: abnormal repetitive movement measured on real convulsions (rhythm-band share, 12 s); 0.8.1: events straight to flash, ids unique per enrolment, no restarts mid-alert; 0.8.2: charges 3-4x faster when no Wi-Fi is in reach
 static const char *TIMEZONE = "IST-5:30";  // POSIX TZ for India; display only
 
 static const uint32_t CPU_MHZ = 80;                 // Wi-Fi needs >= 80
@@ -3294,10 +3294,17 @@ static void handleSerial() {
 // Only when nothing needs the network: paired, nothing waiting to send, no
 // alert, check or conversation in progress. An unpaired band on the charger
 // keeps its radio on so staff can pair it from the dashboard.
+//
+// Events waiting to send keep the radio up only while it is CONNECTED and can
+// send them. With no network in reach it used to stay on searching, flat out,
+// for as long as it charged: 17 %/h instead of 55-74 %/h (2026-11-02, a band
+// at a new site with 6 events queued). Now it tries at each 5-minute check-in
+// like the rest, and sends the moment a try connects.
 static bool chargeQuietWanted() {
   if (!onCharger || benchMode || setupOn) return false;
   const LinkStatus ls = backendLink.status();
-  if (!ls.enrolled || ls.credentialRejected || ls.queueDepth > 0) return false;
+  if (!ls.enrolled || ls.credentialRejected) return false;
+  if (ls.queueDepth > 0 && WiFi.status() == WL_CONNECTED) return false;
   if (alertActive || attentionActive || checkActive) return false;
 #ifdef SH_TALK
   if (talkActive()) return false;
