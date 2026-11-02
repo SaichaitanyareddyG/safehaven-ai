@@ -37,9 +37,13 @@ export function MotionLogDialog({ device, onClose }: { device: WearableDevice | 
     refetchInterval: 15_000,
   })
   const label = useMutation({
-    mutationFn: ({ id, value }: { id: string; value: MotionLabel | null }) => labelMotionEvent(id, value),
-    onSuccess: (row) =>
-      queryClient.setQueryData<MotionEvent[]>(key, (old) => old?.map((e) => (e.id === row.id ? row : e))),
+    mutationFn: ({ id, value }: { id: string; value: MotionLabel | null; deviceId: string }) =>
+      labelMotionEvent(id, value),
+    // The band the label was saved for, not whichever dialog is open by now.
+    onSuccess: (row, { deviceId }) =>
+      queryClient.setQueryData<MotionEvent[]>(['motion-events', deviceId], (old) =>
+        old?.map((e) => (e.id === row.id ? row : e)),
+      ),
     onError: (error) => toast.error(error instanceof ApiError ? error.message : 'Could not save the label'),
   })
 
@@ -122,7 +126,11 @@ export function MotionLogDialog({ device, onClose }: { device: WearableDevice | 
                       className="h-8 rounded-md border bg-background px-2 text-sm"
                       value={e.label ?? ''}
                       onChange={(ev) =>
-                        label.mutate({ id: e.id, value: (ev.target.value || null) as MotionLabel | null })
+                        label.mutate({
+                          id: e.id,
+                          value: (ev.target.value || null) as MotionLabel | null,
+                          deviceId: device!.id,
+                        })
                       }
                       data-testid="motion-label"
                     >

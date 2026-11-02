@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
 import { BellRing, ShieldCheck, Volume2, VolumeX } from 'lucide-react'
 
 import { formatTime } from '@/lib/format'
@@ -23,10 +24,20 @@ import {
  * opened that specific patient, and nobody is watching every patient. An alert
  * nobody sees is close to an alert that did not fire.
  */
+const STALE_AFTER_MS = 15_000
+
 export function SafetyAlertsPage() {
   const { data, isLoading, isError, error, dataUpdatedAt } = useLiveSafetyAlerts()
   const sound = useAlertSound()
   const desktop = useDesktopNotificationPermission()
+  // Out of date: no successful poll for STALE_AFTER_MS. Checked on a clock of
+  // its own, since a stuck poll produces no re-render to notice it by.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 5_000)
+    return () => window.clearInterval(id)
+  }, [])
+  const stale = dataUpdatedAt > 0 && now - dataUpdatedAt > STALE_AFTER_MS
 
   // Recently resolved, shown separately and collapsed to the last few. Kept
   // off the main list on purpose: a queue that mixes live and closed alerts
@@ -91,6 +102,15 @@ export function SafetyAlertsPage() {
         </div>
       </div>
 
+      {stale && !isError && (
+        <Alert variant="destructive" className="mb-4" data-testid="alerts-stale">
+          <AlertTitle>Alerts may be out of date</AlertTitle>
+          <AlertDescription>
+            Last updated {formatTime(dataUpdatedAt)}. Check the connection; this page keeps trying.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {isError && (
         <Alert variant="destructive" className="mb-4">
           <AlertTitle>Could not load alerts</AlertTitle>
@@ -109,7 +129,7 @@ export function SafetyAlertsPage() {
       )}
 
       {/* Never "all clear" while the alerts could not even be loaded. */}
-      {!isLoading && !isError && alerts.length === 0 && (
+      {!isLoading && !isError && !stale && alerts.length === 0 && (
         <div
           className="rounded-lg border border-dashed bg-background p-10 text-center"
           data-testid="no-alerts"
@@ -151,7 +171,11 @@ export function SafetyAlertsPage() {
         <section className="mt-10">
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">Recently resolved</h2>
           <div className="space-y-3">
-            {resolved.results.slice(0, 5).map((alert) => (
+            {/* The server sorts by priority; "recent" means latest resolved. */}
+            {[...resolved.results]
+              .sort((x, y) => (y.resolved_at ?? '').localeCompare(x.resolved_at ?? ''))
+              .slice(0, 5)
+              .map((alert) => (
               <SafetyAlertCard key={alert.id} alert={alert} />
             ))}
           </div>

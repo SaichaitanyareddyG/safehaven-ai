@@ -50,7 +50,8 @@ export function SafetyAlertCard({ alert }: { alert: SafetyAlert }) {
   const Icon = ALERT_ICONS[alert.alert_type]
 
   function invalidate() {
-    void queryClient.invalidateQueries({ queryKey: SAFETY_ALERTS_QUERY_KEY })
+    // The prefix: the live queue and "Recently resolved" both change.
+    void queryClient.invalidateQueries({ queryKey: [SAFETY_ALERTS_QUERY_KEY[0]] })
   }
 
   const acknowledge = useMutation({

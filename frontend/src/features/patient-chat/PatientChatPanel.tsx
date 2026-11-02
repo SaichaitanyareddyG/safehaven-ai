@@ -39,6 +39,8 @@ export function PatientChatPanel({
         messages: [...(existing?.messages ?? []), result.patient_message, result.assistant_message],
       }))
     },
+    // A failed send gives the question back, so a long message is not lost.
+    onError: (_error, text) => setDraft((current) => current || text),
     onSettled: () => setPendingUserText(null),
   })
 
@@ -94,6 +96,12 @@ export function PatientChatPanel({
                   <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/60" />
                 </span>
                 Thinking…
+              </p>
+            )}
+            {mutation.isError && (
+              <p className="text-base text-destructive" role="alert" data-testid="patient-chat-error">
+                {mutation.error instanceof Error ? mutation.error.message : 'Could not send'}. Your question is
+                still in the box — try again.
               </p>
             )}
             <div ref={endRef} />

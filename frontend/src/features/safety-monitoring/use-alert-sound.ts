@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useSyncExternalStore } from 'react'
 
 /**
  * A short audible alert, built on the Web Audio API.
@@ -48,43 +48,65 @@ function beep(ctx: AudioContext, startAt: number, frequency: number) {
   oscillator.stop(startAt + 0.24)
 }
 
-export function useAlertSound() {
-  const [enabled, setEnabled] = useState(readPreference)
-  // Phones (iOS above all) keep audio and speech locked until the person taps
-  // something on the page. Until then "Sound on" would be a promise the
-  // browser won't keep, so the button says "Tap to enable sound" instead.
-  const [unlocked, setUnlocked] = useState(false)
-  const contextRef = useRef<AudioContext | null>(null)
+// One preference, one AudioContext and one "unlocked" flag for the whole app.
+// The alerts page (which shows the toggle) and the app-wide notifier (which
+// plays the sound) are separate components; when each kept its own copy, the
+// button changed the page's copy while the notifier went on using the value it
+// read at load, so "Sound on" could stay silent and "Sound off" kept beeping.
+const shared = {
+  enabled: readPreference(),
+  unlocked: false,
+  context: null as AudioContext | null,
+  listeners: new Set<() => void>(),
+}
 
-  useEffect(() => {
+function update(patch: Partial<Pick<typeof shared, 'enabled' | 'unlocked'>>) {
+  Object.assign(shared, patch)
+  if (patch.enabled !== undefined) {
     try {
-      window.localStorage.setItem(STORAGE_KEY, String(enabled))
+      window.localStorage.setItem(STORAGE_KEY, String(patch.enabled))
     } catch {
       // Private browsing or storage disabled — the preference simply will not
       // persist, which is not worth failing over.
     }
-  }, [enabled])
+    // Muting stops speech already queued, not only the next alert.
+    if (!patch.enabled && 'speechSynthesis' in window) window.speechSynthesis.cancel()
+  }
+  for (const listener of shared.listeners) listener()
+}
 
-  const getContext = useCallback((): AudioContext | null => {
-    if (contextRef.current) return contextRef.current
-    const Ctor = window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-    if (!Ctor) return null
-    contextRef.current = new Ctor()
-    return contextRef.current
-  }, [])
+function subscribe(listener: () => void) {
+  shared.listeners.add(listener)
+  return () => void shared.listeners.delete(listener)
+}
 
-  const unlock = useCallback(() => {
-    const ctx = getContext()
-    if (!ctx) return
-    void ctx
-      .resume()
-      .then(() => {
-        if (ctx.state === 'running') setUnlocked(true)
-      })
-      .catch(() => undefined)
-    // iOS also needs one utterance started from a tap before speech works later.
-    if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(''))
-  }, [getContext])
+function getContext(): AudioContext | null {
+  if (shared.context) return shared.context
+  const Ctor = window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!Ctor) return null
+  shared.context = new Ctor()
+  return shared.context
+}
+
+function unlock() {
+  const ctx = getContext()
+  if (!ctx) return
+  void ctx
+    .resume()
+    .then(() => {
+      if (ctx.state === 'running' && !shared.unlocked) update({ unlocked: true })
+    })
+    .catch(() => undefined)
+  // iOS also needs one utterance started from a tap before speech works later.
+  if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(''))
+}
+
+export function useAlertSound() {
+  // Phones (iOS above all) keep audio and speech locked until the person taps
+  // something on the page. Until then "Sound on" would be a promise the
+  // browser won't keep, so the button says "Tap to enable sound" instead.
+  const enabled = useSyncExternalStore(subscribe, () => shared.enabled)
+  const unlocked = useSyncExternalStore(subscribe, () => shared.unlocked)
 
   // The first tap anywhere on the page unlocks audio, not only the button.
   useEffect(() => {
@@ -92,10 +114,10 @@ export function useAlertSound() {
     const onFirstTap = () => unlock()
     window.addEventListener('pointerdown', onFirstTap, { once: true })
     return () => window.removeEventListener('pointerdown', onFirstTap)
-  }, [unlocked, unlock])
+  }, [unlocked])
 
   const play = useCallback(() => {
-    if (!enabled) return
+    if (!shared.enabled) return
     const ctx = getContext()
     if (!ctx) return
     // Still suspended means no gesture has happened yet; the toast carries it.
@@ -104,36 +126,32 @@ export function useAlertSound() {
       beep(ctx, now, 880)
       beep(ctx, now + 0.3, 1046)
     }).catch(() => undefined)
-  }, [enabled, getContext])
+  }, [])
 
-  const speak = useCallback(
-    (lines: string[]) => {
-      if (!enabled || lines.length === 0 || !('speechSynthesis' in window)) return
-      // After the two beeps, not over them.
-      window.setTimeout(() => {
-        for (const line of lines) {
-          const utterance = new SpeechSynthesisUtterance(line)
-          utterance.rate = 0.95
-          window.speechSynthesis.speak(utterance)
-        }
-      }, 700)
-    },
-    [enabled],
-  )
+  const speak = useCallback((lines: string[]) => {
+    if (!shared.enabled || lines.length === 0 || !('speechSynthesis' in window)) return
+    // After the two beeps, not over them; re-checked in case sound went off meanwhile.
+    window.setTimeout(() => {
+      if (!shared.enabled) return
+      for (const line of lines) {
+        const utterance = new SpeechSynthesisUtterance(line)
+        utterance.rate = 0.95
+        window.speechSynthesis.speak(utterance)
+      }
+    }, 700)
+  }, [])
 
   /** Toggle, using the click itself to unlock audio. While still locked, a
    * tap only unlocks — it must not switch sound off. */
   const toggle = useCallback(() => {
-    if (enabled && !unlocked) {
+    if (shared.enabled && !shared.unlocked) {
       unlock()
       return
     }
-    setEnabled((previous) => {
-      const next = !previous
-      if (next) unlock()
-      return next
-    })
-  }, [enabled, unlocked, unlock])
+    const next = !shared.enabled
+    if (next) unlock()
+    update({ enabled: next })
+  }, [])
 
   return { enabled, unlocked, toggle, play, speak }
 }

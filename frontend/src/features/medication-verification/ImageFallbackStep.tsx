@@ -45,6 +45,7 @@ export function ImageFallbackStep({
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (file) identifyMutation.mutate(file)
+    e.target.value = ''  // the same photo can be sent again after a failure
   }
 
   if (!candidate) {
@@ -66,6 +67,13 @@ export function ImageFallbackStep({
             data-testid="image-fallback-file-input"
           />
         </label>
+        {identifyMutation.isError && (
+          <p className="text-sm text-destructive" role="alert" data-testid="image-fallback-error">
+            Could not read the label
+            {identifyMutation.error instanceof Error ? ` (${identifyMutation.error.message})` : ''}. Try the photo
+            again.
+          </p>
+        )}
       </div>
     )
   }

@@ -2,6 +2,8 @@ import { clearPatientToken, clearToken, getPatientToken, getToken } from '@/lib/
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
+const READ_TIMEOUT_MS = 15_000
+
 const NETWORK_ERROR_MESSAGE = "Couldn't reach SafeHaven — check your connection and try again."
 
 export class ApiError extends Error {
@@ -60,11 +62,16 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     if (token) headers['Authorization'] = `Bearer ${token}`
   }
 
+  // Reads give up after READ_TIMEOUT_MS. Without it one request that never
+  // answers (a half-dropped ward network, a stalled server) stopped the alert
+  // queue for good: the 3 s poll waits for the request already in flight, and
+  // nothing ever told the nurse. Writes keep no limit: AI checks can be slow.
   const send = () =>
     fetch(buildUrl(path, params), {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: method === 'GET' ? AbortSignal.timeout(READ_TIMEOUT_MS) : undefined,
     })
 
   let response: Response

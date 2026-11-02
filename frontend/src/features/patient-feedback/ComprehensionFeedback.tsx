@@ -67,6 +67,12 @@ export function ComprehensionFeedback({ token, instructionId }: { token: string;
         ))}
       </div>
 
+      {mutation.isError && (
+        <p className="mt-2 text-base text-destructive" role="alert">
+          That didn't send — please tap your answer again.
+        </p>
+      )}
+
       {selected && selected !== 'UNDERSTOOD' && (
         <p className="mt-2 text-base text-muted-foreground" data-testid="comprehension-feedback-confirmation">
           {CONFIRMATION_TEXT[selected]}
@@ -94,6 +100,11 @@ export function ComprehensionFeedback({ token, instructionId }: { token: string;
           >
             Check my answer
           </Button>
+          {teachBackMutation.isError && (
+            <p className="text-base text-destructive" role="alert">
+              Couldn't check that just now — please try again.
+            </p>
+          )}
         </div>
       )}
 

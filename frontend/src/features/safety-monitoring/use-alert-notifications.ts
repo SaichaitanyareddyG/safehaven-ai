@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { useAlertSound } from '@/features/safety-monitoring/use-alert-sound'
@@ -29,6 +30,7 @@ const APP_TITLE = 'SAFEHAVEN'
 export function useAlertNotifications() {
   const { data } = useLiveSafetyAlerts()
   const { play, speak } = useAlertSound()
+  const navigate = useNavigate()
 
   // Priority is tracked per alert, not just the id. Tracking ids alone missed
   // ESCALATION: an ongoing episode promoted from MEDIUM to HIGH keeps the same
@@ -69,7 +71,7 @@ export function useAlertNotifications() {
     }
 
     if (announceable.length === 0) return
-    for (const alert of announceable) announce(alert)
+    for (const alert of announceable) announce(alert, navigate)
 
     // One sound for the batch, however many arrived — a burst of chimes would
     // be its own kind of alarm fatigue.
@@ -81,7 +83,7 @@ export function useAlertNotifications() {
     const spoken = announceable.slice(0, 2).map(spokenLine)
     if (announceable.length > 2) spoken.push(`And ${announceable.length - 2} more alerts.`)
     speak(spoken)
-  }, [data, play, speak])
+  }, [data, play, speak, navigate])
 }
 
 function spokenLine(alert: SafetyAlert): string {
@@ -89,7 +91,7 @@ function spokenLine(alert: SafetyAlert): string {
   return `${alert.message.replace(/\s*—\s*/g, ', ')}${where}`
 }
 
-function announce(alert: SafetyAlert) {
+function announce(alert: SafetyAlert, navigate: (to: string) => void) {
   const where = alert.room_number ? `Room ${alert.room_number}` : 'Room not recorded'
   const description = `${alert.patient_name} (${alert.patient_code}) · ${where} · ${alert.device_code}`
 
@@ -97,10 +99,11 @@ function announce(alert: SafetyAlert) {
   // observed-not-diagnosed wording is identical here, on the card, and in the
   // audit timeline. Never compose alert text in the UI.
   // Red for urgent (fall, help, no response), amber otherwise; one tap to
-  // the patient. A full page load is fine here: this runs outside React.
+  // the patient, within the app: a full reload reset the seen-set, so an
+  // alert arriving during it was listed but never announced.
   const viewPatient = {
     label: 'View patient',
-    onClick: () => window.location.assign(`/patients/${alert.patient_id}`),
+    onClick: () => navigate(`/patients/${alert.patient_id}`),
   }
   if (alert.priority === 'HIGH') {
     toast.error(alert.message, { description, duration: 30_000, action: viewPatient })

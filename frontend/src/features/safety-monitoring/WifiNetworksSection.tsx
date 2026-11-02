@@ -26,7 +26,7 @@ const WIFI_QUERY_KEY = ['wifi-networks']
 export function WifiNetworksSection() {
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState(false)
-  const { data } = useQuery({ queryKey: WIFI_QUERY_KEY, queryFn: listWifiNetworks })
+  const { data, isError, isLoading } = useQuery({ queryKey: WIFI_QUERY_KEY, queryFn: listWifiNetworks })
   const remove = useMutation({
     mutationFn: (n: WifiNetwork) => removeWifiNetwork(n.id),
     onSuccess: (_r, n) => {
@@ -55,7 +55,9 @@ export function WifiNetworksSection() {
           Add network
         </Button>
       </div>
-      {networks.length === 0 ? (
+      {isError ? (
+        <p className="text-sm text-destructive">Could not load the list. Reload the page before adding anything.</p>
+      ) : isLoading ? null : networks.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           None yet. Bands use only the Wi-Fi they were set up with until you add one.
         </p>
@@ -137,7 +139,7 @@ function AddWifiDialog({ open, onClose }: { open: boolean; onClose: () => void }
           className="space-y-4"
           onSubmit={(e) => {
             e.preventDefault()
-            if (valid) add.mutate()
+            if (valid && !add.isPending) add.mutate()
           }}
         >
           <div className="space-y-2">
