@@ -114,3 +114,23 @@ test('print the care plan', async ({ page }) => {
   await expect(page.getByTestId('care-plan-document')).toContainText('Metoprolol')
   await expect(page.getByTestId('care-plan-document')).toContainText('8:00 AM, 8:00 PM')
 })
+
+test('deactivate, reactivate and delete a patient app account', async ({ page }) => {
+  const staff = await newStaff()
+  const patient = await newPatientWithApp(staff.token)
+  await signInStaff(page, staff.token)
+  await page.goto(`/patients/${patient.id}`)
+  const panel = page.getByTestId('patient-app-panel')
+
+  await panel.getByTestId('patient-app-deactivate').click()
+  await expect(panel.locator('[data-status]')).toHaveText('Deactivated')
+  await expect(page.getByTestId('patient-app-deactivated-note')).toContainText('Deactivated by staff')
+  // Never created a password: no Reactivate, a new invite instead.
+  await expect(panel.getByTestId('patient-app-reactivate')).toHaveCount(0)
+  await expect(page.getByTestId('patient-app-deactivated-note')).toContainText('Send a new invite')
+
+  page.once('dialog', (d) => d.accept())
+  await panel.getByTestId('patient-app-delete').click()
+  await expect(panel.locator('[data-status]')).toHaveText('Not invited')
+})
+

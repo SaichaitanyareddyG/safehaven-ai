@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Eye, EyeOff, Loader2, MailCheck } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import { getLinkInfo, requestSignInLink, setMyPassword, signInWithPassword } from '@/api/patient-app'
 import { Logo } from '@/components/BrandPanel'
@@ -38,6 +38,8 @@ export function MySignInPage() {
     if (linkToken) window.history.replaceState(null, '', window.location.pathname)
   }, [linkToken, navigate])
 
+  // After deactivating or deleting the account from the app.
+  const afterAccount = (useLocation().state as { notice?: string } | null)?.notice ?? null
   const [mode, setMode] = useState<'sign-in' | 'forgot'>('sign-in')
   const [linkGone, setLinkGone] = useState(false)
 
@@ -48,7 +50,9 @@ export function MySignInPage() {
     <ForgotPassword onBack={() => setMode('sign-in')} />
   ) : (
     <SignIn
-      notice={linkGone ? 'This link was already used or has expired. Sign in below, or use "Forgot password?".' : null}
+      notice={
+        linkGone ? 'This link was already used or has expired. Sign in below, or use "Forgot password?".' : afterAccount
+      }
       onForgot={() => setMode('forgot')}
     />
   )
@@ -89,7 +93,7 @@ function SignIn({ notice, onForgot }: { notice: string | null; onForgot: () => v
             setError(
               err instanceof ApiError && err.status === 429
                 ? 'Too many tries — please wait a minute.'
-                : err instanceof ApiError && err.status === 401
+                : err instanceof ApiError && (err.status === 401 || err.status === 403)
                   ? err.message
                   : 'Could not sign in just now. Check your connection and try again.',
             )

@@ -467,3 +467,78 @@ def test_medicines_due_at_the_same_time_share_one_reminder(client, outbox):
     assert home.count("BEGIN:VEVENT") == 2
     assert home.count("T080000") == 1 and home.count("T200000") == 1
     assert home.count("UNTIL=") == 1
+
+
+# ── Deactivate and delete (2026-11-10) ────────────────────────────────────────
+
+
+def _login(client, email, password="patientpass1"):
+    return client.post("/patient-app/login", json={"email": email, "password": password})
+
+
+def test_staff_deactivate_then_reactivate_keeps_the_password(client, outbox):
+    staff = _staff(client)
+    patient = _register(client, staff, email="maria@example.com", app_consent=True)
+    me = _sign_in(client, _token_from(outbox[0]))
+
+    resp = client.post(f"/patients/{patient['id']}/app-access/deactivate", headers=staff)
+    assert resp.status_code == 200 and resp.json()["status"] == "REVOKED"
+    assert resp.json()["deactivated_by_patient"] is False
+    assert client.get("/patient-app/me", headers=me).status_code == 401
+    blocked = _login(client, "maria@example.com")
+    assert blocked.status_code == 403 and "care team" in blocked.json()["detail"]
+    # No "forgot password" way round a staff deactivation.
+    sent = len(outbox)
+    client.post("/patient-app/request-link", json={"email": "maria@example.com"})
+    assert len(outbox) == sent
+
+    back = client.post(f"/patients/{patient['id']}/app-access/reactivate", headers=staff)
+    assert back.json()["status"] == "ACTIVE"
+    assert _login(client, "maria@example.com").status_code == 200  # same password, no new email
+
+
+def test_staff_delete_removes_the_login_but_keeps_the_record(client, outbox, db_session):
+    staff = _staff(client)
+    patient = _register(client, staff, email="maria@example.com", app_consent=True)
+    me = _sign_in(client, _token_from(outbox[0]))
+    _approve(client, staff, patient["id"], "Take Metoprolol 25 mg orally twice daily with food.")
+    client.post("/patient-app/me/chat", json={"text": "When do I take it?"}, headers=me)
+
+    assert client.delete(f"/patients/{patient['id']}/app-access", headers=staff).status_code == 204
+    assert db_session.query(PatientAppAccount).count() == 0
+    assert _login(client, "maria@example.com").status_code == 401
+    assert client.get(f"/patients/{patient['id']}/app-access", headers=staff).json()["status"] == "NOT_INVITED"
+    from app.patient_chat.models import PatientChatMessage
+
+    assert db_session.query(PatientChatMessage).filter_by(patient_id=patient["id"]).count() >= 1  # history stays
+    # A fresh invite works after deleting.
+    again = client.post(f"/patients/{patient['id']}/app-access/invite", json={}, headers=staff)
+    assert again.status_code in (200, 201), again.text
+
+
+def test_patient_deactivates_their_own_account_and_signing_in_switches_it_back_on(client, outbox):
+    staff = _staff(client)
+    patient = _register(client, staff, email="maria@example.com", app_consent=True)
+    me = _sign_in(client, _token_from(outbox[0]))
+
+    wrong = client.post("/patient-app/me/deactivate", json={"password": "nope-nope"}, headers=me)
+    assert wrong.status_code == 403  # not 401: the app would treat that as signed out
+    assert client.get("/patient-app/me", headers=me).status_code == 200
+    assert client.post("/patient-app/me/deactivate", json={"password": "patientpass1"}, headers=me).status_code == 204
+    assert client.get("/patient-app/me", headers=me).status_code == 401
+    view = client.get(f"/patients/{patient['id']}/app-access", headers=staff).json()
+    assert view["status"] == "REVOKED" and view["deactivated_by_patient"] is True
+
+    assert _login(client, "maria@example.com").status_code == 200
+    assert client.get(f"/patients/{patient['id']}/app-access", headers=staff).json()["status"] == "ACTIVE"
+
+
+def test_patient_deletes_their_own_account(client, outbox, db_session):
+    staff = _staff(client)
+    patient = _register(client, staff, email="maria@example.com", app_consent=True)
+    me = _sign_in(client, _token_from(outbox[0]))
+    assert client.post("/patient-app/me/delete", json={"password": "patientpass1"}, headers=me).status_code == 204
+    assert db_session.query(PatientAppAccount).count() == 0
+    assert client.get("/patient-app/me", headers=me).status_code == 401
+    assert _login(client, "maria@example.com").status_code == 401
+    assert client.get(f"/patients/{patient['id']}/app-access", headers=staff).json()["status"] == "NOT_INVITED"

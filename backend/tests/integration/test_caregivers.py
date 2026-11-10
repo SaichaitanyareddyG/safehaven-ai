@@ -157,3 +157,21 @@ def test_caregiver_events_are_audited(client, setup, outbox):
     client.post(f"/patients/{setup['patient']['id']}/app-access/caregivers/{caregiver_id}/revoke", headers=setup["staff"])
     types = {e["event_type"] for e in client.get(f"/patients/{setup['patient']['id']}/audit", headers=setup["staff"]).json()["results"]}
     assert {"CAREGIVER_INVITED", "CAREGIVER_ACCESS_REVOKED"} <= types
+
+
+def test_staff_deactivate_reactivate_and_delete_a_caregiver(client, setup, outbox, db_session):
+    _invite(client, setup)
+    caregiver = db_session.query(PatientAppAccount).filter_by(role="CAREGIVER").one()
+    base = f"/patients/{setup['patient']['id']}/app-access/caregivers/{caregiver.id}"
+    staff = setup["staff"]
+    me = {"Authorization": "Bearer " + client.post(
+        "/patient-app/set-password", json={"token": _token(outbox[-1]), "password": "carerpass1"}).json()["access_token"]}
+
+    assert client.post(f"{base}/deactivate", headers=staff).json()["status"] == "REVOKED"
+    assert client.get("/patient-app/me", headers=me).status_code == 401
+    assert client.post(f"{base}/reactivate", headers=staff).json()["status"] == "ACTIVE"
+    assert client.post("/patient-app/login", json={"email": caregiver.email, "password": "carerpass1"}).status_code == 200
+    assert client.delete(base, headers=staff).status_code == 204
+    assert db_session.query(PatientAppAccount).filter_by(role="CAREGIVER").count() == 0
+    # The patient's own login is untouched.
+    assert db_session.query(PatientAppAccount).filter_by(role="PATIENT").count() == 1

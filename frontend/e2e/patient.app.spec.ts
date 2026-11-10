@@ -83,3 +83,24 @@ test('sign out leaves nothing behind', async ({ page }) => {
   await page.goto('/my')
   await expect(page).toHaveURL(/\/my\/sign-in$/)
 })
+
+test('deactivate my own account, then sign in again to switch it back on', async ({ page }) => {
+  const staff = await newStaff()
+  const patient = await newPatientWithApp(staff.token)
+  await openInvite(page, patient.inviteLink)
+
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'My care' }).click()
+  await page.getByTestId('my-account-deactivate').click()
+  await page.getByTestId('my-account-password').fill('wrong-password')
+  await page.getByTestId('my-account-confirm-button').click()
+  await expect(page.getByTestId('my-account-confirm').getByRole('alert')).toContainText("isn't right")
+  await page.getByTestId('my-account-password').fill(PATIENT_PASSWORD)
+  await page.getByTestId('my-account-confirm-button').click()
+
+  await expect(page).toHaveURL(/\/my\/sign-in$/)
+  await expect(page.getByRole('alert')).toContainText('deactivated')
+  await page.getByTestId('my-email').fill(patient.email)
+  await page.getByTestId('my-password').fill(PATIENT_PASSWORD)
+  await page.getByTestId('my-sign-in').click()
+  await expect(page).toHaveURL(/\/my$/)
+})

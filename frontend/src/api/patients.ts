@@ -53,8 +53,18 @@ export function inviteToApp(
   return apiRequest<AppInviteResponse>(`/patients/${patientId}/app-access/invite`, { method: 'POST', body: payload })
 }
 
-export function revokeAppAccess(patientId: string): Promise<AppAccess> {
-  return apiRequest<AppAccess>(`/patients/${patientId}/app-access/revoke`, { method: 'POST' })
+/** Paused: no sign-in, no reminders; the password is kept for reactivating. */
+export function deactivateAppAccess(patientId: string): Promise<AppAccess> {
+  return apiRequest<AppAccess>(`/patients/${patientId}/app-access/deactivate`, { method: 'POST' })
+}
+
+export function reactivateAppAccess(patientId: string): Promise<AppAccess> {
+  return apiRequest<AppAccess>(`/patients/${patientId}/app-access/reactivate`, { method: 'POST' })
+}
+
+/** Removes the patient's app login for good; the record and history stay. */
+export function deleteAppAccess(patientId: string): Promise<void> {
+  return apiRequest<void>(`/patients/${patientId}/app-access`, { method: 'DELETE' })
 }
 
 /** Patients at home who missed 2+ doses in the app today or yesterday. */
@@ -69,8 +79,16 @@ export function inviteCaregiver(
   return apiRequest(`/patients/${patientId}/app-access/caregivers`, { method: 'POST', body: payload })
 }
 
-export function revokeCaregiver(patientId: string, caregiverId: string): Promise<Caregiver> {
-  return apiRequest<Caregiver>(`/patients/${patientId}/app-access/caregivers/${caregiverId}/revoke`, { method: 'POST' })
+export function deactivateCaregiver(patientId: string, caregiverId: string): Promise<Caregiver> {
+  return apiRequest<Caregiver>(`/patients/${patientId}/app-access/caregivers/${caregiverId}/deactivate`, { method: 'POST' })
+}
+
+export function reactivateCaregiver(patientId: string, caregiverId: string): Promise<Caregiver> {
+  return apiRequest<Caregiver>(`/patients/${patientId}/app-access/caregivers/${caregiverId}/reactivate`, { method: 'POST' })
+}
+
+export function deleteCaregiver(patientId: string, caregiverId: string): Promise<void> {
+  return apiRequest<void>(`/patients/${patientId}/app-access/caregivers/${caregiverId}`, { method: 'DELETE' })
 }
 
 export function getCarePlanPrintout(patientId: string): Promise<CarePlanPrintout> {

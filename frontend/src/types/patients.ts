@@ -67,6 +67,9 @@ export interface Caregiver {
   status: AppAccessStatus
   invited_at: string | null
   last_sign_in_at: string | null
+  /** REVOKED = deactivated: by the person themselves (signing in undoes it) or by staff. */
+  deactivated_by_patient: boolean
+  has_password: boolean
 }
 
 export interface AppAccess {
@@ -80,6 +83,8 @@ export interface AppAccess {
   activated_at: string | null
   last_sign_in_at: string | null
   access_expires_at: string | null
+  deactivated_by_patient: boolean
+  has_password: boolean
 }
 
 export interface AppInviteResponse extends AppInviteOutcome {

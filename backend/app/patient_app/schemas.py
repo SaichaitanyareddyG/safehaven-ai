@@ -22,6 +22,8 @@ class CaregiverRead(BaseModel):
     status: AppAccessStatus
     invited_at: datetime | None
     last_sign_in_at: datetime | None
+    deactivated_by_patient: bool = False
+    has_password: bool = False
 
 
 class AppAccessRead(BaseModel):
@@ -33,6 +35,10 @@ class AppAccessRead(BaseModel):
     activated_at: datetime | None = None
     last_sign_in_at: datetime | None = None
     access_expires_at: datetime | None = None
+    # REVOKED = deactivated; by the patient themselves or by staff.
+    deactivated_by_patient: bool = False
+    # Reactivating needs one; without it, staff send the invite again.
+    has_password: bool = False
     caregivers: list[CaregiverRead] = []
 
 
@@ -84,6 +90,12 @@ class ExchangeRequest(BaseModel):
 
 class SetPasswordRequest(BaseModel):
     token: str = Field(max_length=200)
+    password: str = Field(max_length=128)
+
+
+class PasswordConfirm(BaseModel):
+    """The patient's own password, to confirm deactivating or deleting."""
+
     password: str = Field(max_length=128)
 
 

@@ -9,7 +9,7 @@ with care links and staff password links.
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -76,6 +76,9 @@ class PatientAppAccount(Base):
     # Kept as is (the URL must be shown again); the feed holds no medicine
     # names, and a new one can be made at any time.
     calendar_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    # Deactivated (status REVOKED) by the patient themselves from the app:
+    # signing in again switches it back on. Deactivated by staff: only staff can.
+    deactivated_by_patient: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )

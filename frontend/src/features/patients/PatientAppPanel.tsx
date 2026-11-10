@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, Mail, ShieldOff } from 'lucide-react'
+import { Check, Copy, Mail, PauseCircle, PlayCircle, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
-import { getAppAccess, inviteToApp, revokeAppAccess } from '@/api/patients'
+import { deactivateAppAccess, deleteAppAccess, getAppAccess, inviteToApp, reactivateAppAccess } from '@/api/patients'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,11 +18,12 @@ const STATUS_BADGE: Record<AppAccessStatus, { label: string; className: string }
   NOT_INVITED: { label: 'Not invited', className: 'border-border text-muted-foreground' },
   INVITED: { label: 'Invite sent', className: 'border-sky-200 bg-sky-50 text-sky-800' },
   ACTIVE: { label: 'Using the app', className: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
-  REVOKED: { label: 'Turned off', className: 'border-border bg-muted text-muted-foreground' },
+  REVOKED: { label: 'Deactivated', className: 'border-amber-200 bg-amber-50 text-amber-800' },
   EXPIRED: { label: 'Ended after discharge', className: 'border-border bg-muted text-muted-foreground' },
 }
 
-/** Staff side of the patient app: contact, consent, invite, turn off.
+/** Staff side of the patient app: contact, consent, invite, deactivate /
+ *  reactivate (password kept) or delete the login (record and history stay).
  *  The app's content needs no entry here — it comes from approved instructions. */
 export function PatientAppPanel({ patientId }: { patientId: string }) {
   const queryClient = useQueryClient()
@@ -59,15 +60,35 @@ export function PatientAppPanel({ patientId }: { patientId: string }) {
     onError: (error) => toast.error(error instanceof ApiError ? error.message : 'Could not send the invite'),
   })
 
-  const revokeMutation = useMutation({
-    mutationFn: () => revokeAppAccess(patientId),
+  const failed = (what: string) => (error: Error) =>
+    toast.error(error instanceof ApiError ? error.message : `Could not ${what}`)
+  const deactivate = useMutation({
+    mutationFn: () => deactivateAppAccess(patientId),
     onSuccess: () => {
       refresh()
       setFallbackLink(null)
-      toast.success('Patient app turned off — they are signed out everywhere')
+      toast.success('App account deactivated — signed out everywhere, reminders stopped')
     },
-    onError: (error) => toast.error(error instanceof ApiError ? error.message : 'Could not turn off the app'),
+    onError: failed('deactivate the account'),
   })
+  const reactivate = useMutation({
+    mutationFn: () => reactivateAppAccess(patientId),
+    onSuccess: () => {
+      refresh()
+      toast.success('App account reactivated — the patient signs in with the same password')
+    },
+    onError: failed('reactivate the account'),
+  })
+  const remove = useMutation({
+    mutationFn: () => deleteAppAccess(patientId),
+    onSuccess: () => {
+      refresh()
+      setFallbackLink(null)
+      toast.success('App account deleted. The patient record and history are kept.')
+    },
+    onError: failed('delete the account'),
+  })
+  const busy = deactivate.isPending || reactivate.isPending || remove.isPending
 
   if (isLoading || !access) return <p className="text-sm text-muted-foreground">Loading…</p>
 
@@ -85,9 +106,18 @@ export function PatientAppPanel({ patientId }: { patientId: string }) {
         </Badge>
       </div>
       <p className="text-xs text-muted-foreground">
-        The patient signs in from an emailed link and sees their medicines, visits and care instructions as you approve
-        them. Emails never contain medical details.
+        The patient creates a password from the emailed invite and sees their medicines, visits and care instructions
+        as you approve them. Emails never contain medical details.
       </p>
+      {access.status === 'REVOKED' && (
+        <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900" data-testid="patient-app-deactivated-note">
+          {access.deactivated_by_patient
+            ? 'The patient deactivated their own account. Signing in again switches it back on.'
+            : access.has_password
+              ? 'Deactivated by staff. The patient cannot sign in until you reactivate it; their password is kept.'
+              : 'Deactivated by staff before a password was created. Send a new invite to switch it back on.'}
+        </p>
+      )}
 
       {(access.invited_at || access.last_sign_in_at || access.access_expires_at) && (
         <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
@@ -184,18 +214,52 @@ export function PatientAppPanel({ patientId }: { patientId: string }) {
 
       {access.consent_at && <CaregiversSection patientId={patientId} caregivers={access.caregivers ?? []} />}
 
-      {live && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2 text-destructive hover:text-destructive"
-          disabled={revokeMutation.isPending}
-          onClick={() => revokeMutation.mutate()}
-          data-testid="patient-app-revoke"
-        >
-          <ShieldOff className="h-4 w-4" />
-          Turn off app access
-        </Button>
+      {(live || access.status === 'REVOKED') && (
+        <div className="-ml-2 flex flex-wrap gap-1">
+          {live && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => deactivate.mutate()}
+              data-testid="patient-app-deactivate"
+            >
+              <PauseCircle className="h-4 w-4" />
+              Deactivate
+            </Button>
+          )}
+          {access.status === 'REVOKED' && access.has_password && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => reactivate.mutate()}
+              data-testid="patient-app-reactivate"
+            >
+              <PlayCircle className="h-4 w-4" />
+              Reactivate
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            disabled={busy}
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Delete this patient's app account? Their login, password and calendar link are removed for good. " +
+                    'The patient record, dose history and questions are kept. You can invite them again later.',
+                )
+              )
+                remove.mutate()
+            }}
+            data-testid="patient-app-delete"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete account
+          </Button>
+        </div>
       )}
     </div>
   )

@@ -48,6 +48,16 @@ export function resetMyCalendar(): Promise<CalendarLinks> {
   return apiRequest<CalendarLinks>('/patient-app/me/calendar/reset', { method: 'POST', asPatient: true })
 }
 
+/** The patient pauses their own login (signing in again undoes it). */
+export function deactivateMyAccount(password: string): Promise<void> {
+  return apiRequest<void>('/patient-app/me/deactivate', { method: 'POST', body: { password }, asPatient: true })
+}
+
+/** The patient removes their own app login for good. */
+export function deleteMyAccount(password: string): Promise<void> {
+  return apiRequest<void>('/patient-app/me/delete', { method: 'POST', body: { password }, asPatient: true })
+}
+
 export function markRemindersPrompted(): Promise<void> {
   return apiRequest<void>('/patient-app/me/reminders-prompted', { method: 'POST', asPatient: true })
 }

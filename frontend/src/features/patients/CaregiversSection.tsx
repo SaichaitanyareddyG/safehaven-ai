@@ -1,9 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, Mail, ShieldOff, UserPlus } from 'lucide-react'
+import { Check, Copy, Mail, PauseCircle, PlayCircle, Trash2, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
-import { inviteCaregiver, revokeCaregiver } from '@/api/patients'
+import { deactivateCaregiver, deleteCaregiver, inviteCaregiver, reactivateCaregiver } from '@/api/patients'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,7 +16,7 @@ const STATUS: Record<Caregiver['status'], string> = {
   NOT_INVITED: 'Not invited',
   INVITED: 'Invite sent',
   ACTIVE: 'Using the app',
-  REVOKED: 'Turned off',
+  REVOKED: 'Deactivated',
   EXPIRED: 'Ended after discharge',
 }
 
@@ -55,14 +55,33 @@ export function CaregiversSection({ patientId, caregivers }: { patientId: string
     onError: (error) => toast.error(error instanceof ApiError ? error.message : 'Could not invite the caregiver'),
   })
 
-  const revoke = useMutation({
-    mutationFn: (id: string) => revokeCaregiver(patientId, id),
+  const failed = (what: string) => (error: Error) =>
+    toast.error(error instanceof ApiError ? error.message : `Could not ${what}`)
+  const deactivate = useMutation({
+    mutationFn: (id: string) => deactivateCaregiver(patientId, id),
     onSuccess: (c) => {
       refresh()
-      toast.success(`${c.display_name ?? 'Caregiver'}'s app access turned off`)
+      toast.success(`${c.display_name ?? 'Caregiver'}'s account deactivated`)
     },
-    onError: (error) => toast.error(error instanceof ApiError ? error.message : 'Could not turn off access'),
+    onError: failed('deactivate the account'),
   })
+  const reactivate = useMutation({
+    mutationFn: (id: string) => reactivateCaregiver(patientId, id),
+    onSuccess: (c) => {
+      refresh()
+      toast.success(`${c.display_name ?? 'Caregiver'}'s account reactivated`)
+    },
+    onError: failed('reactivate the account'),
+  })
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteCaregiver(patientId, id),
+    onSuccess: () => {
+      refresh()
+      toast.success('Caregiver account deleted')
+    },
+    onError: failed('delete the account'),
+  })
+  const busy = deactivate.isPending || reactivate.isPending || remove.isPending
 
   const valid = name.trim() && /^\S+@\S+\.\S+$/.test(email.trim()) && consent
 
@@ -105,21 +124,44 @@ export function CaregiversSection({ patientId, caregivers }: { patientId: string
                 aria-label={`Send ${c.display_name} a new invite`}
               >
                 <Mail className="h-4 w-4" />
-                {live ? 'Resend' : 'Invite again'}
+                {live ? 'Resend' : 'New invite'}
               </Button>
               {live && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="text-destructive hover:text-destructive"
-                  disabled={revoke.isPending}
-                  onClick={() => revoke.mutate(c.id)}
-                  aria-label={`Turn off ${c.display_name}'s access`}
+                  disabled={busy}
+                  onClick={() => deactivate.mutate(c.id)}
+                  aria-label={`Deactivate ${c.display_name}'s account`}
                 >
-                  <ShieldOff className="h-4 w-4" />
-                  Turn off
+                  <PauseCircle className="h-4 w-4" />
+                  Deactivate
                 </Button>
               )}
+              {c.status === 'REVOKED' && c.has_password && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => reactivate.mutate(c.id)}
+                  aria-label={`Reactivate ${c.display_name}'s account`}
+                >
+                  <PlayCircle className="h-4 w-4" />
+                  Reactivate
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-destructive hover:text-destructive"
+                disabled={busy}
+                onClick={() => {
+                  if (window.confirm(`Delete ${c.display_name}'s app account for good?`)) remove.mutate(c.id)
+                }}
+                aria-label={`Delete ${c.display_name}'s account`}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         )

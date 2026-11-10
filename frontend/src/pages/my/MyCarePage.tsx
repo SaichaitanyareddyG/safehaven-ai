@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 
 import { MyAppLayout, MyCard, MyLoadError, MyLoading, MySectionTitle } from '@/features/patient-app/MyAppLayout'
 import { AllergiesCard, CareInstructionCard } from '@/features/patient-app/MyCards'
+import { MyAccountCard } from '@/features/patient-app/MyAccountCard'
 import { openReport } from '@/api/reports'
 import { useMyCarePlan, useMyReports } from '@/features/patient-app/use-my-data'
 import { formatDate } from '@/lib/format'
@@ -96,6 +97,7 @@ export function MyCarePage() {
               ))}
             </>
           )}
+          <MyAccountCard />
         </>
       )}
     </MyAppLayout>

@@ -141,12 +141,10 @@ def _create_link(db: Session, account: PatientAppAccount, purpose: str) -> str:
 
 
 def email_in_use(db: Session, email: str, *, except_account_id: uuid.UUID | None = None) -> bool:
-    """One live app login per address — patient's or caregiver's — so a
-    sign-in link always opens exactly one person's view. A login turned off
-    does not block the address for ever."""
-    query = db.query(PatientAppAccount.id).filter(
-        func.lower(PatientAppAccount.email) == normalize_email(email), PatientAppAccount.status != STATUS_REVOKED
-    )
+    """One app login per address — patient's or caregiver's — so a sign-in
+    always opens exactly one person's view. A deactivated login keeps its
+    address (it can be switched back on); deleting the login frees it."""
+    query = db.query(PatientAppAccount.id).filter(func.lower(PatientAppAccount.email) == normalize_email(email))
     if except_account_id is not None:
         query = query.filter(PatientAppAccount.id != except_account_id)
     return query.first() is not None
@@ -268,11 +266,16 @@ def revoke(db: Session, patient_id: uuid.UUID, revoked_by: uuid.UUID) -> Patient
     return revoke_account(db, account, revoked_by)
 
 
-def revoke_account(db: Session, account: PatientAppAccount, revoked_by: uuid.UUID) -> PatientAppAccount:
+def revoke_account(
+    db: Session, account: PatientAppAccount, revoked_by: uuid.UUID | None, *, by_patient: bool = False
+) -> PatientAppAccount:
+    """Deactivate: signed out everywhere, no sign-in, reminders and calendar
+    stop. The password is kept, so it can be switched back on (reactivate)."""
     if account.status != STATUS_REVOKED:
         now = datetime.now(timezone.utc)
         account.status = STATUS_REVOKED
         account.revoked_at = now
+        account.deactivated_by_patient = by_patient
         account.session_version += 1
         db.query(PatientSignInLink).filter(
             PatientSignInLink.account_id == account.id, PatientSignInLink.used_at.is_(None)
@@ -286,15 +289,78 @@ def revoke_account(db: Session, account: PatientAppAccount, revoked_by: uuid.UUI
                 if account.role == ROLE_CAREGIVER
                 else AuditEventType.PATIENT_APP_ACCESS_REVOKED
             ),
-            actor_type=ActorType.CLINICIAN,
-            actor_id=revoked_by,
+            actor_type=ActorType.PATIENT if by_patient else ActorType.CLINICIAN,
+            actor_id=None if by_patient else revoked_by,
             patient_id=account.patient_id,
             entity_type="PatientAppAccount",
             entity_id=account.id,
+            event_metadata={"by": "patient" if by_patient else "staff"},
         )
     db.commit()
     db.refresh(account)
     return account
+
+
+def _switch_back_on(account: PatientAppAccount) -> None:
+    account.status = STATUS_ACTIVE
+    account.revoked_at = None
+    account.deactivated_by_patient = False
+
+
+def reactivate_account(db: Session, account: PatientAppAccount, by: uuid.UUID) -> PatientAppAccount:
+    """Staff switch a deactivated login back on: the same email and password
+    work again, no new email needed."""
+    if account.status != STATUS_REVOKED:
+        return account
+    if account.password_hash is None:
+        raise PatientAppError("This login never had a password. Send the invite again instead.")
+    _switch_back_on(account)
+    record_event(
+        db,
+        event_type=(
+            AuditEventType.CAREGIVER_ACCESS_RESTORED
+            if account.role == ROLE_CAREGIVER
+            else AuditEventType.PATIENT_APP_ACCESS_RESTORED
+        ),
+        actor_type=ActorType.CLINICIAN,
+        actor_id=by,
+        patient_id=account.patient_id,
+        entity_type="PatientAppAccount",
+        entity_id=account.id,
+    )
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+def delete_account(
+    db: Session, account: PatientAppAccount, by: uuid.UUID | None, *, by_patient: bool = False
+) -> None:
+    """Remove the app login for good: password, calendar link, phones and
+    links go with it (cascade). What the patient recorded — dose taps, chat —
+    belongs to the patient record and stays. Staff can invite again later."""
+    record_event(
+        db,
+        event_type=(
+            AuditEventType.CAREGIVER_ACCOUNT_DELETED
+            if account.role == ROLE_CAREGIVER
+            else AuditEventType.PATIENT_APP_ACCOUNT_DELETED
+        ),
+        actor_type=ActorType.PATIENT if by_patient else ActorType.CLINICIAN,
+        actor_id=None if by_patient else by,
+        patient_id=account.patient_id,
+        entity_type="PatientAppAccount",
+        entity_id=account.id,
+        event_metadata={"by": "patient" if by_patient else "staff", "role": account.role},
+    )
+    db.delete(account)
+    db.commit()
+
+
+def check_own_password(account: PatientAppAccount, password: str) -> None:
+    """The patient confirms with their password before deactivating or deleting."""
+    if account.password_hash is None or not verify_password(password, account.password_hash):
+        raise WrongPasswordError()
 
 
 def invite_caregiver(
@@ -398,12 +464,8 @@ def request_sign_in_link(db: Session, email: str) -> Callable[[], object] | None
     email = normalize_email(email)
     if not email:
         return None
-    account = (
-        db.query(PatientAppAccount)
-        .filter(func.lower(PatientAppAccount.email) == email, PatientAppAccount.status != STATUS_REVOKED)
-        .first()
-    )
-    if account is None or _access_expired(account):
+    account = db.query(PatientAppAccount).filter(func.lower(PatientAppAccount.email) == email).first()
+    if account is None or not _may_sign_in(account) or _access_expired(account):
         return None
     token = _create_link(db, account, PURPOSE_SIGN_IN)
     db.commit()
@@ -428,9 +490,15 @@ def _live_link(db: Session, raw_token: str) -> tuple[PatientSignInLink, PatientA
         raise InvalidSignInLinkError()
     # Links made before caregivers existed carry no account: the patient's own.
     account = db.get(PatientAppAccount, link.account_id) if link.account_id else get_account(db, link.patient_id)
-    if account is None or account.status == STATUS_REVOKED or _access_expired(account):
+    if account is None or not _may_sign_in(account) or _access_expired(account):
         raise InvalidSignInLinkError()
     return link, account
+
+
+def _may_sign_in(account: PatientAppAccount) -> bool:
+    """Not deactivated, or deactivated by the patient themselves (signing in
+    switches it back on). Staff deactivation stays until staff undo it."""
+    return account.status != STATUS_REVOKED or account.deactivated_by_patient
 
 
 def link_info(db: Session, raw_token: str) -> LinkInfo:
@@ -467,6 +535,8 @@ def set_password(db: Session, raw_token: str, password: str) -> tuple[Patient, P
     if account.status == STATUS_INVITED:
         account.status = STATUS_ACTIVE
         account.activated_at = now
+    elif account.status == STATUS_REVOKED:  # deactivated by the patient: back on
+        _switch_back_on(account)
     account.last_sign_in_at = now
     patient = db.get(Patient, link.patient_id)
     record_event(
@@ -482,6 +552,10 @@ def set_password(db: Session, raw_token: str, password: str) -> tuple[Patient, P
     return patient, account
 
 
+class AccountDeactivatedError(Exception):
+    """Right password, but staff deactivated this login."""
+
+
 class WrongPasswordError(Exception):
     """Email or password wrong, or the login cannot be used: one message for all."""
 
@@ -490,7 +564,10 @@ def sign_in_with_password(db: Session, email: str, password: str) -> tuple[Patie
     email = normalize_email(email) or ""
     account = (
         db.query(PatientAppAccount)
-        .filter(func.lower(PatientAppAccount.email) == email, PatientAppAccount.status == STATUS_ACTIVE)
+        .filter(
+            func.lower(PatientAppAccount.email) == email,
+            PatientAppAccount.status.in_((STATUS_ACTIVE, STATUS_REVOKED)),
+        )
         .first()
     )
     # Checked even without an account, so a missing login takes as long as a wrong password.
@@ -498,6 +575,10 @@ def sign_in_with_password(db: Session, email: str, password: str) -> tuple[Patie
     ok = verify_password(password, hashed)
     if account is None or account.password_hash is None or not ok or _access_expired(account):
         raise WrongPasswordError()
+    if account.status == STATUS_REVOKED:
+        if not account.deactivated_by_patient:
+            raise AccountDeactivatedError()
+        _switch_back_on(account)  # the patient deactivated it themselves: signing in undoes it
     patient = db.get(Patient, account.patient_id)
     now = datetime.now(timezone.utc)
     account.last_sign_in_at = now

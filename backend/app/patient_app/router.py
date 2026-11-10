@@ -45,6 +45,7 @@ from app.patient_app.schemas import (
     AppInviteResponse,
     CalendarLinks,
     ExchangeRequest,
+    PasswordConfirm,
     LinkInfoResponse,
     PasswordSignInRequest,
     SetPasswordRequest,
@@ -56,6 +57,7 @@ from app.patient_app.schemas import (
 )
 from app.patient_app.security import InvalidPatientTokenError, create_patient_token, decode_patient_token
 from app.patient_app.service import (
+    AccountDeactivatedError,
     InvalidSignInLinkError,
     PatientAccessDeniedError,
     PatientAppError,
@@ -79,6 +81,7 @@ _EXCHANGE_RATE_LIMIT = "30/minute"
 _LINK_INVALID = "This link was already used or has expired. Sign in below, or use \"Forgot password?\" for a new link."
 _LOGIN_RATE_LIMIT = "10/minute"
 _WRONG_PASSWORD = "That email and password don't match. Try again, or use \"Forgot password?\"."
+_DEACTIVATED_BY_STAFF = "Your hospital has turned this account off. Please ask your care team to turn it back on."
 
 
 def to_caregiver_read(account) -> CaregiverRead:
@@ -90,6 +93,8 @@ def to_caregiver_read(account) -> CaregiverRead:
         status=service.access_status(account),
         invited_at=account.invited_at,
         last_sign_in_at=account.last_sign_in_at,
+        deactivated_by_patient=account.deactivated_by_patient,
+        has_password=account.password_hash is not None,
     )
 
 
@@ -104,6 +109,8 @@ def to_access_read(patient: Patient, account, db: Session | None = None) -> AppA
         activated_at=account.activated_at if account else None,
         last_sign_in_at=account.last_sign_in_at if account else None,
         access_expires_at=account.access_expires_at if account else None,
+        deactivated_by_patient=bool(account and account.deactivated_by_patient),
+        has_password=bool(account and account.password_hash),
     )
 
 
@@ -162,6 +169,53 @@ def revoke_app_access(
     return to_access_read(get_patient(db, patient_id), account, db)
 
 
+def _own_account(db: Session, patient_id: uuid.UUID) -> PatientAppAccount:
+    try:
+        get_patient(db, patient_id)
+    except PatientNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found") from exc
+    account = service.get_account(db, patient_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This patient has no app account.")
+    return account
+
+
+# "Deactivate" in the dashboard; /revoke kept for older clients.
+@staff_router.post("/{patient_id}/app-access/deactivate", response_model=AppAccessRead)
+def deactivate_app_access(
+    patient_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> AppAccessRead:
+    """Paused: no sign-in, no reminders. The password is kept for reactivating."""
+    account = service.revoke_account(db, _own_account(db, patient_id), uuid.UUID(current_user.id))
+    return to_access_read(get_patient(db, patient_id), account, db)
+
+
+@staff_router.post("/{patient_id}/app-access/reactivate", response_model=AppAccessRead)
+def reactivate_app_access(
+    patient_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> AppAccessRead:
+    try:
+        account = service.reactivate_account(db, _own_account(db, patient_id), uuid.UUID(current_user.id))
+    except PatientAppError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return to_access_read(get_patient(db, patient_id), account, db)
+
+
+@staff_router.delete("/{patient_id}/app-access", status_code=status.HTTP_204_NO_CONTENT)
+def delete_app_access(
+    patient_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> None:
+    """The patient's own app login, removed for good. The patient record,
+    dose history and chat stay. Caregivers keep theirs."""
+    service.delete_account(db, _own_account(db, patient_id), uuid.UUID(current_user.id))
+
+
 @staff_router.post("/{patient_id}/app-access/caregivers", response_model=CaregiverInviteResponse)
 def invite_caregiver(
     patient_id: uuid.UUID,
@@ -201,6 +255,48 @@ def revoke_caregiver(
     except PatientAppError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return to_caregiver_read(service.revoke_account(db, account, uuid.UUID(current_user.id)))
+
+
+def _caregiver(db: Session, patient_id: uuid.UUID, account_id: uuid.UUID) -> PatientAppAccount:
+    try:
+        return service.get_caregiver(db, patient_id, account_id)
+    except PatientAppError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@staff_router.post("/{patient_id}/app-access/caregivers/{account_id}/deactivate", response_model=CaregiverRead)
+def deactivate_caregiver(
+    patient_id: uuid.UUID,
+    account_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CaregiverRead:
+    account = _caregiver(db, patient_id, account_id)
+    return to_caregiver_read(service.revoke_account(db, account, uuid.UUID(current_user.id)))
+
+
+@staff_router.post("/{patient_id}/app-access/caregivers/{account_id}/reactivate", response_model=CaregiverRead)
+def reactivate_caregiver(
+    patient_id: uuid.UUID,
+    account_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CaregiverRead:
+    try:
+        account = service.reactivate_account(db, _caregiver(db, patient_id, account_id), uuid.UUID(current_user.id))
+    except PatientAppError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return to_caregiver_read(account)
+
+
+@staff_router.delete("/{patient_id}/app-access/caregivers/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_caregiver(
+    patient_id: uuid.UUID,
+    account_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> None:
+    service.delete_account(db, _caregiver(db, patient_id, account_id), uuid.UUID(current_user.id))
 
 
 # --- The patient's own API -----------------------------------------------------
@@ -289,8 +385,48 @@ def login(
         patient, account = service.sign_in_with_password(db, payload.email, payload.password)
     except WrongPasswordError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_WRONG_PASSWORD) from exc
+    except AccountDeactivatedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_DEACTIVATED_BY_STAFF) from exc
     token, expires_at = create_patient_token(patient.id, account.id, account.session_version)
     return PatientSessionResponse(access_token=token, expires_at=expires_at)
+
+
+@router.post("/me/deactivate", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(_LOGIN_RATE_LIMIT)
+def deactivate_my_account(
+    request: Request,
+    payload: PasswordConfirm,
+    session: Annotated[PatientSession, Depends(get_patient_session)],
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    """The patient (or caregiver) pauses their own login. Signing in again
+    with the same password switches it back on."""
+    account = db.get(PatientAppAccount, session.account.id)
+    try:
+        service.check_own_password(account, payload.password)
+    except WrongPasswordError as exc:
+        # 403, not 401: the app reads 401 as "signed out" and would leave the page.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="That password isn't right.") from exc
+    service.revoke_account(db, account, None, by_patient=True)
+
+
+@router.post("/me/delete", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(_LOGIN_RATE_LIMIT)
+def delete_my_account(
+    request: Request,
+    payload: PasswordConfirm,
+    session: Annotated[PatientSession, Depends(get_patient_session)],
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    """The patient (or caregiver) removes their own app login for good. The
+    hospital's record of their care stays with the hospital."""
+    account = db.get(PatientAppAccount, session.account.id)
+    try:
+        service.check_own_password(account, payload.password)
+    except WrongPasswordError as exc:
+        # 403, not 401: the app reads 401 as "signed out" and would leave the page.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="That password isn't right.") from exc
+    service.delete_account(db, account, None, by_patient=True)
 
 
 @router.get("/me", response_model=MyProfile)
