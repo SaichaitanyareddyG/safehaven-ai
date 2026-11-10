@@ -29,7 +29,8 @@
 // Backup setup hotspot: any band joins a Wi-Fi with this name and password
 // when none of its own networks is in range. Staff turn it on as a phone
 // hotspot in a new place, then add the real Wi-Fi on the dashboard (Bands >
-// Wi-Fi networks) or on the band (TEST screen, hold the front button).
+// Wi-Fi networks) or on the band (hold the side button 5 s: phone setup).
+// See firmware/NEW_BAND_SETUP.md.
 // Leave the password empty to turn the backup hotspot off.
 #define SH_SETUP_SSID "SafeHaven-Setup"
 #define SH_SETUP_PASSWORD ""

@@ -60,8 +60,11 @@ pio device monitor -e m5sticks3-bench
 
 ### Adding a band (no USB, no terminal)
 
+A brand-new band needs one USB install first; the full walk-through, from box
+to patient, is [NEW_BAND_SETUP.md](NEW_BAND_SETUP.md).
+
 A band with no credential shows **"Add this band"** and a six-digit code.
-In the web app: **Devices → Add device**, type the code and the label printed on
+In the web app: **Bands → Add device**, type the code and the label printed on
 the band. The band finishes enrolling within seconds, then shows "Not paired
 yet"; assign it to a patient from the patient's page. Serial `enroll <CODE>`
 (with a code from `backend/scripts/register_device.py`) still works as a fallback,
@@ -75,8 +78,9 @@ not trigger.
 | Action | Effect |
 |---|---|
 | Any single click | Wakes the screen; stops a fall beacon; closes an alert |
-| Hold **front** 2 s | **Help request** → HIGH alert on the nurse dashboard |
-| Hold **both** 3 s | Staff only: enter / leave the TEST screen (auto-exits after 10 min idle) |
+| Hold **front** 2 s | **Help request** → HIGH alert on the nurse dashboard (any screen) |
+| Hold **side** 5 s | Staff: Wi-Fi setup from a phone (band's own hotspot; closes after 3 min unused) |
+| Hold **both** 3 s | Staff only: enter / leave the TEST screen (auto-exits after 10 min idle); cancels Wi-Fi setup |
 | Side click on TEST | Clears the test results |
 
 ### What the wearer sees
