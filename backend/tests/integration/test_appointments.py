@@ -40,7 +40,7 @@ def setup(client, outbox):
         headers=staff,
     ).json()
     token = outbox[0].split("#token=", 1)[1].split()[0]
-    me = {"Authorization": "Bearer " + client.post("/patient-app/exchange", json={"token": token}).json()["access_token"]}
+    me = {"Authorization": "Bearer " + client.post("/patient-app/set-password", json={"token": token, "password": "patientpass1"}).json()["access_token"]}
     return {"staff": staff, "patient": patient, "me": me}
 
 

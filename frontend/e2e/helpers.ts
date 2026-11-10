@@ -48,7 +48,11 @@ export async function newPatientWithApp(token: string, instructions: string[] = 
     await call(`/instructions/${instruction.body.id}/generate`, { method: 'POST', token })
     await call(`/instructions/${instruction.body.id}/approve`, { method: 'POST', token })
   }
-  return { id: created.body.id as string, inviteLink: created.body.app_invite.link as string }
+  return {
+    id: created.body.id as string,
+    email: created.body.email as string,
+    inviteLink: created.body.app_invite.link as string,
+  }
 }
 
 export async function discharge(token: string, patientId: string) {
@@ -71,4 +75,17 @@ export async function signInStaff(page: Page, token: string) {
 /** Open the emailed link on this page's origin (the link names the configured dashboard). */
 export function linkPath(link: string) {
   return link.replace(/^https?:\/\/[^/]+/, '')
+}
+
+export const PATIENT_PASSWORD = 'patientpass1'
+
+/** The patient opens the invite, creates a password and lands on Today.
+ *  The first-sign-in reminders question is answered "Not now" unless kept. */
+export async function openInvite(page: Page, link: string, { keepReminderPrompt = false } = {}) {
+  await page.goto(linkPath(link))
+  await page.getByTestId('my-new-password').fill(PATIENT_PASSWORD)
+  await page.getByTestId('my-new-password-again').fill(PATIENT_PASSWORD)
+  await page.getByTestId('my-save-password').click()
+  await page.waitForURL(/\/my$/)
+  if (!keepReminderPrompt) await page.getByTestId('my-reminders-not-now').click()
 }

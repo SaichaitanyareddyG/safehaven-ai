@@ -1,4 +1,4 @@
-"""The patient app: invites, passwordless sign-in and what a signed-in
+"""The patient app: invites, email + password sign-in and what a signed-in
 patient may read.
 
 Nothing here is entered twice. Medicines, instructions, conditions and
@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.audit.models import ActorType, AuditEventType
 from app.audit.service import record_event
+from app.auth.security import hash_password, verify_password
 from app.core import email as email_module
 from app.core.config import get_settings
 from app.encounters.models import Encounter
@@ -105,11 +106,19 @@ def _access_expired(account: PatientAppAccount) -> bool:
     return account.access_expires_at is not None and account.access_expires_at <= datetime.now(timezone.utc)
 
 
+# An invite link with no time limit still expires in the column's terms.
+_NO_TIME_LIMIT = timedelta(days=3650)
+
+PASSWORD_MIN = 8
+PASSWORD_MAX = 128
+
+
 def _create_link(db: Session, account: PatientAppAccount, purpose: str) -> str:
     settings = get_settings()
     now = datetime.now(timezone.utc)
+    hours = settings.patient_invite_link_ttl_hours
     lifetime = (
-        timedelta(hours=settings.patient_invite_link_ttl_hours)
+        (timedelta(hours=hours) if hours else _NO_TIME_LIMIT)
         if purpose == PURPOSE_INVITE
         else timedelta(minutes=settings.patient_sign_in_link_ttl_minutes)
     )
@@ -174,13 +183,8 @@ def sync_own_account_email(db: Session, patient: Patient) -> None:
 
 
 def _expiry_for_new_login(db: Session, patient: Patient) -> datetime | None:
-    if patient.admission_status == AdmissionStatus.ACTIVE:
-        return None
-    existing = [a.access_expires_at for a in db.query(PatientAppAccount).filter(PatientAppAccount.patient_id == patient.id)]
-    live = [e for e in existing if e is not None and e > datetime.now(timezone.utc)]
-    if live:
-        return max(live)
-    return datetime.now(timezone.utc) + timedelta(days=get_settings().patient_access_after_discharge_days)
+    """No end date (2026-11-09): access lasts until staff turn it off."""
+    return None
 
 
 def invite(
@@ -226,11 +230,7 @@ def invite(
             account.revoked_at = None
         account.invited_at = now
         account.invited_by = invited_by
-    if patient.admission_status == AdmissionStatus.ACTIVE:
-        account.access_expires_at = None
-    elif account.access_expires_at is None or _access_expired(account):
-        # Invited after discharge: the same window as if they were discharged today.
-        account.access_expires_at = now + timedelta(days=get_settings().patient_access_after_discharge_days)
+    account.access_expires_at = None  # no end date since 2026-11-09
     _change_account_email(db, account, patient.email)
     db.flush()
 
@@ -382,22 +382,19 @@ def get_caregiver(db: Session, patient_id: uuid.UUID, account_id: uuid.UUID) -> 
 def on_admission_status_changed(db: Session, patient: Patient) -> None:
     """Called inside the discharge transaction (app/orchestration/). The app
     stays useful at home for a fixed window; readmission reopens it."""
+    # Since 2026-11-09 access does not end after discharge: the app is how a
+    # patient at home gets reminders. Staff turn it off when it should stop.
     accounts = db.query(PatientAppAccount).filter(PatientAppAccount.patient_id == patient.id).all()
-    expires = (
-        datetime.now(timezone.utc) + timedelta(days=get_settings().patient_access_after_discharge_days)
-        if patient.admission_status == AdmissionStatus.DISCHARGED
-        else None
-    )
     for account in accounts:  # the patient's own login and every caregiver's
-        account.access_expires_at = expires
+        account.access_expires_at = None
     db.flush()
 
 
 def request_sign_in_link(db: Session, email: str) -> Callable[[], object] | None:
-    """Makes a link if the address belongs to a patient with app access, and
-    returns the email to send — the caller sends it after answering, so the
-    response takes the same time either way and never confirms who is a
-    patient."""
+    """"Forgot password": makes a reset link if the address belongs to a
+    login with app access, and returns the email to send. The caller sends it
+    after answering, so the response takes the same time either way and never
+    confirms who is a patient."""
     email = normalize_email(email)
     if not email:
         return None
@@ -411,15 +408,20 @@ def request_sign_in_link(db: Session, email: str) -> Callable[[], object] | None
     token = _create_link(db, account, PURPOSE_SIGN_IN)
     db.commit()
     return partial(
-        email_module.send_patient_sign_in_email,
+        email_module.send_patient_password_reset_email,
         account.email,
         link_url(token),
-        get_settings().patient_sign_in_link_ttl_minutes,
+        get_settings().patient_sign_in_link_ttl_minutes // 60,
     )
 
 
-def exchange_link(db: Session, raw_token: str) -> tuple[Patient, PatientAppAccount]:
-    """Spends a sign-in link. The caller then issues a session token."""
+@dataclass(frozen=True)
+class LinkInfo:
+    email: str | None
+    first_time: bool  # no password yet: "Create your password", else "Choose a new password"
+
+
+def _live_link(db: Session, raw_token: str) -> tuple[PatientSignInLink, PatientAppAccount]:
     now = datetime.now(timezone.utc)
     link = db.query(PatientSignInLink).filter(PatientSignInLink.token_hash == _hash(raw_token)).first()
     if link is None or link.used_at is not None or link.expires_at <= now:
@@ -428,10 +430,29 @@ def exchange_link(db: Session, raw_token: str) -> tuple[Patient, PatientAppAccou
     account = db.get(PatientAppAccount, link.account_id) if link.account_id else get_account(db, link.patient_id)
     if account is None or account.status == STATUS_REVOKED or _access_expired(account):
         raise InvalidSignInLinkError()
-    patient = db.get(Patient, link.patient_id)
+    return link, account
 
+
+def link_info(db: Session, raw_token: str) -> LinkInfo:
+    """What the link page should say, without spending the link."""
+    _link, account = _live_link(db, raw_token)
+    return LinkInfo(email=account.email, first_time=account.password_hash is None)
+
+
+def _check_password(password: str) -> None:
+    if not (PASSWORD_MIN <= len(password) <= PASSWORD_MAX):
+        raise PatientAppError(f"Use at least {PASSWORD_MIN} characters.")
+
+
+def set_password(db: Session, raw_token: str, password: str) -> tuple[Patient, PatientAppAccount]:
+    """Spends an invite or reset link and sets the login's password. The
+    caller then issues a session token. Choosing a new password signs out
+    every other device."""
+    _check_password(password)
+    link, account = _live_link(db, raw_token)
+    now = datetime.now(timezone.utc)
     # Spend it in one conditional UPDATE: of two requests racing with the same
-    # link, exactly one gets a session.
+    # link, exactly one sets the password.
     spent = (
         db.query(PatientSignInLink)
         .filter(PatientSignInLink.id == link.id, PatientSignInLink.used_at.is_(None))
@@ -439,9 +460,46 @@ def exchange_link(db: Session, raw_token: str) -> tuple[Patient, PatientAppAccou
     )
     if spent != 1:
         raise InvalidSignInLinkError()
+    if account.password_hash is not None:
+        account.session_version += 1  # a reset: whoever else was signed in is out
+    account.password_hash = hash_password(password)
+    account.password_set_at = now
     if account.status == STATUS_INVITED:
         account.status = STATUS_ACTIVE
         account.activated_at = now
+    account.last_sign_in_at = now
+    patient = db.get(Patient, link.patient_id)
+    record_event(
+        db,
+        event_type=AuditEventType.PATIENT_APP_SIGNED_IN,
+        actor_type=ActorType.PATIENT,
+        patient_id=patient.id,
+        entity_type="PatientAppAccount",
+        entity_id=account.id,
+        event_metadata={"via": f"{link.purpose}_password_set", "role": account.role},
+    )
+    db.commit()
+    return patient, account
+
+
+class WrongPasswordError(Exception):
+    """Email or password wrong, or the login cannot be used: one message for all."""
+
+
+def sign_in_with_password(db: Session, email: str, password: str) -> tuple[Patient, PatientAppAccount]:
+    email = normalize_email(email) or ""
+    account = (
+        db.query(PatientAppAccount)
+        .filter(func.lower(PatientAppAccount.email) == email, PatientAppAccount.status == STATUS_ACTIVE)
+        .first()
+    )
+    # Checked even without an account, so a missing login takes as long as a wrong password.
+    hashed = account.password_hash if account and account.password_hash else _DUMMY_HASH
+    ok = verify_password(password, hashed)
+    if account is None or account.password_hash is None or not ok or _access_expired(account):
+        raise WrongPasswordError()
+    patient = db.get(Patient, account.patient_id)
+    now = datetime.now(timezone.utc)
     account.last_sign_in_at = now
     record_event(
         db,
@@ -450,10 +508,13 @@ def exchange_link(db: Session, raw_token: str) -> tuple[Patient, PatientAppAccou
         patient_id=patient.id,
         entity_type="PatientAppAccount",
         entity_id=account.id,
-        event_metadata={"via": link.purpose, "role": account.role},
+        event_metadata={"via": "password", "role": account.role},
     )
     db.commit()
     return patient, account
+
+
+_DUMMY_HASH = hash_password("not a real password - timing only")
 
 
 def authorize(

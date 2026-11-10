@@ -20,7 +20,7 @@ STATUS_ACTIVE = "ACTIVE"
 STATUS_REVOKED = "REVOKED"
 
 PURPOSE_INVITE = "invite"
-PURPOSE_SIGN_IN = "sign_in"
+PURPOSE_SIGN_IN = "sign_in"  # since 2026-11-09: a password reset link
 
 
 ROLE_PATIENT = "PATIENT"
@@ -61,11 +61,21 @@ class PatientAppAccount(Base):
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_sign_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # Set at discharge: the app keeps working at home for a while, then stops.
-    # Null while the patient is admitted.
+    # No longer set (2026-11-09: access does not end after discharge; staff
+    # turn it off). Kept so an end date could be brought back.
     access_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # In every patient token; bumping it signs out every device at once.
     session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # Sign-in is email + password (2026-11-09). Set from the invite link;
+    # null until then, so an invited login cannot be used without the link.
+    password_hash: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    password_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The "get reminders?" question has been answered (or dismissed).
+    reminders_prompted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Secret part of the calendar feed URL the patient's phone subscribes to.
+    # Kept as is (the URL must be shown again); the feed holds no medicine
+    # names, and a new one can be made at any time.
+    calendar_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )

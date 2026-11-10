@@ -1,13 +1,42 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useEffect } from 'react'
+import { toast } from 'sonner'
 
-import { getMyAppointments, getMyCarePlan, getMyDoses, getMyProfile, getMyReports, getMyVisits } from '@/api/patient-app'
+import {
+  getMyAppointments,
+  getMyCalendar,
+  getMyCarePlan,
+  getMyDoses,
+  getMyProfile,
+  getMyReports,
+  getMyVisits,
+  resetMyCalendar,
+} from '@/api/patient-app'
 import { getPatientToken } from '@/lib/auth-storage'
 import type { PatientCareInstructionView } from '@/types/patient-access'
 import type { Language } from '@/types/patients'
 
 // Every key starts with 'my' so signing out can drop them all at once.
+const CALENDAR_KEY = ['my', 'calendar']
+
+/** The private reminder-calendar links (CalendarReminders.tsx). */
+export function useMyCalendar() {
+  return useQuery({ queryKey: CALENDAR_KEY, queryFn: getMyCalendar, staleTime: Infinity, enabled: !!getPatientToken() })
+}
+
+export function useResetCalendar() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: resetMyCalendar,
+    onSuccess: (links) => {
+      queryClient.setQueryData(CALENDAR_KEY, links)
+      toast.success('New link made. Add it to your calendar again, and remove the old SafeHaven calendar.')
+    },
+    onError: () => toast.error("Couldn't make a new link. Please try again."),
+  })
+}
+
 export function useMyProfile() {
   return useQuery({ queryKey: ['my', 'profile'], queryFn: getMyProfile, enabled: !!getPatientToken() })
 }

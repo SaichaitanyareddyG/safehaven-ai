@@ -195,50 +195,55 @@ _PATIENT_REASON = (
 )
 
 
+def _link_lifetime(hours: int) -> str:
+    """How long an invite link works, in words; 0 = no time limit."""
+    return "until you use it" if not hours else f"for {hours} hours"
+
+
 def send_patient_invite_email(to: str, link: str, hours: int) -> EmailResult:
     subject = "Your care information is ready in SafeHaven"
     text = (
         "Hello,\n\n"
-        "Your care team has set up the SafeHaven patient app for you. Sign in to see your medicines, "
+        "Your care team has set up the SafeHaven patient app for you, to see your medicines, "
         "hospital visits and care instructions, explained in plain words.\n\n"
-        f"Sign in here (the link works once, for {hours} hours):\n{link}\n\n"
-        'After that, open the app and choose "Email me a sign-in link" whenever you need one.'
+        f"Create your password here (the link works once, {_link_lifetime(hours)}):\n{link}\n\n"
+        "After that, sign in with this email address and your password."
         + _signature_text()
         + "\n\n" + _PATIENT_REASON
     )
     html = _layout(
-        preheader="Sign in to see your medicines, visits and care instructions.",
+        preheader="Create your password to see your medicines, visits and care instructions.",
         heading="Your care information is ready",
         paragraphs=[
-            "Your care team has set up the SafeHaven patient app for you. Sign in to see your medicines, "
+            "Your care team has set up the SafeHaven patient app for you, to see your medicines, "
             "hospital visits and care instructions, explained in plain words.",
-            "There is no password to remember: each time, we email you a link like this one.",
+            "First, create your password. After that, sign in with this email address and your password.",
         ],
-        button="Sign in to SafeHaven",
+        button="Create my password",
         link=link,
-        note=f'This link works once and expires in {hours} hours. After that, use "Email me a sign-in link" on the sign-in page.',
+        note=f"This link works once, {_link_lifetime(hours)}.",
         reason=_PATIENT_REASON,
         product="Patient app",
     )
     return send_email(to, subject, text, html)
 
 
-def send_patient_sign_in_email(to: str, link: str, minutes: int) -> EmailResult:
-    subject = "Your SafeHaven sign-in link"
+def send_patient_password_reset_email(to: str, link: str, hours: int) -> EmailResult:
+    subject = "Reset your SafeHaven password"
     text = (
         "Hello,\n\n"
-        f"Here is your link to sign in to SafeHaven (it works once, for {minutes} minutes):\n{link}"
+        f"Choose a new password for the SafeHaven patient app here (the link works once, for {hours} hours):\n{link}"
         + _signature_text()
-        + "\n\nDidn't ask for this? Ignore this email — nobody can sign in without the link."
+        + "\n\nDidn't ask for this? Ignore this email — your password stays the same."
     )
     html = _layout(
-        preheader=f"Your sign-in link — it works for {minutes} minutes.",
-        heading="Sign in to SafeHaven",
-        paragraphs=["Use the button below to sign in to the SafeHaven patient app."],
-        button="Sign in",
+        preheader=f"Choose a new password — the link works for {hours} hours.",
+        heading="Reset your password",
+        paragraphs=["Use the button below to choose a new password for the SafeHaven patient app."],
+        button="Choose a new password",
         link=link,
-        note=f"This link works once and expires in {minutes} minutes.",
-        reason="Didn't ask for this? You can safely ignore this email — nobody can sign in without the link.",
+        note=f"This link works once and expires in {hours} hours.",
+        reason="Didn't ask for this? You can safely ignore this email — your password stays the same.",
         product="Patient app",
     )
     return send_email(to, subject, text, html)
@@ -255,22 +260,22 @@ def send_caregiver_invite_email(to: str, link: str, hours: int) -> EmailResult:
         "Hello,\n\n"
         "A hospital care team has added you to SafeHaven, with the patient's agreement, so you can help with "
         "their care: their medicines and dose times, appointments and care instructions.\n\n"
-        f"Sign in here (the link works once, for {hours} hours):\n{link}\n\n"
-        'After that, open the app and choose "Email me a sign-in link" whenever you need one.'
+        f"Create your password here (the link works once, {_link_lifetime(hours)}):\n{link}\n\n"
+        "After that, sign in with this email address and your password."
         + _signature_text()
         + "\n\n" + reason
     )
     html = _layout(
-        preheader="Sign in to help with medicines, appointments and care instructions.",
+        preheader="Create your password to help with medicines, appointments and care instructions.",
         heading="You've been invited to help",
         paragraphs=[
             "A hospital care team has added you to SafeHaven, with the patient's agreement, so you can help with "
             "their care: their medicines and dose times, appointments and care instructions.",
-            "There is no password to remember: each time, we email you a link like this one.",
+            "First, create your password. After that, sign in with this email address and your password.",
         ],
-        button="Sign in to SafeHaven",
+        button="Create my password",
         link=link,
-        note=f'This link works once and expires in {hours} hours. After that, use "Email me a sign-in link" on the sign-in page.',
+        note=f"This link works once, {_link_lifetime(hours)}.",
         reason=reason,
         product="Patient app",
     )

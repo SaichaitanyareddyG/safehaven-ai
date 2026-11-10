@@ -30,6 +30,7 @@ const MyAskPage = lazy(() => import('@/pages/my/MyAskPage').then((m) => ({ defau
 const MyCarePage = lazy(() => import('@/pages/my/MyCarePage').then((m) => ({ default: m.MyCarePage })))
 const MyHomePage = lazy(() => import('@/pages/my/MyHomePage').then((m) => ({ default: m.MyHomePage })))
 const MyMedicinesPage = lazy(() => import('@/pages/my/MyMedicinesPage').then((m) => ({ default: m.MyMedicinesPage })))
+const MyRemindersPage = lazy(() => import('@/pages/my/MyRemindersPage').then((m) => ({ default: m.MyRemindersPage })))
 const MySignInPage = lazy(() => import('@/pages/my/MySignInPage').then((m) => ({ default: m.MySignInPage })))
 const MyVisitsPage = lazy(() => import('@/pages/my/MyVisitsPage').then((m) => ({ default: m.MyVisitsPage })))
 
@@ -55,6 +56,7 @@ export default function App() {
               <Route path="/my/visits" element={<MyVisitsPage />} />
               <Route path="/my/care" element={<MyCarePage />} />
               <Route path="/my/ask" element={<MyAskPage />} />
+              <Route path="/my/reminders" element={<MyRemindersPage />} />
               <Route path="/my/print" element={<MyPrintPage />} />
               <Route path="/my/*" element={<Navigate to="/my" replace />} />
               <Route

@@ -122,8 +122,11 @@ class Settings(BaseSettings):
 
     # Patient app (app/patient_app/). The first invite lasts longer than a
     # staff one: a patient may not open email the day they are admitted.
-    patient_invite_link_ttl_hours: int = 72
-    patient_sign_in_link_ttl_minutes: int = 15
+    # 0 = no time limit (2026-11-09): the invite link is still single-use and
+    # is cancelled by a newer invite or by turning access off.
+    patient_invite_link_ttl_hours: int = 0
+    # "Forgot password" links (named sign-in links before passwords existed).
+    patient_sign_in_link_ttl_minutes: int = 24 * 60
     # "Keep me signed in" on the patient's own phone.
     patient_session_days: int = 30
     # After discharge the app keeps working at home for this long, then stops.

@@ -17,6 +17,8 @@ export interface MyProfile {
   room_number: string | null
   /** Set after discharge: the app stops working after this. */
   access_expires_at: string | null
+  /** The first-sign-in "get reminders?" popup was answered. */
+  reminders_prompted: boolean
 }
 
 export interface MyVisit {

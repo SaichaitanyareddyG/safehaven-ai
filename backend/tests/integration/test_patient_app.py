@@ -43,7 +43,7 @@ def _token_from(mail) -> str:
 
 
 def _sign_in(client, token) -> dict:
-    resp = client.post("/patient-app/exchange", json={"token": token})
+    resp = client.post("/patient-app/set-password", json={"token": token, "password": "patientpass1"})
     assert resp.status_code == 200, resp.text
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
@@ -104,7 +104,7 @@ def test_link_signs_in_once_and_shows_the_approved_care_plan(client, outbox):
     token = _token_from(outbox[0])
 
     me = _sign_in(client, token)
-    assert client.post("/patient-app/exchange", json={"token": token}).status_code == 410
+    assert client.post("/patient-app/set-password", json={"token": token, "password": "patientpass1"}).status_code == 410
 
     profile = client.get("/patient-app/me", headers=me).json()
     assert profile["first_name"] == "Maria" and profile["admission_status"] == "ACTIVE"
@@ -169,7 +169,7 @@ def test_sign_in_link_expires(client, outbox, db_session):
         {PatientSignInLink.expires_at: datetime.now(timezone.utc) - timedelta(seconds=1)}
     )
     db_session.flush()
-    assert client.post("/patient-app/exchange", json={"token": _token_from(outbox[0])}).status_code == 410
+    assert client.post("/patient-app/set-password", json={"token": _token_from(outbox[0]), "password": "patientpass1"}).status_code == 410
 
 
 def test_revoke_signs_the_patient_out_and_blocks_new_links(client, outbox):
@@ -192,21 +192,20 @@ def test_revoke_signs_the_patient_out_and_blocks_new_links(client, outbox):
     assert client.get("/patient-app/me", headers=me).status_code == 401
 
 
-def test_discharge_keeps_the_app_for_a_window_then_it_stops(client, outbox, db_session):
+def test_discharge_keeps_the_app_working_until_staff_turn_it_off(client, outbox, db_session):
+    """No end date after discharge (2026-11-09): the app is how a patient at
+    home gets reminders. Staff turning it off is what stops it."""
     staff = _staff(client)
     patient = _register(client, staff, email="maria@example.com", app_consent=True)
     me = _sign_in(client, _token_from(outbox[0]))
 
     client.patch(f"/patients/{patient['id']}", json={"admission_status": "DISCHARGED"}, headers=staff)
     profile = client.get("/patient-app/me", headers=me).json()
-    assert profile["admission_status"] == "DISCHARGED" and profile["access_expires_at"] is not None
+    assert profile["admission_status"] == "DISCHARGED" and profile["access_expires_at"] is None
+    assert db_session.query(PatientAppAccount).one().access_expires_at is None
 
-    db_session.query(PatientAppAccount).update(
-        {PatientAppAccount.access_expires_at: datetime.now(timezone.utc) - timedelta(seconds=1)}
-    )
-    db_session.flush()
+    client.post(f"/patients/{patient['id']}/app-access/revoke", headers=staff)
     assert client.get("/patient-app/me", headers=me).status_code == 401
-    assert client.get(f"/patients/{patient['id']}/app-access", headers=staff).json()["status"] == "EXPIRED"
 
 
 def test_one_app_login_per_email(client, outbox):
@@ -344,6 +343,127 @@ def test_correcting_a_mistyped_email_signs_the_stranger_out(client, outbox):
     assert resp.status_code in (200, 201), resp.text
 
     assert client.get("/patient-app/me", headers=stranger).status_code == 401
-    assert client.post("/patient-app/exchange", json={"token": unused}).status_code != 200
+    assert client.post("/patient-app/set-password", json={"token": unused, "password": "patientpass1"}).status_code != 200
     assert outbox[-1]["to"] == "right@example.com"
     _sign_in(client, _token_from(outbox[-1]))  # the right person still gets in
+
+
+# ── Passwords (2026-11-09) ────────────────────────────────────────────────────
+
+
+def test_invite_link_creates_a_password_then_email_and_password_sign_in(client, outbox, db_session):
+    staff = _staff(client)
+    _register(client, staff, email="maria@example.com", app_consent=True)
+    token = _token_from(outbox[0])
+    # No time limit on the invite link (single use).
+    link = db_session.query(PatientSignInLink).one()
+    assert link.expires_at > datetime.now(timezone.utc) + timedelta(days=365 * 5)
+
+    info = client.post("/patient-app/link-info", json={"token": token}).json()
+    assert info == {"email": "maria@example.com", "first_time": True}
+    assert client.post("/patient-app/set-password", json={"token": token, "password": "short"}).status_code == 422
+    first = client.post("/patient-app/set-password", json={"token": token, "password": "patientpass1"})
+    assert first.status_code == 200
+    assert client.post("/patient-app/set-password", json={"token": token, "password": "patientpass1"}).status_code == 410
+
+    ok = client.post("/patient-app/login", json={"email": " MARIA@example.com ", "password": "patientpass1"})
+    assert ok.status_code == 200
+    me = {"Authorization": "Bearer " + ok.json()["access_token"]}
+    assert client.get("/patient-app/me", headers=me).status_code == 200
+    wrong = client.post("/patient-app/login", json={"email": "maria@example.com", "password": "wrongpass99"})
+    nobody = client.post("/patient-app/login", json={"email": "nobody@example.com", "password": "patientpass1"})
+    assert wrong.status_code == nobody.status_code == 401
+    assert wrong.json() == nobody.json()  # never says which part was wrong
+
+
+def test_an_invited_login_cannot_sign_in_before_creating_a_password(client, outbox):
+    staff = _staff(client)
+    _register(client, staff, email="maria@example.com", app_consent=True)
+    resp = client.post("/patient-app/login", json={"email": "maria@example.com", "password": ""})
+    assert resp.status_code == 401
+
+
+def test_forgot_password_sets_a_new_one_and_signs_out_other_devices(client, outbox):
+    staff = _staff(client)
+    _register(client, staff, email="maria@example.com", app_consent=True)
+    old = _sign_in(client, _token_from(outbox[0]))
+    client.post("/patient-app/request-link", json={"email": "maria@example.com"})
+    reset = outbox[-1]
+    assert "new password" in reset["text"]
+    token = _token_from(reset)
+    assert client.post("/patient-app/link-info", json={"token": token}).json()["first_time"] is False
+
+    assert client.post("/patient-app/set-password", json={"token": token, "password": "brandnew123"}).status_code == 200
+    assert client.get("/patient-app/me", headers=old).status_code == 401
+    assert client.post("/patient-app/login", json={"email": "maria@example.com", "password": "patientpass1"}).status_code == 401
+    assert client.post("/patient-app/login", json={"email": "maria@example.com", "password": "brandnew123"}).status_code == 200
+
+
+def test_the_reminder_question_is_asked_once(client, outbox):
+    staff = _staff(client)
+    _register(client, staff, email="maria@example.com", app_consent=True)
+    me = _sign_in(client, _token_from(outbox[0]))
+    assert client.get("/patient-app/me", headers=me).json()["reminders_prompted"] is False
+    assert client.post("/patient-app/me/reminders-prompted", headers=me).status_code == 204
+    assert client.get("/patient-app/me", headers=me).json()["reminders_prompted"] is True
+
+
+# ── Reminder calendar ─────────────────────────────────────────────────────────
+
+
+def _feed(client, me) -> tuple[dict, str]:
+    links = client.get("/patient-app/me/calendar", headers=me).json()
+    path = "/" + links["feed_url"].split("/", 3)[3]
+    resp = client.get(path)
+    assert resp.status_code == 200 and resp.headers["content-type"].startswith("text/calendar")
+    return links, resp.text
+
+
+def test_calendar_has_generic_daily_reminders_once_home(client, outbox):
+    staff = _staff(client)
+    patient = _register(client, staff, email="maria@example.com", app_consent=True)
+    _approve(client, staff, patient["id"], "Take Metoprolol 25 mg orally twice daily with food.")
+    me = _sign_in(client, _token_from(outbox[0]))
+
+    links, admitted = _feed(client, me)
+    assert links["webcal_url"].startswith("webcal://") and "calendar.google.com" in links["google_url"]
+    assert "BEGIN:VEVENT" not in admitted  # in hospital the nurse gives the doses
+
+    client.patch(f"/patients/{patient['id']}", json={"admission_status": "DISCHARGED"}, headers=staff)
+    _, home = _feed(client, me)
+    assert home.count("BEGIN:VEVENT") == 2  # 08:00 and 20:00
+    assert "RRULE:FREQ=DAILY" in home and "T080000" in home and "T200000" in home
+    assert "SUMMARY:Time for your medicines" in home
+    assert "Metoprolol" not in home  # no medicine names leave the hospital
+
+
+def test_calendar_link_can_be_replaced_and_dies_with_access(client, outbox):
+    staff = _staff(client)
+    patient = _register(client, staff, email="maria@example.com", app_consent=True)
+    _approve(client, staff, patient["id"], "Take Metoprolol 25 mg orally twice daily with food.")
+    me = _sign_in(client, _token_from(outbox[0]))
+    client.patch(f"/patients/{patient['id']}", json={"admission_status": "DISCHARGED"}, headers=staff)
+    old_links, _ = _feed(client, me)
+    old_path = "/" + old_links["feed_url"].split("/", 3)[3]
+
+    new = client.post("/patient-app/me/calendar/reset", headers=me).json()
+    assert new["feed_url"] != old_links["feed_url"]
+    assert "BEGIN:VEVENT" not in client.get(old_path).text  # the old link now shows nothing
+
+    client.post(f"/patients/{patient['id']}/app-access/revoke", headers=staff)
+    new_path = "/" + new["feed_url"].split("/", 3)[3]
+    assert "BEGIN:VEVENT" not in client.get(new_path).text  # access off: reminders disappear
+
+
+def test_medicines_due_at_the_same_time_share_one_reminder(client, outbox):
+    staff = _staff(client)
+    patient = _register(client, staff, email="maria@example.com", app_consent=True)
+    _approve(client, staff, patient["id"], "Take Metoprolol 25 mg orally twice daily with food for 7 days.")
+    _approve(client, staff, patient["id"], "Take Atorvastatin 20 mg orally once daily.")
+    me = _sign_in(client, _token_from(outbox[0]))
+    client.patch(f"/patients/{patient['id']}", json={"admission_status": "DISCHARGED"}, headers=staff)
+    _, home = _feed(client, me)
+    # 08:00 both (merged, ongoing because one is), 20:00 the 7-day course only.
+    assert home.count("BEGIN:VEVENT") == 2
+    assert home.count("T080000") == 1 and home.count("T200000") == 1
+    assert home.count("UNTIL=") == 1

@@ -36,7 +36,7 @@ def setup(client, outbox):
     created = client.post(f"/patients/{patient['id']}/instructions", json={"text": MED}, headers=staff).json()
     for step in ("analyze", "generate", "approve"):
         client.post(f"/instructions/{created['id']}/{step}", headers=staff)
-    me = {"Authorization": "Bearer " + client.post("/patient-app/exchange", json={"token": _token(outbox[0])}).json()["access_token"]}
+    me = {"Authorization": "Bearer " + client.post("/patient-app/set-password", json={"token": _token(outbox[0]), "password": "patientpass1"}).json()["access_token"]}
     return {"staff": staff, "patient": patient, "me": me, "instruction": created["id"]}
 
 
@@ -46,7 +46,7 @@ def _invite(client, setup, email="priya@example.com", **extra):
 
 
 def _sign_in(client, mail):
-    resp = client.post("/patient-app/exchange", json={"token": _token(mail)})
+    resp = client.post("/patient-app/set-password", json={"token": _token(mail), "password": "patientpass1"})
     assert resp.status_code == 200, resp.text
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
@@ -123,11 +123,11 @@ def test_dose_answer_records_who_gave_it(client, setup, outbox, db_session):
     assert recorder.role == "CAREGIVER"
 
 
-def test_discharge_window_applies_to_caregivers_too(client, setup, outbox, db_session):
+def test_discharge_sets_no_end_date_for_caregivers_either(client, setup, outbox, db_session):
     _invite(client, setup)
     client.patch(f"/patients/{setup['patient']['id']}", json={"admission_status": "DISCHARGED"}, headers=setup["staff"])
     accounts = db_session.query(PatientAppAccount).all()
-    assert len(accounts) == 2 and all(a.access_expires_at is not None for a in accounts)
+    assert len(accounts) == 2 and all(a.access_expires_at is None for a in accounts)
 
 
 def test_sessions_from_before_caregivers_still_work(client, setup, db_session):

@@ -1,9 +1,10 @@
-import { ChevronRight, MessageCircle } from 'lucide-react'
+import { BellRing, ChevronRight, MessageCircle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
+import { RemindersPrompt } from '@/features/patient-app/CalendarReminders'
 import { MyAppLayout, MyCard, MyLoadError, MyLoading, MySectionTitle } from '@/features/patient-app/MyAppLayout'
 import { AllergiesCard, AppointmentCard, CurrentStayCard } from '@/features/patient-app/MyCards'
-import { RemindersCard, TodaysDoses } from '@/features/patient-app/MyDoses'
+import { TodaysDoses } from '@/features/patient-app/MyDoses'
 import { useMyAppointments, useMyCarePlan, useMyDoses, useMyProfile, useMyVisits } from '@/features/patient-app/use-my-data'
 import { formatDate } from '@/lib/format'
 import { useNow } from '@/lib/use-now'
@@ -36,6 +37,8 @@ export function MyHomePage() {
 
   return (
     <MyAppLayout title={first ? `${greeting()}, ${first}` : 'Today'} subtitle={subtitle(profile.data)}>
+      {/* Asked once, at first sign-in (any device), not hidden behind a button. */}
+      <RemindersPrompt open={profile.data?.reminders_prompted === false} />
       {(profile.isLoading || plan.isLoading) && <MyLoading />}
       {(profile.isError || plan.isError) && <MyLoadError />}
 
@@ -46,7 +49,18 @@ export function MyHomePage() {
       {plan.data && (
         <>
           {doses.data && <TodaysDoses data={doses.data} />}
-          {doses.data && doses.data.doses.length > 0 && <RemindersCard />}
+          <Link to="/my/reminders" className="block" data-testid="my-home-reminders">
+            <MyCard className="flex items-center justify-between gap-3 hover:bg-[#FAFCFC]">
+              <div className="flex min-w-0 items-center gap-3">
+                <BellRing className="h-6 w-6 shrink-0 text-[#0F6383]" aria-hidden="true" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-lg font-semibold">Medicine reminders</span>
+                  <span className="text-base text-[#53656E]">On your phone's calendar</span>
+                </div>
+              </div>
+              <ChevronRight className="h-6 w-6 shrink-0 text-[#0F6383]" aria-hidden="true" />
+            </MyCard>
+          </Link>
 
           <MySectionTitle>Your medicines</MySectionTitle>
           {medicines.length === 0 ? (

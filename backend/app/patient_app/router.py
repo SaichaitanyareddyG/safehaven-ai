@@ -1,6 +1,9 @@
+import secrets
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -19,6 +22,7 @@ from app.patient_access.schemas import PatientCarePlanResponse
 from app.patient_access.service import build_care_plan
 from app.patient_app import service
 from app.core.config import get_settings
+from app.patient_app import calendar_feed as calendar_feed_module
 from app.patient_app import doses as dose_service
 from app.patient_app import push as push_service
 from app.patient_app.models import ROLE_CAREGIVER, PatientAppAccount, PushSubscription
@@ -39,7 +43,11 @@ from app.patient_app.schemas import (
     PushUnsubscribeRequest,
     AppInviteRequest,
     AppInviteResponse,
+    CalendarLinks,
     ExchangeRequest,
+    LinkInfoResponse,
+    PasswordSignInRequest,
+    SetPasswordRequest,
     MyProfile,
     MyVisit,
     MyVisitsResponse,
@@ -47,7 +55,12 @@ from app.patient_app.schemas import (
     SignInLinkRequest,
 )
 from app.patient_app.security import InvalidPatientTokenError, create_patient_token, decode_patient_token
-from app.patient_app.service import InvalidSignInLinkError, PatientAccessDeniedError, PatientAppError
+from app.patient_app.service import (
+    InvalidSignInLinkError,
+    PatientAccessDeniedError,
+    PatientAppError,
+    WrongPasswordError,
+)
 from app.patient_chat import service as chat_service
 from app.patient_chat.schemas import ChatMessageListResponse, ChatMessageRead, ChatSendResponse
 from app.patients.models import AdmissionStatus, Language, Patient
@@ -63,7 +76,9 @@ router = APIRouter(prefix="/patient-app", tags=["patient-app"])
 # Each request can send an email.
 _LINK_RATE_LIMIT = "5/minute"
 _EXCHANGE_RATE_LIMIT = "30/minute"
-_LINK_INVALID = "This sign-in link has expired or was already used. Ask for a new one below."
+_LINK_INVALID = "This link was already used or has expired. Sign in below, or use \"Forgot password?\" for a new link."
+_LOGIN_RATE_LIMIT = "10/minute"
+_WRONG_PASSWORD = "That email and password don't match. Try again, or use \"Forgot password?\"."
 
 
 def to_caregiver_read(account) -> CaregiverRead:
@@ -235,16 +250,45 @@ def request_link(
     send = service.request_sign_in_link(db, payload.email)
     if send is not None:
         background.add_task(send)
-    return {"detail": "If that address can use SafeHaven, a sign-in link is on its way."}
+    return {"detail": "If that address can use SafeHaven, a link to choose a new password is on its way."}
 
 
-@router.post("/exchange", response_model=PatientSessionResponse)
+@router.post("/link-info", response_model=LinkInfoResponse)
 @limiter.limit(_EXCHANGE_RATE_LIMIT)
-def exchange(request: Request, payload: ExchangeRequest, db: Annotated[Session, Depends(get_db)]) -> PatientSessionResponse:
+def link_info(request: Request, payload: ExchangeRequest, db: Annotated[Session, Depends(get_db)]) -> LinkInfoResponse:
+    """What an invite or reset link is for, without using it up."""
     try:
-        patient, account = service.exchange_link(db, payload.token)
+        info = service.link_info(db, payload.token)
     except InvalidSignInLinkError as exc:
         raise HTTPException(status_code=status.HTTP_410_GONE, detail=_LINK_INVALID) from exc
+    return LinkInfoResponse(email=info.email, first_time=info.first_time)
+
+
+@router.post("/set-password", response_model=PatientSessionResponse)
+@limiter.limit(_EXCHANGE_RATE_LIMIT)
+def set_password(
+    request: Request, payload: SetPasswordRequest, db: Annotated[Session, Depends(get_db)]
+) -> PatientSessionResponse:
+    """From the invite (first password) or "Forgot password" email: sets it and signs in."""
+    try:
+        patient, account = service.set_password(db, payload.token, payload.password)
+    except InvalidSignInLinkError as exc:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=_LINK_INVALID) from exc
+    except PatientAppError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    token, expires_at = create_patient_token(patient.id, account.id, account.session_version)
+    return PatientSessionResponse(access_token=token, expires_at=expires_at)
+
+
+@router.post("/login", response_model=PatientSessionResponse)
+@limiter.limit(_LOGIN_RATE_LIMIT)
+def login(
+    request: Request, payload: PasswordSignInRequest, db: Annotated[Session, Depends(get_db)]
+) -> PatientSessionResponse:
+    try:
+        patient, account = service.sign_in_with_password(db, payload.email, payload.password)
+    except WrongPasswordError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_WRONG_PASSWORD) from exc
     token, expires_at = create_patient_token(patient.id, account.id, account.session_version)
     return PatientSessionResponse(access_token=token, expires_at=expires_at)
 
@@ -261,6 +305,80 @@ def me(session: Annotated[PatientSession, Depends(get_patient_session)]) -> MyPr
         admission_status=patient.admission_status,
         room_number=patient.room_number,
         access_expires_at=account.access_expires_at if account else None,
+        reminders_prompted=account.reminders_prompted_at is not None,
+    )
+
+
+@router.post("/me/reminders-prompted", status_code=status.HTTP_204_NO_CONTENT)
+def reminders_prompted(
+    session: Annotated[PatientSession, Depends(get_patient_session)], db: Annotated[Session, Depends(get_db)]
+) -> None:
+    """The first-sign-in "get reminders?" popup was answered: not asked again."""
+    account = db.get(PatientAppAccount, session.account.id)
+    if account.reminders_prompted_at is None:
+        account.reminders_prompted_at = datetime.now(timezone.utc)
+        db.commit()
+
+
+def _calendar_links(request: Request, token: str) -> CalendarLinks:
+    feed = str(request.url_for("calendar_feed", token=token))
+    if feed.startswith("http://") and request.headers.get("x-forwarded-proto") == "https":
+        feed = "https://" + feed[len("http://") :]
+    webcal = "webcal://" + feed.split("://", 1)[1]
+    return CalendarLinks(
+        feed_url=feed,
+        webcal_url=webcal,
+        google_url="https://calendar.google.com/calendar/r?cid=" + quote(webcal, safe=""),
+    )
+
+
+@router.get("/me/calendar", response_model=CalendarLinks)
+def my_calendar(
+    request: Request,
+    session: Annotated[PatientSession, Depends(get_patient_session)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CalendarLinks:
+    account = db.get(PatientAppAccount, session.account.id)
+    if not account.calendar_token:
+        account.calendar_token = secrets.token_urlsafe(32)
+        db.commit()
+    return _calendar_links(request, account.calendar_token)
+
+
+@router.post("/me/calendar/reset", response_model=CalendarLinks)
+def reset_my_calendar(
+    request: Request,
+    session: Annotated[PatientSession, Depends(get_patient_session)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CalendarLinks:
+    """A new private link: calendars subscribed to the old one stop updating."""
+    account = db.get(PatientAppAccount, session.account.id)
+    account.calendar_token = secrets.token_urlsafe(32)
+    db.commit()
+    return _calendar_links(request, account.calendar_token)
+
+
+@router.get("/calendar/{token}.ics", name="calendar_feed")
+@limiter.limit("60/minute")
+def calendar_feed(request: Request, token: str, db: Annotated[Session, Depends(get_db)]) -> Response:
+    """Public: the phone's calendar app fetches it with no sign-in, so the
+    secret is the link itself. An unknown link gets an empty calendar rather
+    than an error, so a turned-off login's reminders disappear from the phone."""
+    account = (
+        db.query(PatientAppAccount).filter(PatientAppAccount.calendar_token == token).first()
+        if len(token) >= 32
+        else None
+    )
+    app_url = get_settings().dashboard_url.rstrip("/") + "/my"
+    body = (
+        calendar_feed_module.build_feed(db, account, app_url)
+        if account is not None
+        else "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//SafeHaven//Patient reminders//EN\r\nEND:VCALENDAR\r\n"
+    )
+    return Response(
+        content=body,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Cache-Control": "no-store", "Content-Disposition": 'inline; filename="safehaven.ics"'},
     )
 
 

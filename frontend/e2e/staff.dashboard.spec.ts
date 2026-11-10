@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { linkPath, newPatientWithApp, newStaff, signInStaff } from './helpers'
+import { newPatientWithApp, newStaff, openInvite, signInStaff } from './helpers'
 
 test('register a patient with an app invite, English only', async ({ page }) => {
   const staff = await newStaff()
@@ -74,7 +74,7 @@ test('add a caregiver who gets their own sign-in', async ({ page, browser }) => 
   // Email is not set up on the test server, so the link is shown to staff.
   const link = await page.getByTestId('caregivers-section').locator('input[readonly]').inputValue()
   const phone = await browser.newPage()
-  await phone.goto(link.replace(/^https?:\/\/[^/]+/, ''))
+  await openInvite(phone, link) // the caregiver creates their own password
   await expect(phone.getByRole('heading', { level: 1 })).toContainText('Priya')
   await expect(phone.getByText("Helping with Maria's care")).toBeVisible()
   await phone.close()
@@ -99,8 +99,7 @@ test('upload a report, share it, and the patient sees it', async ({ page, browse
   await expect(page.getByTestId('report-row')).toContainText('Shared with patient')
 
   const phone = await browser.newPage()
-  await phone.goto(linkPath(patient.inviteLink))
-  await expect(phone).toHaveURL(/\/my$/) // signed in
+  await openInvite(phone, patient.inviteLink) // password created, signed in
   await phone.goto('/my/care')
   await expect(phone.getByTestId('my-report')).toContainText('Chest X-ray')
   await phone.close()

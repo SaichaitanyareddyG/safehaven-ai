@@ -20,8 +20,36 @@ export function requestSignInLink(email: string): Promise<{ detail: string }> {
   return apiRequest('/patient-app/request-link', { method: 'POST', body: { email }, skipAuth: true })
 }
 
-export function exchangeSignInLink(token: string): Promise<PatientSession> {
-  return apiRequest<PatientSession>('/patient-app/exchange', { method: 'POST', body: { token }, skipAuth: true })
+/** What an invite or reset link is for, without using it up. */
+export function getLinkInfo(token: string): Promise<{ email: string | null; first_time: boolean }> {
+  return apiRequest('/patient-app/link-info', { method: 'POST', body: { token }, skipAuth: true })
+}
+
+/** Create (invite) or reset the password with an emailed link; signs in. */
+export function setMyPassword(token: string, password: string): Promise<PatientSession> {
+  return apiRequest<PatientSession>('/patient-app/set-password', { method: 'POST', body: { token, password }, skipAuth: true })
+}
+
+export function signInWithPassword(email: string, password: string): Promise<PatientSession> {
+  return apiRequest<PatientSession>('/patient-app/login', { method: 'POST', body: { email, password }, skipAuth: true })
+}
+
+export interface CalendarLinks {
+  feed_url: string
+  webcal_url: string
+  google_url: string
+}
+
+export function getMyCalendar(): Promise<CalendarLinks> {
+  return apiRequest<CalendarLinks>('/patient-app/me/calendar', { asPatient: true })
+}
+
+export function resetMyCalendar(): Promise<CalendarLinks> {
+  return apiRequest<CalendarLinks>('/patient-app/me/calendar/reset', { method: 'POST', asPatient: true })
+}
+
+export function markRemindersPrompted(): Promise<void> {
+  return apiRequest<void>('/patient-app/me/reminders-prompted', { method: 'POST', asPatient: true })
 }
 
 export function getMyProfile(): Promise<MyProfile> {

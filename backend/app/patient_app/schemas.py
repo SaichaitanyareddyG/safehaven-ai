@@ -77,7 +77,33 @@ class SignInLinkRequest(BaseModel):
 
 
 class ExchangeRequest(BaseModel):
+    """An invite or reset link's token (link-info)."""
+
     token: str = Field(max_length=200)
+
+
+class SetPasswordRequest(BaseModel):
+    token: str = Field(max_length=200)
+    password: str = Field(max_length=128)
+
+
+class PasswordSignInRequest(BaseModel):
+    email: str = Field(max_length=320)
+    password: str = Field(max_length=128)
+
+
+class LinkInfoResponse(BaseModel):
+    email: str | None
+    # No password yet: "Create your password". Otherwise "Choose a new password".
+    first_time: bool
+
+
+class CalendarLinks(BaseModel):
+    """The patient's private reminder calendar, ready for each kind of phone."""
+
+    feed_url: str  # https://.../patient-app/calendar/<token>.ics
+    webcal_url: str  # Apple Calendar (iPhone, Mac)
+    google_url: str  # Google Calendar (Android)
 
 
 class PatientSessionResponse(BaseModel):
@@ -96,6 +122,8 @@ class MyProfile(BaseModel):
     admission_status: AdmissionStatus
     room_number: str | None
     access_expires_at: datetime | None
+    # The "get reminders?" popup has been answered on some device.
+    reminders_prompted: bool = False
 
 
 class MyVisit(BaseModel):

@@ -74,7 +74,7 @@ def setup(client, outbox):
     bid = _approve(client, staff, patient["id"], BID)
     _approve(client, staff, patient["id"], PRN)
     token = outbox[0].split("#token=", 1)[1].split()[0]
-    session = client.post("/patient-app/exchange", json={"token": token}).json()
+    session = client.post("/patient-app/set-password", json={"token": token, "password": "patientpass1"}).json()
     me = {"Authorization": f"Bearer {session['access_token']}"}
     return {"staff": staff, "patient": patient, "me": me, "bid": bid}
 
