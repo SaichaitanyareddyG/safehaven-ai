@@ -108,6 +108,9 @@ class AuditEventType(str, enum.Enum):
     WEARABLE_FIRMWARE_CHANGED = "WEARABLE_FIRMWARE_CHANGED"
     # Staff let a band update off its charger ("Update now").
     WEARABLE_UPDATE_REQUESTED = "WEARABLE_UPDATE_REQUESTED"
+    # An admin downloaded the band firmware to install a band over USB from
+    # the dashboard (the image carries the setup Wi-Fi settings).
+    WEARABLE_FIRMWARE_DOWNLOADED = "WEARABLE_FIRMWARE_DOWNLOADED"
     # An admin added or removed a Wi-Fi network the bands join (never the password).
     WIFI_NETWORK_ADDED = "WIFI_NETWORK_ADDED"
     WIFI_NETWORK_REMOVED = "WIFI_NETWORK_REMOVED"

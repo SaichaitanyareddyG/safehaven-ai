@@ -513,3 +513,12 @@ class MotionEventRead(BaseModel):
 
 class MotionLabelUpdate(BaseModel):
     label: Literal["FLIP", "DROP", "FALL", "ACTIVITY", "OTHER"] | None
+
+
+class FirmwareCurrentRead(BaseModel):
+    """The published band firmware, for installing a band over USB."""
+
+    id: uuid.UUID
+    version: str
+    size: int
+    sha256: str

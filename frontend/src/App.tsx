@@ -17,6 +17,7 @@ const MedicationVerificationPage = lazy(() => import('@/pages/MedicationVerifica
 const SafetyAlertsPage = lazy(() => import('@/pages/SafetyAlertsPage').then((m) => ({ default: m.SafetyAlertsPage })))
 const ScanBandPage = lazy(() => import('@/pages/ScanBandPage').then((m) => ({ default: m.ScanBandPage })))
 const DevicesPage = lazy(() => import('@/pages/DevicesPage').then((m) => ({ default: m.DevicesPage })))
+const BandInstallPage = lazy(() => import('@/pages/BandInstallPage').then((m) => ({ default: m.BandInstallPage })))
 const PatientCarePage = lazy(() => import('@/pages/PatientCarePage').then((m) => ({ default: m.PatientCarePage })))
 const ChangePasswordPage = lazy(() => import('@/pages/ChangePasswordPage').then((m) => ({ default: m.ChangePasswordPage })))
 const UsersPage = lazy(() => import('@/pages/UsersPage').then((m) => ({ default: m.UsersPage })))
@@ -112,6 +113,14 @@ export default function App() {
                 element={
                   <ProtectedRoute>
                     <DevicesPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/devices/install"
+                element={
+                  <ProtectedRoute>
+                    <BandInstallPage />
                   </ProtectedRoute>
                 }
               />

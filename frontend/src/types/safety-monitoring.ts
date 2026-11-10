@@ -186,3 +186,10 @@ export interface MotionEvent {
   still_ms: number
   label: MotionLabel | null
 }
+
+export interface FirmwareCurrent {
+  id: string
+  version: string
+  size: number
+  sha256: string
+}

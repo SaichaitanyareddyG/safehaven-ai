@@ -2,14 +2,14 @@
 
 How to take a new M5StickS3 out of its box and put it on a patient.
 
-**Short answer:** a USB cable is needed **once**, for about 2 minutes per
-band, to install SafeHaven. After that, everything is over Wi-Fi: joining
+**Short answer:** a USB cable is needed **once**, for about a minute per
+band, to install SafeHaven from the dashboard in Chrome or Edge. After that, everything is over Wi-Fi: joining
 the ward network, pairing the band to the hospital, assigning it to a
 patient, and every future update.
 
 | Step | Who | Cable? | Where |
 |---|---|---|---|
-| 1. Install SafeHaven | IT, once per band | **Yes, once** | A laptop |
+| 1. Install SafeHaven | Admin, once per band | **Yes, once** | Dashboard → **Bands** → **Install on a new band** (Chrome or Edge) |
 | 2. Connect to Wi-Fi | Ward staff | No | A phone |
 | 3. Pair to the hospital | Admin | No | Dashboard → **Bands** → **Add device** |
 | 4. Put on a patient | Nurse | No | Patient page → **Assign device** |
@@ -31,8 +31,43 @@ From then on, SafeHaven updates itself over Wi-Fi (see "Updates" below).
 
 ## 1. Install SafeHaven (USB, once per band)
 
-You need: a Mac or PC with this repository and PlatformIO, a USB-C **data**
-cable (some charging-only cables don't carry data), and the band.
+### From the dashboard (recommended)
+
+You need: a computer (Windows, Mac or Linux) with **Chrome or Edge**, a
+USB-C **data** cable (some charging-only cables don't carry data), and an
+**admin** account on the dashboard. No software to install.
+
+1. Plug the band into the computer.
+2. Dashboard → **Bands** → **Install on a new band**.
+3. Leave **Erase the band first** ticked for a new band. Click **Install**,
+   pick the band in the browser's list (often "USB JTAG/serial debug unit"),
+   click **Connect**.
+4. About a minute: it downloads the published firmware, erases the band,
+   installs, checks every byte, and restarts the band.
+5. Unplug. If the screen stays dark, click the **side button** once.
+
+If it doesn't connect: try another cable or port, close anything else using
+the band (Arduino, PlatformIO), or hold the side button while plugging it in.
+
+How it works: the page writes the same four pieces as the laptop install
+below. The bootloader, partition table and blank update record never change
+with a release and hold no secrets, so they ship with the dashboard
+(`frontend/public/band-install/`). The app itself is the **published
+release** (step "Updates" below), downloaded from the server by an admin
+only (it carries the setup hotspot settings), and each download is recorded
+in the audit log. So a band installed this way runs exactly what bands
+update to over Wi-Fi.
+
+> If a firmware change touches the bootloader or the partition table (rare:
+> `sdkconfig.lowpower.defaults` or `partitions_default_8MB.csv`), copy the
+> new `bootloader.bin`, `partitions.bin` (as `partition-table.bin`) and
+> `ota_data_initial.bin` from `.pio/build/m5sticks3-lowpower/` into
+> `frontend/public/band-install/` and redeploy the dashboard.
+
+### From a laptop (developers)
+
+You need: a Mac or PC with this repository and PlatformIO, a USB-C data
+cable, and the band.
 
 1. **One-time per laptop:** copy the settings file and fill it in.
    ```bash
@@ -169,16 +204,28 @@ unassigns the band automatically.
 
 ---
 
-## Could the first install be done without a laptop?
+## Could the first install be done over Wi-Fi?
 
-Not over Wi-Fi: the factory software can't be told where to get SafeHaven.
-Two ways to avoid needing a developer laptop are possible, but **not built
-yet**:
+Not over Wi-Fi. Checked in November 2026:
 
-- **Install from a web page:** Chrome or Edge can install firmware over USB
-  from a web page (Web Serial). A page on the dashboard could do the step-1
-  install with one button. A cable is still needed, but no software or
-  terminal.
-- **Bands that arrive pre-installed:** for a large order, the supplier or a
+- The factory software (UiFlow2) has **no update slots**. Its memory layout is
+  one app partition plus file storage, with no `otadata` and no `ota_0` or
+  `ota_1` (see `m5stack/partitions_8mb.csv` in m5stack/uiflow-micropython).
+  Its wireless mode only sends Python programs. It never replaces the
+  firmware.
+- A UiFlow2 program could in theory copy SafeHaven into the file storage
+  area. It would then have to rewrite the loader and the partition table,
+  which the chip blocks by default. If power or Wi-Fi drops halfway, the band
+  is left unable to start, and only a cable can recover it. Not worth the
+  risk.
+- M5Stack's own browser tools (M5Burner, AIFlow Web) also use the cable.
+
+Ways to avoid needing a developer laptop:
+
+- **Install from a web page:** built. See step 1, "From the dashboard".
+- **Many bands at once** (not built yet): plug several bands into a powered USB hub and
+  install on all of them in one run with a script. Each band takes the same
+  30 seconds as when installed alone.
+- **Bands that arrive pre-installed** (not built yet): for a large order, the supplier or a
   setup service could install SafeHaven before shipping. That has to be
   arranged with the supplier.

@@ -134,3 +134,12 @@ test('deactivate, reactivate and delete a patient app account', async ({ page })
   await expect(panel.locator('[data-status]')).toHaveText('Not invited')
 })
 
+test('the band installer is for admins only', async ({ page }) => {
+  const staff = await newStaff() // a nurse, not an admin
+  await signInStaff(page, staff.token)
+  await page.goto('/devices')
+  await expect(page.getByTestId('add-device')).toBeVisible()
+  await expect(page.getByTestId('install-band-link')).toHaveCount(0)
+  await page.goto('/devices/install')
+  await expect(page).toHaveURL(/\/devices$/)
+})

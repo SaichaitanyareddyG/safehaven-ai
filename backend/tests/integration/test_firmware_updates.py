@@ -145,3 +145,37 @@ def test_update_now_lets_a_band_on_a_patient_update_on_battery(client, staff, ba
     device = client.get("/wearable-devices", headers=staff).json()["results"][0]
     assert device["update_requested_at"] is None and device["update_available"] is None
     assert client.post(f"/wearable-devices/{band['device_id']}/update-now", headers=staff).status_code == 409
+
+
+# ── Installing a new band over USB from the dashboard ─────────────────────────
+
+
+def _make_admin(db_session):
+    from app.auth.models import User
+
+    db_session.query(User).filter(User.email == "n@example.com").update({User.role: "admin"})
+    db_session.flush()
+
+
+def test_admins_download_the_current_firmware_for_a_usb_install(client, staff, db_session):
+    _make_admin(db_session)
+    assert client.get("/firmware/current", headers=staff).status_code == 404  # nothing published yet
+    release = publish(db_session, "0.6.0", IMAGE)
+
+    current = client.get("/firmware/current", headers=staff).json()
+    assert current == {"id": str(release.id), "version": "0.6.0", "size": len(IMAGE), "sha256": release.sha256}
+
+    resp = client.get(f"/firmware/{release.id}/image", headers=staff)
+    assert resp.status_code == 200 and resp.content == IMAGE
+    assert resp.headers["cache-control"] == "no-store"
+    event = db_session.query(AuditEvent).filter(AuditEvent.event_type == "WEARABLE_FIRMWARE_DOWNLOADED").one()
+    assert event.event_metadata == {"version": "0.6.0"}
+
+
+def test_only_admins_get_the_firmware_image(client, staff, band, db_session):
+    release = publish(db_session, "0.6.0", IMAGE)
+    # A clinician who is not an admin, a band's own credential, or nobody.
+    assert client.get("/firmware/current", headers=staff).status_code == 403
+    assert client.get(f"/firmware/{release.id}/image", headers=staff).status_code == 403
+    assert client.get(f"/firmware/{release.id}/image", headers=_headers(band)).status_code == 401
+    assert client.get(f"/firmware/{release.id}/image").status_code == 401

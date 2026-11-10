@@ -38,3 +38,4 @@ deploy/.env.*
 
 # Cloudflare wrangler working files
 .wrangler/
+.claude/settings.local.json

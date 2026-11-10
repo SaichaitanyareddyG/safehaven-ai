@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
-import { Download, Plus, Watch } from 'lucide-react'
+import { Download, Plus, Usb, Watch } from 'lucide-react'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { listWearableDevices, pairWearable, requestBandUpdateNow } from '@/api/safety-monitoring'
@@ -57,10 +58,20 @@ export function DevicesPage() {
             Wearable bands on this ward. Assign a band to a patient from the patient's page.
           </p>
         </div>
-        <Button onClick={() => setAdding(true)} data-testid="add-device">
-          <Plus className="h-4 w-4" />
-          Add device
-        </Button>
+        <div className="flex flex-wrap justify-end gap-2">
+          {user?.role === 'admin' && (
+            <Button variant="outline" asChild data-testid="install-band-link">
+              <Link to="/devices/install">
+                <Usb className="h-4 w-4" />
+                Install on a new band
+              </Link>
+            </Button>
+          )}
+          <Button onClick={() => setAdding(true)} data-testid="add-device">
+            <Plus className="h-4 w-4" />
+            Add device
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (

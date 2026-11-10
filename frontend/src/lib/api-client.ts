@@ -110,3 +110,21 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   if (response.status === 204) return undefined as T
   return (await response.json()) as T
 }
+
+/** A binary download with the staff session (the band firmware image). */
+export async function apiDownload(path: string): Promise<Uint8Array> {
+  const token = getToken()
+  let response: Response
+  try {
+    response = await fetch(buildUrl(path), { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+  } catch {
+    throw new ApiError(0, NETWORK_ERROR_MESSAGE)
+  }
+  if (response.status === 401) {
+    clearToken()
+    window.location.assign('/login')
+    throw new ApiError(401, 'Session expired')
+  }
+  if (!response.ok) throw new ApiError(response.status, await extractErrorMessage(response))
+  return new Uint8Array(await response.arrayBuffer())
+}

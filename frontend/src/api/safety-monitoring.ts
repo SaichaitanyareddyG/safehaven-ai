@@ -1,5 +1,6 @@
-import { apiRequest } from '@/lib/api-client'
+import { apiDownload, apiRequest } from '@/lib/api-client'
 import type {
+  FirmwareCurrent,
   AlertStatus,
   DeviceAssignment,
   MonitoringProfile,
@@ -111,4 +112,13 @@ export function listMotionEvents(deviceId: string): Promise<MotionEvent[]> {
 
 export function labelMotionEvent(id: string, label: MotionLabel | null): Promise<MotionEvent> {
   return apiRequest<MotionEvent>(`/motion-events/${id}`, { method: 'PATCH', body: { label } })
+}
+
+/** Admins: the published band firmware, to install a band over USB. */
+export function getCurrentFirmware(): Promise<FirmwareCurrent> {
+  return apiRequest<FirmwareCurrent>('/firmware/current')
+}
+
+export function downloadFirmwareImage(releaseId: string): Promise<Uint8Array> {
+  return apiDownload(`/firmware/${releaseId}/image`)
 }

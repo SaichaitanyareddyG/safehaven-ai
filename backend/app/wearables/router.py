@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user, require_admin
@@ -31,6 +31,7 @@ from app.wearables.models import AlertStatus, WearableDevice
 from app.wearables.schemas import (
     DeviceAssignmentCreate,
     DeviceAssignmentRead,
+    FirmwareCurrentRead,
     PairDeviceRequest,
     PatientAssignmentResponse,
     QrResolveRequest,
@@ -460,6 +461,38 @@ def remove_wifi_network(network_id: uuid.UUID, db: Annotated[Session, Depends(ge
         event_metadata={"ssid": network.ssid},
     )
     db.commit()
+
+
+# Installing a new band over USB from the dashboard (Bands -> Install on a new
+# band). The browser writes the image to the band itself; the image carries
+# the setup hotspot settings, so admins only, and every download is recorded.
+@router.get("/firmware/current", response_model=FirmwareCurrentRead)
+def current_firmware(db: Annotated[Session, Depends(get_db)], admin: Admin) -> FirmwareCurrentRead:
+    release = firmware.current_release(db)
+    if release is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No firmware has been published yet")
+    return FirmwareCurrentRead(id=release.id, version=release.version, size=release.size, sha256=release.sha256)
+
+
+@router.get("/firmware/{release_id}/image")
+@limiter.limit("30/hour")
+def firmware_image(
+    request: Request, release_id: uuid.UUID, db: Annotated[Session, Depends(get_db)], admin: Admin
+) -> Response:
+    release = db.get(firmware.FirmwareRelease, release_id)
+    if release is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such firmware")
+    record_event(
+        db,
+        event_type=AuditEventType.WEARABLE_FIRMWARE_DOWNLOADED,
+        actor_type=ActorType.CLINICIAN,
+        actor_id=uuid.UUID(admin.id),
+        entity_type="FirmwareRelease",
+        entity_id=release.id,
+        event_metadata={"version": release.version},
+    )
+    db.commit()
+    return Response(content=release.image, media_type="application/octet-stream", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/wearable-devices/{device_id}/motion-events", response_model=list[MotionEventRead])
